@@ -27,12 +27,12 @@ fn setup_case(name: &str) -> tempfile::TempDir {
 /// Sets XDG_CACHE_HOME to isolate compile cache between tests.
 fn compile_in(workdir: &Path) -> std::process::Output {
     let output_bin = workdir.join("besogne-out");
-    let plugins_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("plugins");
+    let components_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("components");
     Command::new(cargo_bin())
         .args(["build", "-o", output_bin.to_str().unwrap()])
         .current_dir(workdir)
         .env("XDG_CACHE_HOME", workdir.join(".cache"))
-        .env("BESOGNE_PLUGINS_DIR", plugins_dir)
+        .env("BESOGNE_COMPONENTS_DIR", components_dir)
         .output()
         .unwrap()
 }

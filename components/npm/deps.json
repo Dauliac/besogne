@@ -2,7 +2,7 @@
   "name": "npm/deps",
   "description": "NPM dependency installation: probes package.json/lock, runs npm ci",
   "nodes": {
-    "node/toolchain": { "type": "plugin" },
+    "node/toolchain": { "type": "component" },
     "package-json": { "type": "file", "path": "package.json" },
     "package-lock": { "type": "file", "path": "package-lock.json" },
     "install": { "type": "command", "run": ["npm", "ci"], "parents": ["node/toolchain.npm", "package-json", "package-lock"] }

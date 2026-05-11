@@ -1,0 +1,14 @@
+name = "component-local"
+description = "Test local JSON component expansion"
+
+[components]
+test = "./components"
+
+[nodes."test/greet"]
+type = "component"
+
+[nodes."test/greet".overrides.greet]
+run = ["echo", "hello from component"]
+
+[nodes."test/greet".overrides.greet-loud]
+run = ["sh", "-c", "echo 'hello from component' | tr a-z A-Z"]

@@ -2,7 +2,7 @@
   "name": "docker/registry",
   "description": "Validate Docker registry authentication",
   "nodes": {
-    "docker/docker": { "type": "plugin" },
+    "docker/daemon": { "type": "component" },
     "auth": { "type": "command", "description": "docker registry auth", "run": ["docker", "login", "--get-login", "docker.io"] }
   }
 }

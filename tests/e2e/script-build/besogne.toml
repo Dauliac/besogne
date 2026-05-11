@@ -2,7 +2,7 @@ name = "script-build"
 description = "Build pipeline using a shell script with env vars and outputs"
 
 [nodes."coreutils/shell"]
-type = "plugin"
+type = "component"
 
 [nodes.build-script]
 type = "file"

@@ -3,7 +3,7 @@ description = "Strict env sandbox — only declared vars visible"
 sandbox = "strict"
 
 [nodes."coreutils/shell"]
-type = "plugin"
+type = "component"
 
 [nodes.ALLOWED_VAR]
 type = "env"

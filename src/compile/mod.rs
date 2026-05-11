@@ -1,7 +1,7 @@
 pub mod embed;
 mod lower;
 pub mod nickel;
-pub mod plugin;
+pub mod component;
 
 use crate::ir::types::{BesogneIR, ResolvedNativeNode, SealedSnapshot};
 use crate::manifest;
@@ -15,9 +15,9 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
     // 1. Parse manifest
     let mut manifest = manifest::load_manifest(manifest_path)?;
 
-    // 1b. Expand plugins → native inputs
-    if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Plugin(_))) {
-        let expanded = plugin::expand_plugins(&manifest, manifest_path)?;
+    // 1b. Expand components → native inputs
+    if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
+        let expanded = component::expand_components(&manifest, manifest_path)?;
         manifest.nodes = expanded;
     }
 
@@ -63,8 +63,8 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
 /// Compile without progress messages (for `besogne run` where the binary handles output)
 pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
     let mut manifest = manifest::load_manifest(manifest_path)?;
-    if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Plugin(_))) {
-        manifest.nodes = plugin::expand_plugins(&manifest, manifest_path)?;
+    if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
+        manifest.nodes = component::expand_components(&manifest, manifest_path)?;
     }
     let mut ir = lower::lower_manifest(&manifest, manifest_path)?;
     resolve_build_binaries_quiet(&mut ir)?;
@@ -101,8 +101,8 @@ pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), Str
 /// Used for `--help` display where we only need metadata and flags.
 pub fn check_to_ir(manifest_path: &Path) -> Result<crate::ir::BesogneIR, String> {
     let mut manifest = manifest::load_manifest(manifest_path)?;
-    if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Plugin(_))) {
-        manifest.nodes = plugin::expand_plugins(&manifest, manifest_path)?;
+    if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
+        manifest.nodes = component::expand_components(&manifest, manifest_path)?;
     }
     lower::lower_manifest(&manifest, manifest_path)
 }
@@ -110,8 +110,8 @@ pub fn check_to_ir(manifest_path: &Path) -> Result<crate::ir::BesogneIR, String>
 /// Validate a manifest without compiling
 pub fn check(manifest_path: &Path) -> Result<(), String> {
     let mut manifest = manifest::load_manifest(manifest_path)?;
-    if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Plugin(_))) {
-        manifest.nodes = plugin::expand_plugins(&manifest, manifest_path)?;
+    if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
+        manifest.nodes = component::expand_components(&manifest, manifest_path)?;
     }
     let mut ir = lower::lower_manifest(&manifest, manifest_path)?;
     resolve_build_binaries(&mut ir)?;

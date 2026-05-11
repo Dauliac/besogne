@@ -2,7 +2,7 @@ name = "pipe-exec"
 description = "Test pipe exec form — echo | tr"
 
 [nodes."coreutils/shell"]
-type = "plugin"
+type = "component"
 
 [nodes.pipe-test]
 type = "command"

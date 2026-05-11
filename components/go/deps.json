@@ -2,7 +2,7 @@
   "name": "go/deps",
   "description": "Go module dependencies: probes go.mod/go.sum, downloads and verifies modules",
   "nodes": {
-    "go/toolchain": { "type": "plugin" },
+    "go/toolchain": { "type": "component" },
     "go-mod": { "type": "file", "path": "go.mod" },
     "go-sum": { "type": "file", "path": "go.sum" },
     "download": { "type": "command", "run": ["go", "mod", "download"], "parents": ["go/toolchain.go", "go-mod", "go-sum"] },

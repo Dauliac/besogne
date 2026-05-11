@@ -14,10 +14,10 @@ pub struct Manifest {
     #[serde(default)]
     pub flags: Vec<Flag>,
 
-    /// Plugin sources: namespace → source.
-    /// "builtin" for embedded plugins, "./path" for local, "github:org/repo#ref" for remote.
+    /// Component sources: namespace → source.
+    /// "builtin" for embedded components, "./path" for local, "github:org/repo#ref" for remote.
     #[serde(default)]
-    pub plugins: HashMap<String, String>,
+    pub components: HashMap<String, String>,
 
     #[serde(default)]
     pub nodes: HashMap<String, Node>,
@@ -130,7 +130,7 @@ pub enum Node {
     Platform(PlatformInput),
     Dns(DnsInput),
     Metric(MetricInput),
-    Plugin(PluginInput),
+    Component(ComponentInput),
     Source(SourceInput),
     Std(StdInput),
 }
@@ -147,7 +147,7 @@ impl Node {
             Node::Platform(p) => p.phase.clone().unwrap_or(Phase::Build),
             Node::Dns(d) => d.phase.clone().unwrap_or(Phase::Seal),
             Node::Metric(m) => m.phase.clone().unwrap_or(Phase::Seal),
-            Node::Plugin(_) => Phase::Seal,
+            Node::Component(_) => Phase::Seal,
             Node::Source(s) => s.phase.clone().unwrap_or(Phase::Seal),
             Node::Std(_) => Phase::Exec,
         }
@@ -345,7 +345,7 @@ pub struct MetricInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginInput {
+pub struct ComponentInput {
     /// Per-node overrides: node_name → partial node object to merge (replaces fields).
     #[serde(default)]
     pub overrides: Option<HashMap<String, serde_json::Value>>,
@@ -355,7 +355,7 @@ pub struct PluginInput {
     pub patch: Option<HashMap<String, HashMap<String, PatchOp>>>,
 }
 
-/// Array patch operations for plugin node fields.
+/// Array patch operations for component node fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchOp {
     #[serde(default)]

@@ -1,11 +1,10 @@
-use crate::compile::nickel;
 use crate::manifest::{Node, Manifest, PatchOp};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Resolve all plugin nodes in a manifest, returning expanded native nodes.
-/// Plugin nodes are replaced by the plugin's `nodes` map (same format as manifest).
-pub fn expand_plugins(
+/// Resolve all component nodes in a manifest, returning expanded native nodes.
+/// Component nodes are replaced by the component's `nodes` map (same format as manifest).
+pub fn expand_components(
     manifest: &Manifest,
     manifest_path: &Path,
 ) -> Result<HashMap<String, Node>, String> {
@@ -13,21 +12,21 @@ pub fn expand_plugins(
 
     for (key, input) in &manifest.nodes {
         match input {
-            Node::Plugin(plugin_input) => {
-                // The map key IS the plugin reference (e.g., "coreutils/shell")
-                let (namespace, _) = parse_plugin_ref(key)?;
+            Node::Component(component_input) => {
+                // The map key IS the component reference (e.g., "coreutils/shell")
+                let (namespace, _) = parse_component_ref(key)?;
 
-                // Default to "builtin" if namespace not declared in plugins map
-                let source = manifest.plugins
+                // Default to "builtin" if namespace not declared in components map
+                let source = manifest.components
                     .get(&namespace)
                     .map(|s| s.as_str())
                     .unwrap_or("builtin");
 
                 let mut visited = Vec::new();
-                let produced = expand_plugin_json(
+                let produced = expand_component_json(
                     key,
-                    &plugin_input.overrides,
-                    &plugin_input.patch,
+                    &component_input.overrides,
+                    &component_input.patch,
                     source,
                     manifest_path,
                     &mut visited,
@@ -44,13 +43,13 @@ pub fn expand_plugins(
                     let full_key = format!("{key}.{sub_key}");
                     let node: Node = serde_json::from_value(value.clone()).map_err(|e| {
                         format!(
-                            "plugin '{key}' node '{sub_key}': {e}\n  value: {}",
+                            "component '{key}' node '{sub_key}': {e}\n  value: {}",
                             serde_json::to_string_pretty(&value).unwrap_or_default()
                         )
                     })?;
                     if expanded.contains_key(&full_key) {
                         return Err(format!(
-                            "plugin '{key}' produces duplicate node '{full_key}'"
+                            "component '{key}' produces duplicate node '{full_key}'"
                         ));
                     }
                     expanded.insert(full_key, node);
@@ -65,21 +64,21 @@ pub fn expand_plugins(
     Ok(expanded)
 }
 
-fn parse_plugin_ref(plugin_ref: &str) -> Result<(String, String), String> {
-    let parts: Vec<&str> = plugin_ref.splitn(2, '/').collect();
+fn parse_component_ref(component_ref: &str) -> Result<(String, String), String> {
+    let parts: Vec<&str> = component_ref.splitn(2, '/').collect();
     if parts.len() != 2 {
         return Err(format!(
-            "invalid plugin reference '{plugin_ref}': expected 'namespace/name' (e.g., 'docker/daemon')"
+            "invalid component reference '{component_ref}': expected 'namespace/name' (e.g., 'docker/daemon')"
         ));
     }
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
-/// Recursively expand a plugin into a flat list of (sub_key, JSON) pairs.
-/// A plugin is a manifest: its `nodes` map is extracted and expanded.
-/// Nested `type: "plugin"` nodes are recursively expanded.
-fn expand_plugin_json(
-    plugin_ref: &str,
+/// Recursively expand a component into a flat list of (sub_key, JSON) pairs.
+/// A component is a manifest: its `nodes` map is extracted and expanded.
+/// Nested `type: "component"` nodes are recursively expanded.
+fn expand_component_json(
+    component_ref: &str,
     overrides: &Option<HashMap<String, serde_json::Value>>,
     patch: &Option<HashMap<String, HashMap<String, PatchOp>>>,
     source: &str,
@@ -87,18 +86,18 @@ fn expand_plugin_json(
     visited: &mut Vec<String>,
 ) -> Result<Vec<(String, serde_json::Value)>, String> {
     // Cycle detection
-    if visited.contains(&plugin_ref.to_string()) {
+    if visited.contains(&component_ref.to_string()) {
         return Err(format!(
-            "circular plugin: {} \u{2192} {}",
+            "circular component: {} \u{2192} {}",
             visited.join(" \u{2192} "),
-            plugin_ref
+            component_ref
         ));
     }
-    visited.push(plugin_ref.to_string());
+    visited.push(component_ref.to_string());
 
-    // Load plugin nodes
-    let plugin_path = resolve_plugin_path(source, plugin_ref, manifest_path)?;
-    let mut nodes = load_plugin_nodes(&plugin_path)?;
+    // Load component nodes
+    let component_path = resolve_component_path(source, component_ref, manifest_path)?;
+    let mut nodes = load_component_nodes(&component_path)?;
 
     // Apply per-node overrides (shallow merge — replaces fields)
     if let Some(overrides) = overrides {
@@ -124,17 +123,13 @@ fn expand_plugin_json(
     let mut entries: Vec<(String, serde_json::Value)> = nodes.into_iter().collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // Expand: nested plugins → recurse, native nodes → keep
+    // Expand: nested components → recurse, native nodes → keep
     let mut produced: Vec<(String, serde_json::Value)> = Vec::new();
     for (key, value) in entries {
-        let is_plugin = value.get("type").and_then(|t| t.as_str()) == Some("plugin");
-        if is_plugin {
-            let sub_ref = value
-                .get("plugin")
-                .and_then(|p| p.as_str())
-                .ok_or_else(|| {
-                    format!("plugin node '{key}' in '{plugin_ref}' missing 'plugin' field")
-                })?;
+        let is_component = value.get("type").and_then(|t| t.as_str()) == Some("component");
+        if is_component {
+            let sub_ref = key.as_str();
+
             let sub_overrides = value
                 .get("overrides")
                 .and_then(|o| serde_json::from_value(o.clone()).ok());
@@ -142,7 +137,7 @@ fn expand_plugin_json(
                 .get("patch")
                 .and_then(|p| serde_json::from_value(p.clone()).ok());
 
-            let sub_nodes = expand_plugin_json(
+            let sub_nodes = expand_component_json(
                 sub_ref,
                 &sub_overrides,
                 &sub_patch,
@@ -170,43 +165,27 @@ fn expand_plugin_json(
     Ok(produced)
 }
 
-/// Load a plugin's nodes map from disk.
-/// JSON plugins use manifest format (`nodes: { ... }`).
-/// Nickel plugins return arrays (legacy — converted via derive_sub_key).
-fn load_plugin_nodes(
-    plugin_path: &Path,
+/// Load a component's nodes map from disk.
+/// Components use manifest format (`nodes: { ... }`).
+fn load_component_nodes(
+    component_path: &Path,
 ) -> Result<HashMap<String, serde_json::Value>, String> {
-    let ext = plugin_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let content = std::fs::read_to_string(component_path)
+        .map_err(|e| format!("cannot read component {}: {e}", component_path.display()))?;
+    let raw: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("invalid component JSON {}: {e}", component_path.display()))?;
 
-    if ext == "ncl" {
-        // Nickel plugins return arrays — convert to named map
-        let arr = nickel::eval_plugin(plugin_path, &HashMap::new())?;
-        Ok(arr
-            .into_iter()
-            .enumerate()
-            .map(|(idx, v)| (derive_sub_key(&v, idx), v))
-            .collect())
-    } else {
-        let content = std::fs::read_to_string(plugin_path)
-            .map_err(|e| format!("cannot read plugin {}: {e}", plugin_path.display()))?;
-        let raw: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| format!("invalid plugin JSON {}: {e}", plugin_path.display()))?;
+    let nodes_obj = raw
+        .get("nodes")
+        .and_then(|n| n.as_object())
+        .ok_or_else(|| {
+            format!("component '{}' missing 'nodes' map", component_path.display())
+        })?;
 
-        let nodes_obj = raw
-            .get("nodes")
-            .and_then(|n| n.as_object())
-            .ok_or_else(|| {
-                format!("plugin '{}' missing 'nodes' map", plugin_path.display())
-            })?;
-
-        Ok(nodes_obj
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect())
-    }
+    Ok(nodes_obj
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect())
 }
 
 // ── Helpers ──
@@ -272,7 +251,7 @@ fn json_shallow_merge(
 }
 
 /// Prefix parent references that match nested sub-keys.
-/// Used when a nested plugin's nodes are being embedded under a key.
+/// Used when a nested component's nodes are being embedded under a key.
 fn prefix_parents(
     value: &mut serde_json::Value,
     prefix: &str,
@@ -310,103 +289,73 @@ fn rewrite_parents_json(
     }
 }
 
-/// Derive a sub-key from a JSON node value (fallback for Nickel array plugins).
-fn derive_sub_key(value: &serde_json::Value, idx: usize) -> String {
-    if let Some(name) = value.get("name").and_then(|n| n.as_str()) {
-        name.to_string()
-    } else if let Some(typ) = value.get("type").and_then(|t| t.as_str()) {
-        if let Some(path) = value.get("path").and_then(|p| p.as_str()) {
-            format!("{typ}-{}", path.replace('/', "-").replace('.', "-"))
-        } else {
-            format!("{typ}-{idx}")
-        }
-    } else {
-        format!("{idx}")
-    }
-}
-
-/// Resolve a plugin reference to a file path on disk.
-fn resolve_plugin_path(
+/// Resolve a component reference to a file path on disk.
+fn resolve_component_path(
     source: &str,
-    plugin_ref: &str,
+    component_ref: &str,
     manifest_path: &Path,
 ) -> Result<PathBuf, String> {
-    let (namespace, name) = parse_plugin_ref(plugin_ref)?;
+    let (namespace, name) = parse_component_ref(component_ref)?;
 
     match source {
         "builtin" => {
-            let plugins_dir = std::env::var("BESOGNE_PLUGINS_DIR")
+            let components_dir = std::env::var("BESOGNE_COMPONENTS_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| {
                     let manifest_dir =
                         manifest_path.parent().unwrap_or(Path::new("."));
-                    let candidate = manifest_dir.join("plugins");
+                    let candidate = manifest_dir.join("components");
                     if candidate.is_dir() {
                         return candidate;
                     }
                     if let Ok(exe) = std::env::current_exe() {
                         if let Some(exe_dir) = exe.parent() {
                             for ancestor in exe_dir.ancestors().skip(1) {
-                                let candidate = ancestor.join("plugins");
+                                let candidate = ancestor.join("components");
                                 if candidate.is_dir() {
                                     return candidate;
                                 }
                             }
                         }
                     }
-                    PathBuf::from("plugins")
+                    PathBuf::from("components")
                 });
 
-            let ncl_path =
-                plugins_dir.join(&namespace).join(format!("{name}.ncl"));
-            if ncl_path.exists() {
-                return Ok(ncl_path);
-            }
             let json_path =
-                plugins_dir.join(&namespace).join(format!("{name}.json"));
+                components_dir.join(&namespace).join(format!("{name}.json"));
             if json_path.exists() {
                 return Ok(json_path);
             }
 
             Err(format!(
-                "builtin plugin '{plugin_ref}' not found. Looked in:\n  {}\n  {}",
-                ncl_path.display(),
+                "builtin component '{component_ref}' not found. Looked in:\n  {}",
                 json_path.display()
             ))
         }
 
         s if s.starts_with("./") || s.starts_with("../") => {
             let base = manifest_path.parent().unwrap_or(Path::new("."));
-            let plugin_dir = base.join(s);
+            let component_dir = base.join(s);
 
-            let ncl_path =
-                plugin_dir.join(&namespace).join(format!("{name}.ncl"));
-            if ncl_path.exists() {
-                return Ok(ncl_path);
-            }
             let json_path =
-                plugin_dir.join(&namespace).join(format!("{name}.json"));
+                component_dir.join(&namespace).join(format!("{name}.json"));
             if json_path.exists() {
                 return Ok(json_path);
             }
-            let flat_ncl = plugin_dir.join(format!("{plugin_ref}.ncl"));
-            if flat_ncl.exists() {
-                return Ok(flat_ncl);
-            }
-            let flat_json = plugin_dir.join(format!("{plugin_ref}.json"));
+            let flat_json = component_dir.join(format!("{component_ref}.json"));
             if flat_json.exists() {
                 return Ok(flat_json);
             }
 
             Err(format!(
-                "plugin '{plugin_ref}' not found in '{s}'. Looked for .ncl and .json in:\n  {}\n  {}",
-                plugin_dir.join(&namespace).display(),
-                plugin_dir.display()
+                "component '{component_ref}' not found in '{s}'. Looked in:\n  {}\n  {}",
+                component_dir.join(&namespace).display(),
+                component_dir.display()
             ))
         }
 
         _ => Err(format!(
-            "unsupported plugin source '{source}' for '{plugin_ref}'. \
+            "unsupported component source '{source}' for '{component_ref}'. \
              Supported: \"builtin\", \"./local/path\""
         )),
     }

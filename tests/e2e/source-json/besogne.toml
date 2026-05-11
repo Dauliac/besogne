@@ -2,7 +2,7 @@ name = "source-json"
 description = "Load env vars from JSON file via source type"
 
 [nodes."coreutils/shell"]
-type = "plugin"
+type = "component"
 
 [nodes.env-file]
 type = "source"

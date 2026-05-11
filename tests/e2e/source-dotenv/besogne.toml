@@ -2,7 +2,7 @@ name = "source-dotenv"
 description = "Load env vars from .env file via source type"
 
 [nodes."coreutils/shell"]
-type = "plugin"
+type = "component"
 
 [nodes.dotenv]
 type = "source"

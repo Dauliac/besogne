@@ -2,13 +2,13 @@ name = "go-testcontainers"
 description = "Run Go tests with testcontainers (Docker)"
 
 [nodes."go/toolchain"]
-type = "plugin"
+type = "component"
 
 [nodes."gcc/toolchain"]
-type = "plugin"
+type = "component"
 
 [nodes."docker/docker"]
-type = "plugin"
+type = "component"
 
 # go test produces a test binary named after the module
 [nodes."testcontainers."]

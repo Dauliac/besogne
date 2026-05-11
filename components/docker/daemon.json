@@ -2,7 +2,8 @@
   "name": "docker/daemon",
   "description": "Validate Docker daemon is running via local socket",
   "nodes": {
-    "docker/docker": { "type": "plugin" },
+    "docker": { "type": "binary" },
+    "docker/socket": { "type": "component" },
     "info": { "type": "command", "description": "docker daemon info", "run": ["docker", "info", "--format", "{{json .}}"] }
   }
 }

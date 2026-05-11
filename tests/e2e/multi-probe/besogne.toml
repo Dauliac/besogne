@@ -16,7 +16,7 @@ type = "file"
 path = "data.txt"
 
 [nodes."coreutils/shell"]
-type = "plugin"
+type = "component"
 
 [nodes.platform]
 type = "platform"

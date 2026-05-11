@@ -45,7 +45,7 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
                 secret: false,
             },
             parents: vec![],
-            from_plugin: Some("flag".to_string()),
+            from_component: Some("flag".to_string()),
             sealed: None,
         };
         resolved_nodes.push(env_input);
@@ -53,9 +53,9 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
 
     for (key, input) in &manifest.nodes {
         match input {
-            Node::Plugin(_) => {
+            Node::Component(_) => {
                 return Err(format!(
-                    "input '{key}': plugin not expanded before lowering (bug in compile pipeline)"
+                    "input '{key}': component not expanded before lowering (bug in compile pipeline)"
                 ));
             }
             _ => {
@@ -225,8 +225,8 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
             (native, Phase::Exec, id)
         }
 
-        Node::Plugin(_) => {
-            return Err("plugins should be expanded before lowering".into());
+        Node::Component(_) => {
+            return Err("components should be expanded before lowering".into());
         }
     };
 
@@ -235,7 +235,7 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
         phase,
         node: native,
         parents: vec![],
-        from_plugin: None,
+        from_component: None,
         sealed: None,
     })
 }

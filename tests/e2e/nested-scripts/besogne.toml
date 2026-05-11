@@ -2,7 +2,7 @@ name = "nested-scripts"
 description = "Nested shell scripts: 3 levels deep, forks, sleep, pipes, traps"
 
 [nodes."coreutils/shell"]
-type = "plugin"
+type = "component"
 
 [nodes.level1]
 type = "file"

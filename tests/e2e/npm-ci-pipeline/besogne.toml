@@ -2,7 +2,7 @@ name = "npm-ci-pipeline"
 description = "Full npm CI: install, lint, test, build"
 
 [nodes."node/toolchain"]
-type = "plugin"
+type = "component"
 
 [nodes.CI]
 type = "env"

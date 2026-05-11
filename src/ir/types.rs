@@ -108,9 +108,9 @@ pub struct ResolvedNode {
     #[serde(default)]
     pub parents: Vec<ContentId>,
 
-    /// Traceability: which plugin produced this
+    /// Traceability: which component produced this
     #[serde(default)]
-    pub from_plugin: Option<String>,
+    pub from_component: Option<String>,
 
     /// Build-time sealed data (if phase=build)
     #[serde(default)]
