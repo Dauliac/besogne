@@ -1,38 +1,32 @@
 name = "nested-scripts"
-description = "Nested shell scripts"
+description = "Nested shell scripts with env-driven configuration"
 
-[inputs.sh]
-type = "binary"
+[plugins]
+coreutils = "builtin"
 
-[inputs.head]
-type = "binary"
-
-[inputs.od]
-type = "binary"
-
-[inputs.tr]
-type = "binary"
-
-[inputs.tee]
-type = "binary"
-
-[inputs.mkdir]
-type = "binary"
-
-[inputs.rm]
-type = "binary"
-
-[inputs.cat]
-type = "binary"
-
-[inputs.date]
-type = "binary"
-
-[inputs.sleep]
-type = "binary"
+[inputs.shell]
+type = "plugin"
+plugin = "coreutils/shell"
 
 [inputs.docker]
 type = "binary"
+
+# Environment variables used by the scripts
+[inputs.PROJECT_NAME]
+type = "env"
+value = "besogne-nested"
+
+[inputs.OUTPUT_PREFIX]
+type = "env"
+value = "results"
+
+[inputs.FORK_COUNT]
+type = "env"
+value = "3"
+
+[inputs.SLEEP_DELAY]
+type = "env"
+value = "0.02"
 
 [inputs.level1]
 type = "file"
@@ -49,7 +43,7 @@ path = "level3.sh"
 [inputs.setup]
 type = "command"
 phase = "exec"
-run = ["sh", "-c", "rm -rf results && mkdir -p results"]
+run = ["sh", "-c", "rm -rf $OUTPUT_PREFIX && mkdir -p $OUTPUT_PREFIX"]
 
 [inputs.run-scripts]
 type = "command"

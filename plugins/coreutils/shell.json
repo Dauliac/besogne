@@ -45,6 +45,7 @@
     { "type": "binary", "name": "tar" },
     { "type": "binary", "name": "gzip" },
     { "type": "binary", "name": "curl" },
-    { "type": "binary", "name": "jq" }
+    { "type": "binary", "name": "jq" },
+    { "type": "binary", "name": "seq" }
   ]
 }

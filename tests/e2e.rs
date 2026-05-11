@@ -534,6 +534,26 @@ fn e2e_nested_scripts() {
         );
     }
 
+    // Verify env variables propagated into scripts
+    let level1 = std::fs::read_to_string(dir.path().join("results/level1.txt")).unwrap();
+    assert!(level1.contains("project=besogne-nested"), "level1 should use PROJECT_NAME: {level1}");
+
+    let level3 = std::fs::read_to_string(dir.path().join("results/level3.txt")).unwrap();
+    assert!(level3.contains("fork_count=3"), "level3 should use FORK_COUNT: {level3}");
+
+    let forks = std::fs::read_to_string(dir.path().join("results/forks.txt")).unwrap();
+    assert!(forks.contains("project=besogne-nested"), "forks should use PROJECT_NAME: {forks}");
+    assert_eq!(forks.lines().count(), 3, "should have FORK_COUNT=3 forks: {forks}");
+
+    let heredoc = std::fs::read_to_string(dir.path().join("results/heredoc.txt")).unwrap();
+    assert!(heredoc.contains("project=besogne-nested"), "heredoc should use PROJECT_NAME: {heredoc}");
+
+    let bg = std::fs::read_to_string(dir.path().join("results/background.txt")).unwrap();
+    assert!(bg.contains("project=besogne-nested"), "background should use PROJECT_NAME: {bg}");
+
+    let pipe = std::fs::read_to_string(dir.path().join("results/pipe.txt")).unwrap();
+    assert!(pipe.contains("BESOGNE-NESTED"), "pipe should uppercase PROJECT_NAME: {pipe}");
+
     // Docker hello-world output should contain the expected message
     let docker_out = std::fs::read_to_string(dir.path().join("results/docker.txt")).unwrap();
     assert!(
