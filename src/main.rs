@@ -1,3 +1,4 @@
+mod adopt;
 mod compile;
 mod ir;
 mod manifest;
@@ -30,6 +31,23 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
+    /// Adopt scripts from package.json (or other task runners) into a besogne manifest.
+    /// Parses scripts, detects binaries and side effects, generates besogne.toml,
+    /// backs up the original file, and rewrites scripts to use `besogne run`.
+    Adopt {
+        /// Path to source file (e.g., package.json). Auto-detects format.
+        #[arg(short, long)]
+        source: PathBuf,
+
+        /// Output manifest path (default: besogne.toml in same directory)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Show what would be generated without writing files
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Validate manifest(s) without building
     Check {
         /// Path to manifest file(s). If omitted, auto-discovers.
@@ -37,9 +55,8 @@ enum Commands {
         input: Vec<PathBuf>,
     },
 
-    /// Build and run a manifest in one shot (build + pre + exec).
-    /// All flags after `run` are forwarded to the produced besogne
-    /// (e.g., `besogne run -l json --verbose` passes `-l json --verbose` to the binary).
+    /// Build and run in one shot. Use `besogne run -- --help` to see all flags.
+    /// All arguments are forwarded to the produced binary (e.g., `besogne run -- -l json`).
     Run {
         /// Path to manifest file. If omitted, auto-discovers (must resolve to exactly one).
         #[arg(short, long)]
@@ -165,9 +182,24 @@ fn main() -> ExitCode {
         }
 
         Some(Commands::Run { input, args }) => {
+            // If --help is in args, we need to build first then forward --help
+            // to show the produced binary's help (which includes all flags)
+            let wants_help = args.iter().any(|a| a == "--help" || a == "-h");
+
             let manifest_path = match resolve_single_input_quiet(&input) {
                 Ok(p) => p,
-                Err(e) => { eprintln!("error: {e}"); return ExitCode::from(2); }
+                Err(e) => {
+                    if wants_help {
+                        eprintln!("besogne run: build + run a manifest in one shot");
+                        eprintln!("  All flags after 'run' are forwarded to the produced binary.\n");
+                        eprintln!("error: {e}");
+                        eprintln!("  Cannot show full help without a manifest to build.\n");
+                        eprintln!("Usage: besogne run [-i <manifest>] [-- <flags>]");
+                    } else {
+                        eprintln!("error: {e}");
+                    }
+                    return ExitCode::from(2);
+                }
             };
 
             // Detect -f/--force in forwarded args to force rebuild
@@ -233,10 +265,59 @@ fn main() -> ExitCode {
                 );
             }
 
+            // When --help: show context header before forwarding
+            if wants_help {
+                eprintln!("besogne run — build + run in one shot");
+                eprintln!("manifest: {}", manifest_path.display());
+                eprintln!("binary:   {}\n", bin_path.display());
+            }
+
             // exec replaces this process — the besogne binary takes over
             let err = exec_binary(&bin_path, &args);
             eprintln!("error: cannot exec {}: {err}", bin_path.display());
             ExitCode::from(126)
+        }
+
+        Some(Commands::Adopt { source, output, dry_run }) => {
+            let source_type = match source.extension().and_then(|e| e.to_str()) {
+                Some("json") => {
+                    // Check if it's package.json
+                    let name = source.file_name().and_then(|f| f.to_str()).unwrap_or("");
+                    if name == "package.json" {
+                        adopt::AdoptSource::PackageJson
+                    } else {
+                        eprintln!("error: unsupported source file. Currently only package.json is supported.");
+                        return ExitCode::from(2);
+                    }
+                }
+                _ => {
+                    eprintln!("error: unsupported source format. Currently only package.json is supported.");
+                    return ExitCode::from(2);
+                }
+            };
+
+            let output_path = output.unwrap_or_else(|| {
+                source.parent().unwrap_or(std::path::Path::new(".")).join("besogne.toml")
+            });
+
+            match adopt::adopt(&source, &source_type, &output_path, dry_run) {
+                Ok(result) => {
+                    eprintln!("besogne adopt: {} scripts adopted", result.scripts.len());
+                    if !dry_run {
+                        eprintln!("  manifest: {}", result.manifest_path.display());
+                        eprintln!("  backup:   {}", result.backup_path.display());
+                        eprintln!("\nnext steps:");
+                        eprintln!("  1. review {}", result.manifest_path.display());
+                        eprintln!("  2. besogne run --verify  (check idempotency)");
+                        eprintln!("  3. remove side_effects = true from idempotent commands");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(2)
+                }
+            }
         }
 
         Some(Commands::Check { input }) => {

@@ -98,7 +98,12 @@ pub fn build_runtime_cli(ir: &BesogneIR) -> Command {
     let about = leak_str(&ir.metadata.description);
     let besogne_name_upper = ir.metadata.name.to_uppercase().replace('-', "_");
 
-    let mut cmd = Command::new(name).version(version).about(about);
+    let usage = leak_str(&format!("{name} [OPTIONS]"));
+    let mut cmd = Command::new(name)
+        .version(version)
+        .about(about)
+        .bin_name(name)
+        .override_usage(usage);
 
     for arg in global_args(&besogne_name_upper) {
         cmd = cmd.arg(arg);

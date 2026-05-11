@@ -1,0 +1,11 @@
+{
+  "name": "test-project",
+  "version": "1.0.0",
+  "scripts": {
+    "prebuild": "echo lint",
+    "build": "echo compile",
+    "postbuild": "echo copy",
+    "test": "echo test-pass",
+    "deploy": "curl -X POST https://api.example.com"
+  }
+}

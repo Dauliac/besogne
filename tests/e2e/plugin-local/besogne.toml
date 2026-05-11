@@ -1,5 +1,6 @@
 name = "plugin-local"
 description = "Test local JSON plugin expansion"
+verify_first_run = false
 
 [plugins]
 test = "./plugins"

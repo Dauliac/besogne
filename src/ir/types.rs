@@ -35,6 +35,9 @@ pub struct BesogneIR {
     #[serde(default)]
     pub flags: Vec<ResolvedFlag>,
     pub inputs: Vec<ResolvedInput>,
+    /// Auto-verify idempotency on first run (warn only, no hard fail)
+    #[serde(default)]
+    pub verify_first_run: bool,
 }
 
 /// A resolved user-defined flag

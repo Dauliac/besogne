@@ -1,0 +1,9 @@
+[tasks.compile]
+run = "besogne build -o ./task"
+
+[tasks.run]
+run = "./task"
+depends = ["compile"]
+
+[tasks.clean]
+run = "rm -rf ./task results"

@@ -1,4 +1,5 @@
 name = "npm-ci-pipeline"
+verify_first_run = false
 description = "Full npm CI: install, lint, test, build"
 
 [inputs.node]

@@ -17,6 +17,12 @@ type = "binary"
 [inputs.tee]
 type = "binary"
 
+[inputs.mkdir]
+type = "binary"
+
+[inputs.rm]
+type = "binary"
+
 [inputs.cat]
 type = "binary"
 

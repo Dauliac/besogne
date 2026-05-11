@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use crate::ir::{BesogneIR, ResolvedInput, ResolvedNativeInput};
 use crate::probe::ProbeResult;
 use crate::runtime::cache::CachedCommand;
 use crate::runtime::cli::LogFormat;
-use crate::tracer::CommandResult;
+use crate::tracer::{CommandResult, ProcessMetrics};
 
 /// Why a probe result is being reported
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,17 +16,31 @@ pub enum ProbeStatus {
     Cached,
 }
 
+/// Context passed alongside command start — resolved paths and env values
+pub struct CommandContext<'a> {
+    /// Binary name → resolved absolute path (from build-phase inputs)
+    pub binary_paths: &'a HashMap<String, String>,
+    /// Binary name → resolved version (from build-phase inputs)
+    pub binary_versions: &'a HashMap<String, String>,
+    /// Env var name → value (secrets masked)
+    pub env_vars: &'a HashMap<String, String>,
+    /// Set of secret env var names
+    pub secret_vars: &'a std::collections::HashSet<String>,
+}
+
 /// Output renderer trait — human, CI, JSON all implement this
 pub trait OutputRenderer {
     fn on_start(&mut self, ir: &BesogneIR);
     fn on_phase_start(&mut self, phase: &str, count: usize);
     fn on_probe_result(&mut self, input: &ResolvedInput, result: &ProbeResult, status: ProbeStatus);
     fn on_phase_end(&mut self, phase: &str);
-    fn on_command_start(&mut self, name: &str, exec: &[String]);
+    fn on_command_start(&mut self, name: &str, exec: &[String], ctx: &CommandContext);
     fn on_command_output(&mut self, name: &str, stdout: &str, stderr: &str);
     fn on_command_end(&mut self, name: &str, result: &CommandResult);
     /// Replay a cached command (skipped because inputs unchanged)
-    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand);
+    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand, ctx: &CommandContext);
+    /// Warn about binaries/envs used at runtime but not declared in manifest
+    fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]);
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64);
 }
 
@@ -213,10 +228,10 @@ fn format_metrics_human(m: &Metrics) -> String {
         format!("  \x1b[35m🧠 memory:{}\x1b[0m", format_bytes(m.max_rss_kb * 1024))
     } else { String::new() };
     let disk = if m.disk_read_bytes > 0 || m.disk_write_bytes > 0 {
-        format!("  \x1b[34m💾 disk:read {} write {}\x1b[0m", format_bytes(m.disk_read_bytes), format_bytes(m.disk_write_bytes))
+        format!("  \x1b[34m💾 ⬇ read:{} ⬆ write:{}\x1b[0m", format_bytes(m.disk_read_bytes), format_bytes(m.disk_write_bytes))
     } else { String::new() };
     let net = if m.net_read_bytes > 0 || m.net_write_bytes > 0 {
-        format!("  \x1b[32m⬇ download:{} ⬆ upload:{}\x1b[0m", format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes))
+        format!("  \x1b[32m🌐 ⬇ download:{} ⬆ upload:{}\x1b[0m", format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes))
     } else { String::new() };
     let procs = format!("  \x1b[31m🔀 processes:{}\x1b[0m", m.processes_spawned + 1);
     format!("{time}{cpu}{mem}{disk}{net}{procs}")
@@ -239,10 +254,10 @@ fn format_metrics_ci(m: &Metrics) -> String {
         format!("  memory:{}", format_bytes(m.max_rss_kb * 1024))
     } else { String::new() };
     let disk = if m.disk_read_bytes > 0 || m.disk_write_bytes > 0 {
-        format!("  disk:read {} write {}", format_bytes(m.disk_read_bytes), format_bytes(m.disk_write_bytes))
+        format!("  💾 ⬇ read:{} ⬆ write:{}", format_bytes(m.disk_read_bytes), format_bytes(m.disk_write_bytes))
     } else { String::new() };
     let net = if m.net_read_bytes > 0 || m.net_write_bytes > 0 {
-        format!("  ⬇ download:{} ⬆ upload:{}", format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes))
+        format!("  🌐 ⬇ download:{} ⬆ upload:{}", format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes))
     } else { String::new() };
     let procs = format!("  processes:{}", m.processes_spawned + 1);
     format!("{time}{cpu}{mem}{disk}{net}{procs}")
@@ -264,6 +279,232 @@ fn format_metrics_json(m: &Metrics) -> serde_json::Value {
         "net_upload_bytes": m.net_write_bytes,
         "processes": m.processes_spawned + 1,
     })
+}
+
+/// Compact per-process metrics line using the same style as command metrics.
+/// Reuses format_bytes and the same color codes for consistency.
+/// Crop a long path for display. Nix store paths get shortened:
+/// `/nix/store/abc123...-nodejs-20.11.0/bin/node` → `/nix/store/abc123.../node`
+/// Other long paths get tail-cropped.
+fn crop_path(path: &str, max_len: usize) -> String {
+    if path.len() <= max_len { return path.to_string(); }
+    // Nix store: /nix/store/<hash>-<name>/...
+    if path.starts_with("/nix/store/") {
+        let after_store = &path["/nix/store/".len()..];
+        let hash_end = after_store.find('-').unwrap_or(8).min(8);
+        let hash_prefix = &after_store[..hash_end];
+        let basename = path.rsplit('/').next().unwrap_or(path);
+        return format!("/nix/store/{hash_prefix}.../{basename}");
+    }
+    // Generic: keep last component + enough prefix
+    let basename = path.rsplit('/').next().unwrap_or(path);
+    if basename.len() + 6 >= max_len {
+        return format!(".../{basename}");
+    }
+    let prefix_len = max_len - basename.len() - 4; // ".../"
+    format!("{}.../{basename}", &path[..prefix_len])
+}
+
+/// Display resolved binary paths and env vars under the exec line (human output).
+fn format_command_context_human(exec: &[String], ctx: &CommandContext) {
+    // Show resolved binary paths for args that match declared binaries
+    for arg in exec {
+        if let Some(path) = ctx.binary_paths.get(arg.as_str()) {
+            if path != arg {
+                let display_path = crop_path(path, 60);
+                let version = ctx.binary_versions.get(arg.as_str())
+                    .map(|v| format!(" \x1b[36mv{v}\x1b[0m"))
+                    .unwrap_or_default();
+                eprintln!("    \x1b[2;34m{arg} \x1b[0m\x1b[2m→ {display_path}\x1b[0m{version}");
+            }
+        }
+    }
+    // Show env vars (sorted, secrets masked)
+    if !ctx.env_vars.is_empty() {
+        let mut vars: Vec<_> = ctx.env_vars.iter().collect();
+        vars.sort_by_key(|(k, _)| k.clone());
+        let parts: Vec<String> = vars.iter().map(|(k, v)| {
+            if ctx.secret_vars.contains(k.as_str()) {
+                format!("\x1b[33m{k}\x1b[2m=*****\x1b[0m")
+            } else {
+                let display = if v.len() > 50 { format!("{}...", &v[..47]) } else { v.to_string() };
+                format!("\x1b[2m{k}={display}\x1b[0m")
+            }
+        }).collect();
+        // Print in rows of ~120 chars
+        let mut line = String::from("    ");
+        for (i, part) in parts.iter().enumerate() {
+            if i > 0 { line.push_str("  "); }
+            // Strip ANSI for length check (rough: each var ~20 visible chars)
+            if line.len() > 140 && i > 0 {
+                eprintln!("{line}");
+                line = String::from("    ");
+            }
+            line.push_str(part);
+        }
+        if line.trim().len() > 0 {
+            eprintln!("{line}");
+        }
+    }
+}
+
+fn format_process_metrics_human(p: &ProcessMetrics) -> String {
+    let mut parts = Vec::new();
+    parts.push(format!("\x1b[36m{:.3}s\x1b[0m", p.wall_ms as f64 / 1000.0));
+    if p.user_ms > 0 || p.sys_ms > 0 {
+        let cores = if p.wall_ms > 0 {
+            (p.user_ms + p.sys_ms) as f64 / p.wall_ms as f64
+        } else { 0.0 };
+        parts.push(format!(
+            "\x1b[33mcpu:{:.2}s usr + {:.2}s sys ({:.1}c)\x1b[0m",
+            p.user_ms as f64 / 1000.0,
+            p.sys_ms as f64 / 1000.0,
+            cores,
+        ));
+    }
+    if p.max_rss_kb > 0 {
+        parts.push(format!("\x1b[35mrss:{}\x1b[0m", format_bytes(p.max_rss_kb * 1024)));
+    }
+    if p.read_bytes > 0 || p.write_bytes > 0 {
+        parts.push(format!(
+            "\x1b[34mio:r{} w{}\x1b[0m",
+            format_bytes(p.read_bytes),
+            format_bytes(p.write_bytes),
+        ));
+    }
+    parts.join("  ")
+}
+
+/// Format process tree for human output — colored, indented per nesting level.
+fn format_process_tree_human(tree: &[ProcessMetrics]) {
+    if tree.len() <= 1 { return; }
+    eprintln!(
+        "    \x1b[2;36m┌ process tree\x1b[0m \x1b[36m({} processes)\x1b[0m",
+        tree.len(),
+    );
+    // Build parent→children map (by pid)
+    let mut children: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, p) in tree.iter().enumerate() {
+        if i > 0 { // skip root from children map — we print it as the tree root
+            children.entry(p.ppid).or_default().push(i);
+        }
+    }
+    print_tree_node(tree, &children, 0, "    ", true);
+}
+
+fn print_tree_node(
+    tree: &[ProcessMetrics],
+    children: &HashMap<u32, Vec<usize>>,
+    idx: usize,
+    prefix: &str,
+    is_root: bool,
+) {
+    let p = &tree[idx];
+    let label = if p.comm.is_empty() { format!("pid:{}", p.pid) } else { p.comm.clone() };
+    let metrics = format_process_metrics_human(p);
+    let exit_tag = if p.exit_code == 0 {
+        "\x1b[32m0\x1b[0m".to_string()
+    } else {
+        format!("\x1b[31m{}\x1b[0m", p.exit_code)
+    };
+
+    if is_root {
+        // Root process: special connector
+        eprintln!("{prefix}\x1b[1;37m{label}\x1b[0m [{exit_tag}]  {metrics}");
+    } else {
+        eprintln!("{prefix}\x1b[37m{label}\x1b[0m [{exit_tag}]  {metrics}");
+    }
+
+    let kids = children.get(&p.pid);
+    let kid_list = kids.map(|k| k.as_slice()).unwrap_or(&[]);
+    for (i, &kid_idx) in kid_list.iter().enumerate() {
+        let is_last = i == kid_list.len() - 1;
+        let connector = if is_last { "└─ " } else { "├─ " };
+        let child_prefix = if is_last {
+            format!("{prefix}   ")
+        } else {
+            format!("{prefix}│  ")
+        };
+        // Print the connector on the same line as the child
+        let child_label = {
+            let cp = &tree[kid_idx];
+            if cp.comm.is_empty() { format!("pid:{}", cp.pid) } else { cp.comm.clone() }
+        };
+        let child_metrics = format_process_metrics_human(&tree[kid_idx]);
+        let child_exit = if tree[kid_idx].exit_code == 0 {
+            "\x1b[32m0\x1b[0m".to_string()
+        } else {
+            format!("\x1b[31m{}\x1b[0m", tree[kid_idx].exit_code)
+        };
+        eprintln!("{prefix}{connector}\x1b[37m{child_label}\x1b[0m [{child_exit}]  {child_metrics}");
+
+        // Recurse for grandchildren
+        if let Some(grandkids) = children.get(&tree[kid_idx].pid) {
+            for (j, &gk_idx) in grandkids.iter().enumerate() {
+                let gk_is_last = j == grandkids.len() - 1;
+                let gk_connector = if gk_is_last { "└─ " } else { "├─ " };
+                let gk_prefix = if gk_is_last {
+                    format!("{child_prefix}   ")
+                } else {
+                    format!("{child_prefix}│  ")
+                };
+                print_tree_node_recursive(tree, children, gk_idx, &child_prefix, gk_connector, &gk_prefix);
+            }
+        }
+    }
+}
+
+fn print_tree_node_recursive(
+    tree: &[ProcessMetrics],
+    children: &HashMap<u32, Vec<usize>>,
+    idx: usize,
+    parent_prefix: &str,
+    connector: &str,
+    my_prefix: &str,
+) {
+    let p = &tree[idx];
+    let label = if p.comm.is_empty() { format!("pid:{}", p.pid) } else { p.comm.clone() };
+    let metrics = format_process_metrics_human(p);
+    let exit_tag = if p.exit_code == 0 {
+        "\x1b[32m0\x1b[0m".to_string()
+    } else {
+        format!("\x1b[31m{}\x1b[0m", p.exit_code)
+    };
+    eprintln!("{parent_prefix}{connector}\x1b[37m{label}\x1b[0m [{exit_tag}]  {metrics}");
+
+    if let Some(kids) = children.get(&p.pid) {
+        for (i, &kid_idx) in kids.iter().enumerate() {
+            let is_last = i == kids.len() - 1;
+            let kid_connector = if is_last { "└─ " } else { "├─ " };
+            let kid_prefix = if is_last {
+                format!("{my_prefix}   ")
+            } else {
+                format!("{my_prefix}│  ")
+            };
+            print_tree_node_recursive(tree, children, kid_idx, my_prefix, kid_connector, &kid_prefix);
+        }
+    }
+}
+
+/// Format process tree for JSON output
+fn format_process_tree_json(tree: &[ProcessMetrics]) -> serde_json::Value {
+    tree.iter().map(|p| {
+        serde_json::json!({
+            "pid": p.pid,
+            "ppid": p.ppid,
+            "comm": p.comm,
+            "cmdline": p.cmdline,
+            "exit_code": p.exit_code,
+            "wall_ms": p.wall_ms,
+            "user_ms": p.user_ms,
+            "sys_ms": p.sys_ms,
+            "max_rss_kb": p.max_rss_kb,
+            "read_bytes": p.read_bytes,
+            "write_bytes": p.write_bytes,
+            "voluntary_cs": p.voluntary_cs,
+            "involuntary_cs": p.involuntary_cs,
+        })
+    }).collect()
 }
 
 // ── Human renderer ──────────────────────────────────────────────────
@@ -303,8 +544,9 @@ impl OutputRenderer for HumanRenderer {
 
     fn on_phase_end(&mut self, _phase: &str) {}
 
-    fn on_command_start(&mut self, name: &str, exec: &[String]) {
+    fn on_command_start(&mut self, name: &str, exec: &[String], ctx: &CommandContext) {
         eprintln!("\n\x1b[1mexec\x1b[0m {name}: {}", exec.join(" "));
+        format_command_context_human(exec, ctx);
     }
 
     fn on_command_output(&mut self, _name: &str, stdout: &str, stderr: &str) {
@@ -319,14 +561,16 @@ impl OutputRenderer for HumanRenderer {
         } else {
             eprintln!("  \x1b[31mfail\x1b[0m {name}  exit {}  {metrics}", result.exit_code);
         }
+        format_process_tree_human(&result.process_tree);
     }
 
-    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand) {
+    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand, ctx: &CommandContext) {
         eprintln!(
-            "\n\x1b[33mcached\x1b[0m {name}: {}  (ran {})",
+            "\n\x1b[33mcached\x1b[0m {name}: {}  \x1b[2m(ran {})\x1b[0m",
             exec.join(" "),
             format_relative_time(&cached.ran_at),
         );
+        format_command_context_human(exec, ctx);
         let stdout = &cached.stdout;
         let stderr = &cached.stderr;
         if !stdout.is_empty() || !stderr.is_empty() {
@@ -339,6 +583,19 @@ impl OutputRenderer for HumanRenderer {
         }
         let metrics = format_metrics_human(&Metrics::from(cached));
         eprintln!("  \x1b[33mcached\x1b[0m {name}  {metrics}");
+        format_process_tree_human(&cached.process_tree);
+    }
+
+    fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]) {
+        if binaries.is_empty() && env_vars.is_empty() { return; }
+        eprintln!("\n\x1b[33;1mwarning: undeclared dependencies detected at runtime\x1b[0m");
+        eprintln!("  \x1b[2mCache disabled until manifest is updated.\x1b[0m");
+        if !binaries.is_empty() {
+            eprintln!("  \x1b[33mbinaries:\x1b[0m {}", binaries.join(", "));
+        }
+        if !env_vars.is_empty() {
+            eprintln!("  \x1b[33menv vars:\x1b[0m {}", env_vars.join(", "));
+        }
     }
 
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64) {
@@ -419,12 +676,22 @@ impl OutputRenderer for JsonRenderer {
 
 
 
-    fn on_command_start(&mut self, name: &str, exec: &[String]) {
+    fn on_command_start(&mut self, name: &str, exec: &[String], ctx: &CommandContext) {
+        // Resolve exec args to full paths where known
+        let resolved: Vec<String> = exec.iter().map(|arg| {
+            ctx.binary_paths.get(arg.as_str()).cloned().unwrap_or_else(|| arg.clone())
+        }).collect();
+        let env_display: HashMap<&str, &str> = ctx.env_vars.iter()
+            .map(|(k, v)| {
+                if ctx.secret_vars.contains(k.as_str()) { (k.as_str(), "*****") } else { (k.as_str(), v.as_str()) }
+            }).collect();
         self.emit(&serde_json::json!({
             "event": "command_start",
             "phase": "exec",
             "name": name,
             "exec": exec,
+            "resolved_exec": resolved,
+            "env": env_display,
         }));
     }
 
@@ -450,7 +717,7 @@ impl OutputRenderer for JsonRenderer {
         self.emit(&obj);
     }
 
-    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand) {
+    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand, _ctx: &CommandContext) {
         let mut obj = serde_json::json!({
             "event": "command_cached",
             "name": name,
@@ -462,7 +729,22 @@ impl OutputRenderer for JsonRenderer {
         });
         let metrics = format_metrics_json(&Metrics::from(cached));
         obj.as_object_mut().unwrap().extend(metrics.as_object().unwrap().clone());
+        if !cached.process_tree.is_empty() {
+            obj.as_object_mut().unwrap().insert(
+                "process_tree".to_string(),
+                format_process_tree_json(&cached.process_tree),
+            );
+        }
         self.emit(&obj);
+    }
+
+    fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]) {
+        if binaries.is_empty() && env_vars.is_empty() { return; }
+        self.emit(&serde_json::json!({
+            "event": "undeclared_deps",
+            "binaries": binaries,
+            "env_vars": env_vars,
+        }));
     }
 
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64) {
@@ -508,7 +790,7 @@ impl OutputRenderer for CiRenderer {
         eprintln!("::endgroup::");
     }
 
-    fn on_command_start(&mut self, name: &str, exec: &[String]) {
+    fn on_command_start(&mut self, name: &str, exec: &[String], _ctx: &CommandContext) {
         eprintln!("::group::{name}: {}", exec.join(" "));
     }
 
@@ -524,10 +806,18 @@ impl OutputRenderer for CiRenderer {
         } else {
             eprintln!("  [FAIL] {name}  exit {}  {metrics}", result.exit_code);
         }
+        if result.process_tree.len() > 1 {
+            eprintln!("  process tree ({} processes):", result.process_tree.len());
+            for p in &result.process_tree {
+                let label = if p.comm.is_empty() { format!("pid:{}", p.pid) } else { p.comm.clone() };
+                eprintln!("    {} ppid:{} exit:{} {}ms rss:{}",
+                    label, p.ppid, p.exit_code, p.wall_ms, format_bytes(p.max_rss_kb * 1024));
+            }
+        }
         eprintln!("::endgroup::");
     }
 
-    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand) {
+    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand, _ctx: &CommandContext) {
         eprintln!("::group::[CACHE] {name}: {} (ran {})", exec.join(" "), cached.ran_at);
         if !cached.stdout.is_empty() {
             for line in cached.stdout.lines() { eprintln!("    {line}"); }
@@ -537,7 +827,22 @@ impl OutputRenderer for CiRenderer {
         }
         let metrics = format_metrics_ci(&Metrics::from(cached));
         eprintln!("  [CACHE] {name}  {metrics}");
+        if cached.process_tree.len() > 1 {
+            eprintln!("  process tree ({} processes):", cached.process_tree.len());
+            for p in &cached.process_tree {
+                let label = if p.cmdline.is_empty() { &p.comm } else { &p.cmdline };
+                eprintln!("    {} ppid={} exit={} wall={}ms rss={}",
+                    label, p.ppid, p.exit_code, p.wall_ms, format_bytes(p.max_rss_kb * 1024));
+            }
+        }
         eprintln!("::endgroup::");
+    }
+
+    fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]) {
+        if binaries.is_empty() && env_vars.is_empty() { return; }
+        eprintln!("::warning::Undeclared runtime dependencies — cache disabled");
+        if !binaries.is_empty() { eprintln!("  binaries: {}", binaries.join(", ")); }
+        if !env_vars.is_empty() { eprintln!("  env vars: {}", env_vars.join(", ")); }
     }
 
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64) {

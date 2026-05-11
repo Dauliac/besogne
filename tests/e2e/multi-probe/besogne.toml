@@ -1,5 +1,6 @@
 name = "multi-probe"
 description = "Test all native probe types"
+verify_first_run = false
 
 [inputs.HOME]
 type = "env"

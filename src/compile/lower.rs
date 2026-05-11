@@ -67,6 +67,7 @@ pub fn lower_manifest(manifest: &manifest::Manifest) -> Result<BesogneIR, String
         sandbox,
         flags,
         inputs: resolved_inputs,
+        verify_first_run: manifest.verify_first_run,
     })
 }
 

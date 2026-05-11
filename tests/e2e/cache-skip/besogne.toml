@@ -1,5 +1,6 @@
 name = "cache-skip"
 description = "Second run skips if inputs unchanged"
+verify_first_run = true
 
 [inputs.input-file]
 type = "file"

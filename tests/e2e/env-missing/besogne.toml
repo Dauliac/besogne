@@ -1,5 +1,6 @@
 name = "env-missing-fail"
 description = "Fail when required env var is missing (exit 2, no commands run)"
+verify_first_run = false
 
 [inputs.BESOGNE_E2E_REQUIRED_MISSING_VAR]
 type = "env"

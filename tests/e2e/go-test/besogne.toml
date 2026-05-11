@@ -1,5 +1,6 @@
 name = "go-test"
 description = "Run Go tests"
+verify_first_run = false
 
 [inputs.go]
 type = "binary"

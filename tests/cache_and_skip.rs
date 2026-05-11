@@ -67,6 +67,7 @@ fn test_no_skip_when_cache_disabled() {
         format!(
             r#"
 name = "no-skip-test"
+verify_first_run = false
 description = "No skip with side effects"
 
 [inputs.write-marker]
@@ -110,6 +111,7 @@ fn test_rusage_metrics_populated() {
         &manifest,
         r#"
 name = "rusage-test"
+verify_first_run = false
 description = "Test rusage metrics"
 
 [inputs.busy]
@@ -150,6 +152,7 @@ fn test_parallel_warmup_all_probed() {
         format!(
             r#"
 name = "parallel-warmup"
+verify_first_run = false
 description = "Test all warmup probes run"
 
 [inputs.HOME]
@@ -217,6 +220,7 @@ fn test_env_isolation_strict() {
         &manifest,
         r#"
 name = "strict-test"
+verify_first_run = false
 description = "Test strict env isolation"
 sandbox = "strict"
 

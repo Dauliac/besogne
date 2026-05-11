@@ -1,5 +1,6 @@
 name = "cache-invalidate"
 description = "Re-runs when input file changes"
+verify_first_run = false
 
 [inputs.input-file]
 type = "file"

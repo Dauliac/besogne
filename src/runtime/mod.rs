@@ -40,30 +40,6 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     let build_inputs: Vec<&ResolvedInput> = ir.inputs.iter().filter(|i| i.phase == Phase::Build).collect();
     let pre_inputs: Vec<&ResolvedInput> = ir.inputs.iter().filter(|i| i.phase == Phase::Pre).collect();
 
-    // 1. Show build-sealed inputs (resolved at compile time)
-    if !build_inputs.is_empty() {
-        renderer.on_phase_start("build", build_inputs.len());
-        for input in &build_inputs {
-            let result = if let Some(snapshot) = &input.sealed {
-                probe::ProbeResult {
-                    success: true,
-                    hash: snapshot.hash.clone(),
-                    variables: HashMap::new(),
-                    error: None,
-                }
-            } else {
-                probe::ProbeResult {
-                    success: true,
-                    hash: String::new(),
-                    variables: HashMap::new(),
-                    error: None,
-                }
-            };
-            renderer.on_probe_result(input, &result, output::ProbeStatus::Sealed);
-        }
-        renderer.on_phase_end("build");
-    }
-
     // 2. Pre-phase — check preconditions
     let warmup_cached = !args.force && !args.verify && pre_inputs.iter().all(|input| {
         if context.get_probe(&input.id.0).is_none() {
@@ -83,6 +59,35 @@ pub fn run(ir: BesogneIR) -> ExitCode {
             _ => true,
         }
     });
+
+    // 1. Show build-sealed inputs — use Cached status on subsequent runs
+    let build_status = if warmup_cached {
+        output::ProbeStatus::Cached
+    } else {
+        output::ProbeStatus::Sealed
+    };
+    if !build_inputs.is_empty() {
+        renderer.on_phase_start("build", build_inputs.len());
+        for input in &build_inputs {
+            let result = if let Some(snapshot) = &input.sealed {
+                probe::ProbeResult {
+                    success: true,
+                    hash: snapshot.hash.clone(),
+                    variables: HashMap::new(),
+                    error: None,
+                }
+            } else {
+                probe::ProbeResult {
+                    success: true,
+                    hash: String::new(),
+                    variables: HashMap::new(),
+                    error: None,
+                }
+            };
+            renderer.on_probe_result(input, &result, build_status);
+        }
+        renderer.on_phase_end("build");
+    }
 
     if warmup_cached {
         renderer.on_phase_start("pre", pre_inputs.len());
@@ -109,7 +114,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
             .to_string();
 
         if !has_side_effects(&ir) && context.can_skip(&input_hash) {
-            replay_cached_commands(&ir, &context, &mut *renderer);
+            replay_cached_commands(&ir, &context, &mut *renderer, &all_vars);
             let wall_ms = start.elapsed().as_millis() as u64;
             renderer.on_summary(0, wall_ms);
             return ExitCode::SUCCESS;
@@ -173,7 +178,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         .to_string();
 
     if !has_side_effects(&ir) && context.can_skip(&input_hash) {
-        replay_cached_commands(&ir, &context, &mut *renderer);
+        replay_cached_commands(&ir, &context, &mut *renderer, &all_variables);
         let wall_ms = start.elapsed().as_millis() as u64;
         renderer.on_summary(0, wall_ms);
         return ExitCode::SUCCESS;
@@ -189,16 +194,17 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     // Idempotency verification:
     // - Automatic on first run (no cache, not yet verified) — detect issues early, WARN only
     // - Forced with --verify — strict mode, FAIL on non-idempotent
-    // Auto-verify on first run disabled — too disruptive (runs DAG twice silently).
-    // Use explicit --verify when ready.
-    let should_verify = args.verify;
+    // Idempotency verification triggers on:
+    // 1. Explicit --verify flag (strict: fails on non-idempotent)
+    // 2. First run when manifest declares verify_first_run (warn only)
+    let first_run = context.last_run.is_none() && !context.verified;
+    let should_verify = args.verify || (first_run && ir.verify_first_run);
 
     if should_verify {
         let explicit = args.verify;
-        let reason = if explicit { "explicit --verify" } else { "first run (automatic)" };
-        eprintln!("\x1b[2mbesogne: idempotency check: {reason}\x1b[0m");
+        let json_mode = args.log_format == cli::LogFormat::Json;
 
-        let results = verify::verify_idempotency(&ir, &all_variables, &mut *renderer);
+        let results = verify::verify_idempotency(&ir, &all_variables, &mut *renderer, json_mode);
 
         // Store verification results in cache
         context.verified = true;
@@ -212,28 +218,11 @@ pub fn run(ir: BesogneIR) -> ExitCode {
 
         if !all_ok && explicit {
             // Explicit --verify: fail hard
-            eprintln!("\n\x1b[33mhint:\x1b[0m add side_effects = true to these commands:");
-            for name in &context.non_idempotent {
-                eprintln!("  [inputs.{name}]");
-                eprintln!("  side_effects = true");
-            }
             let wall_ms = start.elapsed().as_millis() as u64;
-            context.set_last_run(input_hash, 3, start.elapsed().as_millis() as u64);
+            context.set_last_run(input_hash, 3, wall_ms);
             let _ = context.save();
             renderer.on_summary(3, wall_ms);
             return ExitCode::from(3);
-        }
-
-        if !all_ok && !explicit {
-            // First-run automatic: warn but continue
-            eprintln!(
-                "\x1b[33mwarning: some commands are not idempotent (see above)\x1b[0m"
-            );
-            eprintln!("\x1b[33mhint:\x1b[0m add side_effects = true to these commands:");
-            for name in &context.non_idempotent {
-                eprintln!("  [inputs.{name}]");
-                eprintln!("  side_effects = true");
-            }
         }
 
         // Store the result — second run is the "real" run
@@ -243,6 +232,17 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         let wall_ms = start.elapsed().as_millis() as u64;
         renderer.on_summary(0, wall_ms);
         return ExitCode::SUCCESS;
+    }
+
+    // Not first run — show one-liner that idempotency was already checked
+    if context.verified {
+        verify::display_already_verified();
+        if !context.non_idempotent.is_empty() {
+            eprintln!(
+                "\x1b[33m  non-idempotent: {}\x1b[0m",
+                context.non_idempotent.join(", ")
+            );
+        }
     }
 
     execute_dag(&ir, all_variables, input_hash, &mut *renderer, &mut context, start)
@@ -275,6 +275,52 @@ fn execute_dag(
 
     let mut last_exit_code = 0;
 
+    // Build binary name → resolved path map from build-phase inputs
+    let binary_paths: HashMap<String, String> = ir.inputs.iter()
+        .filter_map(|i| match &i.input {
+            ResolvedNativeInput::Binary { name, resolved_path: Some(path), .. } => {
+                Some((name.clone(), path.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+
+    // Build binary name → version map
+    let binary_versions: HashMap<String, String> = ir.inputs.iter()
+        .filter_map(|i| match &i.input {
+            ResolvedNativeInput::Binary { name, resolved_version: Some(ver), .. } => {
+                Some((name.clone(), ver.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+
+    // Build set of secret env var names
+    let secret_vars: std::collections::HashSet<String> = ir.inputs.iter()
+        .filter_map(|i| match &i.input {
+            ResolvedNativeInput::Env { name, secret: true, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+
+    // Collect all declared binary names for undeclared dep detection
+    let declared_binaries: std::collections::HashSet<String> = ir.inputs.iter()
+        .filter_map(|i| match &i.input {
+            ResolvedNativeInput::Binary { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+
+    // Collect all declared env var names
+    let declared_env: std::collections::HashSet<String> = ir.inputs.iter()
+        .filter_map(|i| match &i.input {
+            ResolvedNativeInput::Env { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+
+    let mut undeclared_binaries: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     let input_by_id: HashMap<_, _> = ir
         .inputs
         .iter()
@@ -301,7 +347,13 @@ fn execute_dag(
                     let mut cmd_env = all_variables.clone();
                     cmd_env.extend(env.clone());
 
-                    renderer.on_command_start(name, run);
+                    let ctx = output::CommandContext {
+                        binary_paths: &binary_paths,
+                        binary_versions: &binary_versions,
+                        env_vars: &cmd_env,
+                        secret_vars: &secret_vars,
+                    };
+                    renderer.on_command_start(name, run, &ctx);
 
                     let result = match tracer::execute_traced(run, &cmd_env, &ir.sandbox.env) {
                         Ok(r) => r,
@@ -316,6 +368,21 @@ fn execute_dag(
                     let cmd_stderr = String::from_utf8_lossy(&result.stderr).to_string();
                     renderer.on_command_output(name, &stdout, &cmd_stderr);
                     renderer.on_command_end(name, &result);
+
+                    // Detect undeclared binaries from process tree
+                    let run_basenames: std::collections::HashSet<&str> = run.iter()
+                        .filter_map(|a| a.rsplit('/').next())
+                        .collect();
+                    for proc in &result.process_tree {
+                        if proc.comm.is_empty() { continue; }
+                        let comm = &proc.comm;
+                        // Skip: declared binaries, shell interpreters, the run command itself
+                        if declared_binaries.contains(comm) { continue; }
+                        if run_basenames.contains(comm.as_str()) { continue; }
+                        // Skip common shells (they're the interpreter, not a dependency)
+                        if ["bash", "sh", "dash", "zsh", "fish", "csh", "tcsh"].contains(&comm.as_str()) { continue; }
+                        undeclared_binaries.insert(comm.clone());
+                    }
 
                     // Cache command output for replay on future skips
                     context.set_command(
@@ -333,6 +400,7 @@ fn execute_dag(
                             net_read_bytes: result.net_read_bytes,
                             net_write_bytes: result.net_write_bytes,
                             processes_spawned: result.processes_spawned,
+                            process_tree: result.process_tree.clone(),
                             ran_at: chrono::Utc::now().to_rfc3339(),
                         },
                     );
@@ -376,8 +444,20 @@ fn execute_dag(
         }
     }
 
+    // Report undeclared dependencies and poison cache if found
+    let undeclared_bins: Vec<String> = undeclared_binaries.into_iter().collect();
+    if !undeclared_bins.is_empty() {
+        renderer.on_undeclared_deps(&undeclared_bins, &[]);
+    }
+
     let wall_ms = start.elapsed().as_millis() as u64;
-    context.set_last_run(input_hash, last_exit_code, wall_ms);
+    if undeclared_bins.is_empty() {
+        context.set_last_run(input_hash, last_exit_code, wall_ms);
+    } else {
+        // Poison: store the run but with a special hash that will never match,
+        // so the cache can't be used for skipping until manifest is updated.
+        context.set_last_run("__undeclared_deps__".to_string(), last_exit_code, wall_ms);
+    }
     let _ = context.save();
     renderer.on_summary(last_exit_code, wall_ms);
     ExitCode::from(last_exit_code as u8)
@@ -432,14 +512,47 @@ fn replay_cached_commands(
     ir: &BesogneIR,
     context: &ContextCache,
     renderer: &mut dyn output::OutputRenderer,
+    all_variables: &HashMap<String, String>,
 ) {
+    // Build context maps (same as execute_dag)
+    let binary_paths: HashMap<String, String> = ir.inputs.iter()
+        .filter_map(|i| match &i.input {
+            ResolvedNativeInput::Binary { name, resolved_path: Some(path), .. } => {
+                Some((name.clone(), path.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let binary_versions: HashMap<String, String> = ir.inputs.iter()
+        .filter_map(|i| match &i.input {
+            ResolvedNativeInput::Binary { name, resolved_version: Some(ver), .. } => {
+                Some((name.clone(), ver.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let secret_vars: std::collections::HashSet<String> = ir.inputs.iter()
+        .filter_map(|i| match &i.input {
+            ResolvedNativeInput::Env { name, secret: true, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+
     for input in &ir.inputs {
         if input.phase != Phase::Exec {
             continue;
         }
-        if let ResolvedNativeInput::Command { name, run, .. } = &input.input {
+        if let ResolvedNativeInput::Command { name, run, env, .. } = &input.input {
             if let Some(cached) = context.get_command(name) {
-                renderer.on_command_cached(name, run, cached);
+                let mut cmd_env = all_variables.clone();
+                cmd_env.extend(env.clone());
+                let ctx = output::CommandContext {
+                    binary_paths: &binary_paths,
+                    binary_versions: &binary_versions,
+                    env_vars: &cmd_env,
+                    secret_vars: &secret_vars,
+                };
+                renderer.on_command_cached(name, run, cached, &ctx);
             }
         }
     }

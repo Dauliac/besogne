@@ -43,5 +43,8 @@ chrono = { version = "0.4", features = ["serde"] }
 # Syscalls
 libc = "0.2"
 
+# Diff output for idempotency verification
+similar = "2"
+
 [dev-dependencies]
 tempfile = "3"

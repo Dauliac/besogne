@@ -55,6 +55,8 @@ pub struct CachedCommand {
     pub net_write_bytes: u64,
     #[serde(default)]
     pub processes_spawned: u64,
+    #[serde(default)]
+    pub process_tree: Vec<crate::tracer::ProcessMetrics>,
     pub ran_at: String,
 }
 
@@ -244,6 +246,7 @@ fn cache_schema_hash() -> String {
         net_read_bytes: 0,
         net_write_bytes: 0,
         processes_spawned: 0,
+        process_tree: vec![],
         ran_at: "x".into(),
     });
     let json = serde_json::to_string(&canary).unwrap_or_default();

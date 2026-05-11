@@ -227,11 +227,10 @@ fn extract_version(
         BinarySourceResolved::Nix { .. } => nix_version(canonical_path),
         BinarySourceResolved::Mise { .. } => mise_version(canonical_path),
         BinarySourceResolved::System => {
-            if probe_version_flag {
-                probe_version_from_binary(canonical_path)
-            } else {
-                None
-            }
+            // Always probe version for System binaries — UX display only.
+            // The binary BLAKE3 hash is the real cache key, so imperfect
+            // version detection is fine.
+            probe_version_from_binary(canonical_path)
         }
     }
 }
@@ -266,28 +265,73 @@ fn mise_version(canonical_path: &PathBuf) -> Option<String> {
 }
 
 /// Probe version by executing binary with --version/-v/version flags.
-/// ONLY called when explicitly requested (user set `version` field on a System binary).
+///
+/// Uses a multi-strategy approach to extract version from diverse output formats:
+/// - GNU coreutils: `tee (GNU coreutils) 9.4`
+/// - Standard: `bat 0.26.1`, `go version go1.22.0 linux/amd64`
+/// - Semver with pre-release: `node v22.11.0`, `rust 1.82.0-nightly`
+/// - Multi-line: version on first meaningful line
+///
+/// This is for UX display only — the binary BLAKE3 hash is the real cache key.
 fn probe_version_from_binary(binary_path: &PathBuf) -> Option<String> {
-    let version_regex = regex::Regex::new(r"\d+\.\d+(\.\d+)?").ok()?;
+    // Full semver + pre-release + build metadata
+    // Matches: 9.4, 1.22.0, 0.26.1, 1.82.0-nightly, 1.2.3+build.42
+    let version_regex = regex::Regex::new(
+        r"[vV]?(\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9._]+)?(?:\+[a-zA-Z0-9._]+)?)"
+    ).ok()?;
 
     for flag in &["--version", "-v", "version"] {
-        if let Ok(output) = std::process::Command::new(binary_path)
+        let output = std::process::Command::new(binary_path)
             .arg(flag)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let combined = format!("{stdout}{stderr}");
+            .ok()?;
 
-            if let Some(m) = version_regex.find(&combined) {
-                return Some(m.as_str().to_string());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // Try first line of stdout first (most tools put version there)
+        // then fall back to stderr, then full output
+        let first_line = stdout.lines().next().unwrap_or("");
+        let candidates = [first_line, &stdout, &String::from_utf8_lossy(&output.stderr)];
+
+        for text in &candidates {
+            if let Some(ver) = extract_version_from_text(text, &version_regex) {
+                return Some(ver);
             }
         }
     }
     None
+}
+
+/// Extract a version string from text output, handling common formats.
+fn extract_version_from_text(text: &str, re: &regex::Regex) -> Option<String> {
+    if text.trim().is_empty() {
+        return None;
+    }
+
+    // Find the first version-like match
+    let caps = re.captures(text)?;
+    let version = caps.get(1)?.as_str().to_string();
+
+    // Sanity: reject implausible matches (e.g., dates like 2023.01.01 from copyright lines)
+    // A version should not start with 19xx or 20xx followed by month-like numbers
+    if version.starts_with("19") || version.starts_with("20") {
+        let parts: Vec<&str> = version.split('.').collect();
+        if parts.len() >= 2 {
+            if let Ok(second) = parts[1].parse::<u32>() {
+                if second >= 1 && second <= 12 {
+                    // Looks like a date (2023.01, 2024.12), skip and try next match
+                    let remaining = &text[caps.get(0)?.end()..];
+                    return extract_version_from_text(remaining, re);
+                }
+            }
+        }
+    }
+
+    Some(version)
 }
 
 // ─── PATH resolution ────────────────────────────────────────────

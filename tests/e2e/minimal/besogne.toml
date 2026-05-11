@@ -1,5 +1,6 @@
 name = "minimal"
 description = "Smallest valid besogne"
+verify_first_run = false
 
 [inputs.hello]
 type = "command"

@@ -1,4 +1,5 @@
 name = "isolation-strict"
+verify_first_run = false
 description = "Strict env sandbox — only declared vars visible"
 sandbox = "strict"
 

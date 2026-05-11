@@ -1,5 +1,6 @@
 name = "pipe-exec"
 description = "Test pipe exec form — echo | tr"
+verify_first_run = false
 
 [inputs.echo-bin]
 type = "binary"
