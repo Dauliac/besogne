@@ -1,0 +1,47 @@
+[package]
+name = "besogne"
+version = "0.1.0"
+edition = "2021"
+description = "Compile JSON manifests into self-contained instrumented binaries"
+license = "MIT"
+
+[dependencies]
+# Manifest parsing
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# IR serialization (compact binary format for embedding)
+bincode = "1"
+
+# Content hashing
+blake3 = "1"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+clap_mangen = "0.2"
+
+# Config file formats
+serde_yaml = "0.9"
+toml = "0.8"
+
+# DAG operations
+petgraph = "0.6"
+
+# Parallelism (scoped threads)
+crossbeam = "0.8"
+
+# Version range checking
+semver = "1"
+
+# Pattern matching
+regex = "1"
+
+# Timestamps
+chrono = { version = "0.4", features = ["serde"] }
+
+# Syscalls
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

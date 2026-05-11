@@ -1,0 +1,14 @@
+[tasks.compile]
+run = "besogne build -i manifest.json -o ./task"
+
+[tasks.run]
+run = "./task"
+depends = ["compile"]
+
+[tasks.run-twice]
+description = "Run twice — second should skip"
+run = "./task && echo '--- second run ---' && ./task"
+depends = ["compile"]
+
+[tasks.clean]
+run = "rm -f ./task marker.txt"

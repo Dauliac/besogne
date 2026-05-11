@@ -1,0 +1,22 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Nix
+/result
+/result-*
+
+# OS
+.DS_Store
+
+# Besogne
+.cimera/
+
+# Generated
+docs/book/
+node_modules/
+
+# Temp
+toto
+toto.bash
+tata.sh

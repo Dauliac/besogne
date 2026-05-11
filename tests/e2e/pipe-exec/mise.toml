@@ -1,0 +1,9 @@
+[tasks.compile]
+run = "besogne build -i manifest.json -o ./task"
+
+[tasks.run]
+run = "./task"
+depends = ["compile"]
+
+[tasks.clean]
+run = "rm -f ./task"

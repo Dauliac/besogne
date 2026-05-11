@@ -1,0 +1,10 @@
+{
+  "name": "besogne-e2e-ci",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "lint": "echo 'lint: no issues'",
+    "test": "echo 'test: 5 passed, 0 failed'",
+    "build": "echo 'build: dist/app.js created'"
+  }
+}

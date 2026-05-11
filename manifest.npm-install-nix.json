@@ -1,0 +1,26 @@
+{
+  "name": "npm-install-nix",
+  "description": "Install Node.js dependencies (Nix devShell)",
+  "idempotent": true,
+  "sandbox": "strict",
+
+  "flags": [
+    { "name": "frozen-lockfile", "kind": "bool", "description": "Use npm ci (strict lockfile)" },
+    { "name": "verbose", "kind": "bool", "description": "Enable verbose npm output" }
+  ],
+
+  "inputs": [
+    { "key": "nodejs", "type": "plugin", "plugin": "nix/package",
+      "out": "/nix/store/abc-nodejs-20.11.0", "bins": ["node", "npm", "npx"] },
+
+    { "type": "file", "path": "package.json" },
+    { "type": "file", "path": "package-lock.json" },
+
+    { "type": "command", "name": "install", "phase": "exec",
+      "run": ["sh", "-c", "if [ \"$NPM_INSTALL_NIX_FROZEN_LOCKFILE\" = 1 ]; then npm ci; else npm install; fi"],
+      "ensure": [
+        { "type": "file", "path": "node_modules", "expect": "directory", "required": true }
+      ]
+    }
+  ]
+}

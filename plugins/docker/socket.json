@@ -1,0 +1,14 @@
+{
+  "name": "docker/socket",
+  "description": "Validate Docker socket exists and is accessible",
+  "params": {
+    "path": { "type": "string", "optional": true, "default": "/var/run/docker.sock" }
+  },
+  "produces": [
+    {
+      "type": "file",
+      "path": "{{ path }}",
+      "expect": "socket"
+    }
+  ]
+}

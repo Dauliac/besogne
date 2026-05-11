@@ -1,0 +1,13 @@
+[env]
+BESOGNE_E2E_SECRET = "super-secret-value"
+
+[tasks.compile]
+run = "besogne build -i manifest.json -o ./task"
+
+[tasks.run]
+description = "Secret value should NOT appear in besogne output"
+run = "./task 2>&1 | grep -v 'super-secret-value' && echo 'OK: secret not leaked'"
+depends = ["compile"]
+
+[tasks.clean]
+run = "rm -f ./task"

@@ -1,0 +1,25 @@
+{
+  "name": "git/clean",
+  "description": "Validate git working tree has no uncommitted changes",
+  "params": {
+    "ref": { "type": "string", "optional": true, "default": "HEAD" }
+  },
+  "produces": [
+    {
+      "type": "command",
+      "description": "git tree clean",
+      "run": ["git", "diff", "--quiet", "{{ ref }}"]
+    },
+    {
+      "type": "command",
+      "description": "git dirty files",
+      "run": ["git", "status", "--porcelain"],
+      "extract": {
+        "format": "text",
+        "fields": {
+          "GIT_DIRTY_FILES": "stdout"
+        }
+      }
+    }
+  ]
+}

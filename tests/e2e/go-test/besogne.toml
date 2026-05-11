@@ -1,0 +1,28 @@
+name = "go-test"
+description = "Run Go tests"
+
+[inputs.go]
+type = "binary"
+
+[inputs.go-mod]
+type = "file"
+path = "go.mod"
+
+[inputs.main-go]
+type = "file"
+path = "main.go"
+
+[inputs.test-go]
+type = "file"
+path = "main_test.go"
+
+[inputs.mod-download]
+type = "command"
+phase = "exec"
+run = ["go", "mod", "download"]
+
+[inputs.test]
+type = "command"
+phase = "exec"
+run = ["go", "test", "-v", "./..."]
+after = ["mod-download"]

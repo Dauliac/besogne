@@ -1,0 +1,15 @@
+name = "pipe-exec"
+description = "Test pipe exec form — echo | tr"
+
+[inputs.echo-bin]
+type = "binary"
+name = "echo"
+
+[inputs.tr-bin]
+type = "binary"
+name = "tr"
+
+[inputs.pipe-test]
+type = "command"
+phase = "exec"
+run = { pipe = [["echo", "hello world"], ["tr", "a-z", "A-Z"]] }

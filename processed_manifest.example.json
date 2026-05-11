@@ -1,0 +1,66 @@
+{
+  "name": "npm-install",
+  "version": "0.1.0",
+  "description": "Install Node.js dependencies (Nix devShell)",
+  "cache": true,
+  "isolation": { "env": "strict" },
+
+  "inputs": [
+    { "id": "file:/nix/store/abc-nodejs-20.11.0:blake3:a1b2",
+      "type": "file", "path": "/nix/store/abc-nodejs-20.11.0",
+      "expect": "directory", "stage": "compile", "build_check": true,
+      "_from": "nodejs",
+      "metadata": { "nix_name": "nodejs-20.11.0", "nix_pname": "nodejs", "nix_version": "20.11.0", "nix_output": "out" }
+    },
+    { "id": "binary:node:blake3:e5f6",
+      "type": "binary", "name": "node",
+      "path": "/nix/store/abc-nodejs-20.11.0/bin/node", "stage": "compile", "build_check": true,
+      "_from": "nodejs",
+      "metadata": { "nix_pname": "nodejs", "nix_version": "20.11.0" }
+    },
+    { "id": "binary:npm:blake3:c9d0",
+      "type": "binary", "name": "npm",
+      "path": "/nix/store/abc-nodejs-20.11.0/bin/npm", "stage": "compile", "build_check": true,
+      "_from": "nodejs",
+      "metadata": { "nix_pname": "nodejs", "nix_version": "20.11.0" }
+    },
+    { "id": "binary:npx:blake3:a3b4",
+      "type": "binary", "name": "npx",
+      "path": "/nix/store/abc-nodejs-20.11.0/bin/npx", "stage": "compile", "build_check": true,
+      "_from": "nodejs",
+      "metadata": { "nix_pname": "nodejs", "nix_version": "20.11.0" }
+    },
+    { "id": "platform:linux-x86_64:blake3:e7f8",
+      "type": "platform", "os": "linux", "arch": "x86_64",
+      "stage": "compile", "_from": "nodejs"
+    },
+
+    { "id": "file:package.json:blake3:1c2d",
+      "type": "file", "path": "package.json", "stage": "warmup" },
+    { "id": "file:package-lock.json:blake3:5a6b",
+      "type": "file", "path": "package-lock.json", "stage": "warmup" },
+
+    { "id": "command:install:blake3:9e0f",
+      "type": "command", "name": "install", "stage": "runtime",
+      "exec": ["/nix/store/abc-nodejs-20.11.0/bin/npm", "ci"],
+      "outputs": [
+        { "type": "file", "path": "node_modules", "expect": "directory", "required": true }
+      ],
+      "resolved_inputs": [
+        { "id": "binary:npm:blake3:c9d0",
+          "type": "binary", "name": "npm",
+          "path": "/nix/store/abc-nodejs-20.11.0/bin/npm",
+          "version": "10.2.4",
+          "hash": "blake3:5e6f7a8b...",
+          "metadata": { "nix_pname": "nodejs", "nix_version": "20.11.0" }
+        },
+        { "id": "file:package.json:blake3:1c2d",
+          "type": "file", "path": "package.json"
+        },
+        { "id": "file:package-lock.json:blake3:5a6b",
+          "type": "file", "path": "package-lock.json"
+        }
+      ]
+    }
+  ]
+}

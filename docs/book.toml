@@ -1,0 +1,11 @@
+[book]
+authors = ["Julien Dauliac"]
+language = "en"
+src = "src"
+title = "besogne"
+description = "Declarative contracts for shell commands"
+
+[output.html]
+default-theme = "coal"
+preferred-dark-theme = "coal"
+git-repository-url = "https://github.com/Dauliac/besogne"

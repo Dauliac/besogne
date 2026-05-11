@@ -1,0 +1,9 @@
+[tasks.compile]
+run = "besogne build -i manifest.json -o ./task"
+
+[tasks.run]
+run = "./task && echo '--- execution order ---' && cat order.txt"
+depends = ["compile"]
+
+[tasks.clean]
+run = "rm -f ./task order.txt"

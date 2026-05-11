@@ -1,0 +1,24 @@
+name = "npm-install"
+description = "Install npm dependencies"
+idempotent = true
+
+[inputs.node]
+type = "binary"
+
+[inputs.npm]
+type = "binary"
+
+[inputs.package-json]
+type = "file"
+path = "package.json"
+
+[inputs.install]
+type = "command"
+phase = "exec"
+run = ["npm", "install"]
+
+[[inputs.install.ensure]]
+type = "file"
+path = "node_modules"
+expect = "directory"
+required = true

@@ -1,0 +1,8 @@
+marker.txt
+order.txt
+leaked.txt
+node_modules/
+dist/
+besogne-out
+task
+.cache/

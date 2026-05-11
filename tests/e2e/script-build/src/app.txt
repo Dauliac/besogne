@@ -1,0 +1,2 @@
+this is the source code
+it gets copied to dist during build

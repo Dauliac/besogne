@@ -1,0 +1,46 @@
+{
+  "name": "aws-ecr-login",
+  "description": "Authenticate Docker to AWS ECR registry",
+  "idempotent": true,
+  "sandbox": { "preset": "strict", "network": "host" },
+
+  "flags": [
+    { "name": "region", "kind": "string", "default": "eu-west-1",
+      "description": "AWS region for the ECR registry" },
+    { "name": "account-id", "kind": "string", "required": true,
+      "description": "AWS account ID (12-digit)" },
+    { "name": "profile", "kind": "string",
+      "description": "AWS CLI profile to use" }
+  ],
+
+  "inputs": [
+    { "type": "binary", "name": "aws" },
+    { "type": "binary", "name": "docker" },
+
+    { "type": "env", "name": "AWS_ACCESS_KEY_ID", "secret": true, "on_missing": "skip" },
+    { "type": "env", "name": "AWS_SECRET_ACCESS_KEY", "secret": true, "on_missing": "skip" },
+
+    { "key": "aws-session", "type": "plugin", "plugin": "aws/session" },
+    { "key": "docker-daemon", "type": "plugin", "plugin": "docker/daemon" },
+
+    { "type": "command", "name": "get-token", "phase": "exec",
+      "run": ["sh", "-c", "aws ecr get-login-password --region $AWS_ECR_LOGIN_REGION ${AWS_ECR_LOGIN_PROFILE:+--profile $AWS_ECR_LOGIN_PROFILE}"],
+      "extract": { "format": "text", "fields": { "ECR_TOKEN": "stdout" } }
+    },
+
+    { "type": "command", "name": "docker-login", "phase": "exec",
+      "run": { "pipe": [
+        ["echo", "$ECR_TOKEN"],
+        ["docker", "login", "--username", "AWS", "--password-stdin",
+          "$AWS_ECR_LOGIN_ACCOUNT_ID.dkr.ecr.$AWS_ECR_LOGIN_REGION.amazonaws.com"]
+      ]},
+      "after": ["get-token"]
+    },
+
+    { "type": "service", "name": "verify-login", "phase": "exec",
+      "http": "https://$AWS_ECR_LOGIN_ACCOUNT_ID.dkr.ecr.$AWS_ECR_LOGIN_REGION.amazonaws.com/v2/",
+      "validate": { "status": { "type": "integer", "values": [200] } },
+      "after": ["docker-login"]
+    }
+  ]
+}

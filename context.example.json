@@ -1,0 +1,104 @@
+{
+  "besogne_hash": "blake3:f0e1d2c3...",
+  "isolation": { "env": "strict" },
+  "probed_at": "2026-05-07T14:32:01Z",
+
+  "compile": {
+    "file:/nix/store/abc-nodejs-20.11.0:blake3:a1b2": {
+      "type": "file",
+      "path": "/nix/store/abc-nodejs-20.11.0",
+      "expect": "directory",
+      "exists": true,
+      "hash": "blake3:9f8e7d6c...",
+      "verified_at_build": "2026-05-07T14:00:00Z",
+      "runtime_stat": { "exists": true }
+    },
+    "binary:node:blake3:e5f6": {
+      "type": "binary",
+      "name": "node",
+      "path": "/nix/store/abc-nodejs-20.11.0/bin/node",
+      "version": "20.11.0",
+      "hash": "blake3:1a2b3c4d...",
+      "size": 92340224,
+      "verified_at_build": "2026-05-07T14:00:00Z",
+      "runtime_stat": { "exists": true, "mtime": "2026-03-01T00:00:00Z" }
+    },
+    "binary:npm:blake3:c9d0": {
+      "type": "binary",
+      "name": "npm",
+      "path": "/nix/store/abc-nodejs-20.11.0/bin/npm",
+      "version": "10.2.4",
+      "hash": "blake3:5e6f7a8b...",
+      "size": 2457,
+      "verified_at_build": "2026-05-07T14:00:00Z",
+      "runtime_stat": { "exists": true, "mtime": "2026-03-01T00:00:00Z" }
+    },
+    "binary:npx:blake3:a3b4": {
+      "type": "binary",
+      "name": "npx",
+      "path": "/nix/store/abc-nodejs-20.11.0/bin/npx",
+      "version": "10.2.4",
+      "hash": "blake3:7c8d9e0f...",
+      "size": 2301,
+      "verified_at_build": "2026-05-07T14:00:00Z",
+      "runtime_stat": { "exists": true, "mtime": "2026-03-01T00:00:00Z" }
+    },
+    "platform:linux-x86_64:blake3:e7f8": {
+      "type": "platform",
+      "os": "linux",
+      "arch": "x86_64",
+      "kernel": "6.8.0-111-generic",
+      "verified_at_build": "2026-05-07T14:00:00Z"
+    }
+  },
+
+  "warmup": {
+    "file:package.json:blake3:1c2d": {
+      "type": "file",
+      "path": "package.json",
+      "hash": "blake3:7d865e9a...",
+      "mtime": "2026-05-06T10:15:00Z",
+      "size": 1423,
+      "perms": "0644",
+      "probed_at": "2026-05-07T14:32:01Z"
+    },
+    "file:package-lock.json:blake3:5a6b": {
+      "type": "file",
+      "path": "package-lock.json",
+      "hash": "blake3:3e23e81b...",
+      "mtime": "2026-05-06T10:15:00Z",
+      "size": 248210,
+      "perms": "0644",
+      "probed_at": "2026-05-07T14:32:01Z"
+    }
+  },
+
+  "runtime": {
+    "command:install:blake3:9e0f": {
+      "type": "command",
+      "name": "install",
+      "exit_code": 0,
+      "output_hash": "blake3:4a5b6c7d...",
+      "outputs": {
+        "node_modules": {
+          "exists": true,
+          "type": "directory",
+          "mtime": "2026-05-07T14:32:15Z",
+          "fingerprint": "mtime"
+        }
+      },
+      "resolved_inputs_hash": "blake3:aabb...",
+      "ran_at": "2026-05-07T14:32:05Z",
+      "duration_ms": 10234
+    }
+  },
+
+  "last_run": {
+    "input_hash": "blake3:aabbccdd...",
+    "output_hash": "blake3:eeff0011...",
+    "exit_code": 0,
+    "ran_at": "2026-05-07T14:32:05Z",
+    "duration_ms": 10234,
+    "skipped": false
+  }
+}

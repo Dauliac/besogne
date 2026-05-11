@@ -1,0 +1,48 @@
+name = "script-build"
+description = "Build pipeline using a shell script with env vars and outputs"
+
+[inputs.sh]
+type = "binary"
+
+[inputs.build-script]
+type = "file"
+path = "build.sh"
+
+[inputs.source-file]
+type = "file"
+path = "src/app.txt"
+
+[inputs.PROJECT_NAME]
+type = "env"
+value = "myapp"
+
+[inputs.PROJECT_VERSION]
+type = "env"
+value = "1.0.0"
+
+[inputs.setup]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "mkdir -p dist"]
+
+[inputs.build]
+type = "command"
+phase = "exec"
+run = { file = "./build.sh" }
+after = ["setup"]
+
+[[inputs.build.ensure]]
+type = "file"
+path = "dist/result.json"
+required = true
+
+[[inputs.build.ensure]]
+type = "file"
+path = "dist/build.log"
+required = true
+
+[inputs.verify]
+type = "command"
+phase = "exec"
+run = ["cat", "dist/result.json"]
+after = ["build"]

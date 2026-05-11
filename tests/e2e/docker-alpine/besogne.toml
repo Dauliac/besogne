@@ -1,0 +1,10 @@
+name = "docker-alpine"
+description = "Run a command inside an Alpine container"
+
+[inputs.docker]
+type = "binary"
+
+[inputs.run-alpine]
+type = "command"
+phase = "exec"
+run = ["docker", "run", "--rm", "alpine:3.20", "echo", "hello from alpine"]

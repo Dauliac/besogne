@@ -1,0 +1,10 @@
+[tasks.compile]
+run = "besogne build -i manifest.json -o ./task"
+
+[tasks.run]
+description = "Should fail — dependent command must NOT run"
+run = "./task; echo 'exit code:' $?; test ! -f leaked.txt && echo 'OK: leaked.txt not created'"
+depends = ["compile"]
+
+[tasks.clean]
+run = "rm -f ./task leaked.txt"

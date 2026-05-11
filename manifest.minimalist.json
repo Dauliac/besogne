@@ -1,0 +1,23 @@
+{
+  "name": "build-and-test",
+  "description": "Build and test a Go project",
+
+  "flags": [
+    { "name": "verbose", "kind": "bool", "description": "Enable verbose build/test output" },
+    { "name": "race", "kind": "bool", "description": "Enable Go race detector" }
+  ],
+
+  "inputs": [
+    { "type": "binary", "name": "go" },
+    { "type": "file", "path": "go.mod" },
+
+    { "type": "command", "name": "build", "phase": "exec",
+      "run": ["sh", "-c", "go build ${BUILD_AND_TEST_VERBOSE:+-v} -o dist/app ./cmd/app"],
+      "ensure": [{ "type": "file", "path": "dist/app", "required": true }]
+    },
+    { "type": "command", "name": "test", "phase": "exec",
+      "run": ["sh", "-c", "go test ${BUILD_AND_TEST_VERBOSE:+-v} ${BUILD_AND_TEST_RACE:+-race} ./..."],
+      "after": ["build"]
+    }
+  ]
+}

@@ -1,0 +1,290 @@
+{
+  "name": "test-go",
+  "description": "Run Go tests with coverage",
+  "sandbox": "strict",
+
+  "flags": [
+    { "name": "verbose", "kind": "bool", "description": "Enable verbose test output",
+      "doc": "When enabled, passes -v to go test and go build, showing individual test names and timing. Also enables verbose output for golangci-lint." },
+    { "name": "race", "kind": "bool", "description": "Enable Go race detector",
+      "doc": "Passes -race to go test, enabling the Go data race detector. This significantly increases test time and memory usage (~5-10x) but catches concurrent access bugs. Requires CGO_ENABLED=1." },
+    { "name": "coverage-min", "kind": "string", "default": "80",
+      "description": "Minimum coverage percentage required",
+      "doc": "The verify-coverage step will fail if total line coverage drops below this threshold. Accepts a number between 0 and 100." },
+    { "name": "environment", "kind": "string",
+      "values": ["dev", "staging", "prod"], "default": "dev",
+      "description": "Target environment for integration tests",
+      "doc": "Controls which environment the integration tests run against. Affects DATABASE_URL and K8S context selection. Use 'dev' for local, 'staging' for pre-prod validation." },
+    { "name": "timeout", "kind": "string", "default": "300",
+      "description": "Integration test timeout in seconds", "subcommand": "integration",
+      "doc": "Maximum wall-clock time in seconds for the integration test suite. The script receives this as --timeout. Increase for slow CI runners." },
+    { "name": "namespace", "kind": "string", "default": "myapp",
+      "description": "K8s namespace for integration tests", "subcommand": "integration",
+      "doc": "Kubernetes namespace where integration test resources are created. Must match a namespace the service account has access to." }
+  ],
+
+  "inputs": [
+    {
+      "type": "env",
+      "name": "GOROOT",
+      "expect": "store-path",
+      "phase": "build"
+    },
+    {
+      "type": "env",
+      "name": "FLAKE_ROOT",
+      "expect": "path",
+      "exists": true,
+      "phase": "build"
+    },
+    {
+      "type": "platform",
+      "os": "linux",
+      "arch": "x86_64",
+      "phase": "build"
+    },
+    {
+      "key": "go",
+      "type": "plugin",
+      "plugin": "nix/package",
+      "pname": "go",
+      "out": "/nix/store/abc-go-1.22",
+      "bins": ["go", "gofmt"],
+      "system": "x86_64-linux"
+    },
+    {
+      "key": "deploy-app",
+      "type": "plugin",
+      "plugin": "nix/app",
+      "name": "deploy",
+      "program": "/nix/store/def-deploy-1.0/bin/deploy"
+    },
+    {
+      "type": "env",
+      "name": "CI",
+      "expect": "boolean",
+      "on_missing": "skip"
+    },
+    {
+      "type": "env",
+      "name": "REGISTRY_PASS",
+      "expect": "string",
+      "secret": true
+    },
+    {
+      "type": "env",
+      "name": "HOME"
+    },
+    {
+      "type": "env",
+      "name": "USER"
+    },
+    {
+      "type": "env",
+      "name": "GOCACHE",
+      "value": "$GO_DIR/cache"
+    },
+    {
+      "type": "env",
+      "name": "GOPATH",
+      "value": "$GO_DIR/share/go"
+    },
+    {
+      "type": "user",
+      "in_group": "docker"
+    },
+    {
+      "type": "metric",
+      "metric": "memory.available_mb",
+      "validate": {
+        "value": {
+          "type": "float",
+          "min": 512
+        }
+      }
+    },
+    {
+      "type": "binary",
+      "name": "docker",
+      "validate": {
+          "type": "semver",
+          "range": ">=24.0"
+        }
+      }
+    },
+    {
+      "type": "binary",
+      "name": "golangci-lint"
+    },
+    {
+      "key": "docker-daemon",
+      "type": "plugin",
+      "plugin": "docker/daemon"
+    },
+    {
+      "key": "docker-registry",
+      "type": "plugin",
+      "plugin": "docker/registry",
+      "registry": "$REGISTRY"
+    },
+    {
+      "key": "aws",
+      "type": "plugin",
+      "plugin": "aws/session",
+      "profile": "deploy"
+    },
+    {
+      "key": "k8s",
+      "type": "plugin",
+      "plugin": "k8s/cluster",
+      "context": "staging",
+      "namespace": "myapp",
+      "contexts": ["staging", "production"],
+      "namespaces": ["myapp", "myapp-canary"],
+      "overrides": {
+        "KUBECONFIG": { "phase": "build" }
+      }
+    },
+    {
+      "type": "file",
+      "path": "go.mod"
+    },
+    {
+      "type": "file",
+      "path": "go.sum"
+    },
+    {
+      "type": "file",
+      "path": "**/*.go"
+    },
+    {
+      "type": "file",
+      "path": ".golangci.yml"
+    },
+    {
+      "type": "file",
+      "path": "docker-compose.test.yml"
+    },
+    {
+      "key": "git-branch",
+      "type": "plugin",
+      "plugin": "git/branch",
+      "expect": "master"
+    },
+    {
+      "key": "git-clean",
+      "type": "plugin",
+      "plugin": "git/clean"
+    },
+    {
+      "key": "git-no-fixup",
+      "type": "plugin",
+      "plugin": "git/no-fixup"
+    },
+    {
+      "key": "go-mod-verify",
+      "type": "plugin",
+      "plugin": "go/mod-verify"
+    },
+    {
+      "type": "command",
+      "name": "test",
+      "phase": "exec",
+      "run": ["sh", "-c", "go test ${TEST_GO_VERBOSE:+-v} ${TEST_GO_RACE:+-race} -coverprofile=cover.out ./..."],
+      "env": {
+        "CGO_ENABLED": "0"
+      },
+      "extract": {
+        "format": "regex",
+        "fields": {
+          "TEST_PASS_COUNT": "--- PASS:.*\\((\\d+)",
+          "TEST_FAIL_COUNT": "--- FAIL:.*\\((\\d+)"
+        }
+      },
+      "ensure": [
+        {
+          "type": "file",
+          "path": "cover.out",
+          "required": true
+        }
+      ]
+    },
+    {
+      "type": "command",
+      "name": "coverage-report",
+      "phase": "exec",
+      "run": ["go", "tool", "cover", "-html=cover.out", "-o", "coverage.html"],
+      "ensure": [
+        {
+          "type": "file",
+          "path": "coverage.html",
+          "required": true
+        }
+      ],
+      "after": ["test"]
+    },
+    {
+      "type": "command",
+      "name": "verify-coverage",
+      "phase": "exec",
+      "run": {
+        "pipe": [
+          ["go", "tool", "cover", "-func=cover.out"],
+          ["tail", "-1"],
+          ["awk", "{print $3}"],
+          ["tr", "-d", "%"]
+        ]
+      },
+      "extract": {
+        "format": "text",
+        "fields": {
+          "COVERAGE_PCT": "stdout"
+        }
+      },
+      "validate": {
+        "COVERAGE_PCT": {
+          "type": "float",
+          "min": 80.0
+        }
+      },
+      "after": ["coverage-report"]
+    },
+    {
+      "type": "command",
+      "name": "lint",
+      "phase": "exec",
+      "run": ["golangci-lint", "run", "./..."],
+      "env": {
+        "GOLANGCI_LINT_CACHE": "$GO_DIR/lint-cache"
+      }
+    },
+    {
+      "type": "command",
+      "name": "integration-test",
+      "phase": "exec",
+      "run": {
+        "file": "./scripts/run-integration.sh",
+        "args": ["--timeout", "$TEST_GO_INTEGRATION_TIMEOUT"]
+      },
+      "env": {
+        "DATABASE_URL": "postgres://test:test@localhost:5432/testdb",
+        "K8S_NS": "$TEST_GO_INTEGRATION_NAMESPACE",
+        "ENVIRONMENT": "$TEST_GO_ENVIRONMENT"
+      },
+      "extract": {
+        "format": "json",
+        "fields": {
+          "INTEGRATION_RESULT": "$.result",
+          "INTEGRATION_DURATION": "$.duration_ms"
+        }
+      },
+      "validate": {
+        "INTEGRATION_RESULT": {
+          "type": "enum",
+          "values": ["pass"]
+        }
+      },
+      "after": ["test", "k8s", "aws"]
+    }
+  ]
+}

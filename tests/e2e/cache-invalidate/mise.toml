@@ -1,0 +1,20 @@
+[tasks.compile]
+run = "besogne build -i manifest.json -o ./task"
+
+[tasks.run]
+run = "./task"
+depends = ["compile"]
+
+[tasks.test-invalidation]
+description = "Run, change input, run again — should re-execute"
+run = """
+./task
+echo 'v2-changed' > input.txt
+echo '--- after change ---'
+./task
+cat marker.txt
+"""
+depends = ["compile"]
+
+[tasks.clean]
+run = "rm -f ./task marker.txt && echo 'v1' > input.txt"

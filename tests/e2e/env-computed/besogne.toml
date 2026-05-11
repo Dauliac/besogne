@@ -1,0 +1,15 @@
+name = "env-computed"
+description = "Set computed env vars with value field"
+
+[inputs.MY_VAR]
+type = "env"
+value = "/custom/path"
+
+[inputs.ANOTHER]
+type = "env"
+value = "hello-world"
+
+[inputs.check]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo MY_VAR=$MY_VAR ANOTHER=$ANOTHER"]

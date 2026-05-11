@@ -1,0 +1,10 @@
+[tasks.compile]
+run = "besogne build -i manifest.json -o ./task"
+
+[tasks.run]
+description = "Should fail with exit 2 — env var not set"
+run = "./task; echo 'exit code:' $?"
+depends = ["compile"]
+
+[tasks.clean]
+run = "rm -f ./task"

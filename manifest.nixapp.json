@@ -1,0 +1,45 @@
+{
+  "name": "deploy",
+  "description": "Deploy application via Nix flake app",
+  "idempotent": true,
+  "sandbox": { "preset": "strict", "network": "host" },
+
+  "flags": [
+    { "name": "env", "kind": "string", "values": ["staging", "production"], "required": true,
+      "description": "Target deployment environment",
+      "doc": "Selects the deployment target. 'staging' deploys to the pre-production cluster for validation. 'production' deploys to the live cluster with canary rollout." },
+    { "name": "dry-run", "kind": "bool", "description": "Preview deploy without applying",
+      "doc": "Runs the full deployment pipeline but skips the actual apply step. Useful for validating manifests and checking diff before committing to a deploy." },
+    { "name": "skip-healthcheck", "kind": "bool", "description": "Skip post-deploy health check",
+      "doc": "Bypasses the post-deployment healthcheck probe. Use when deploying to an environment where the health endpoint is not yet available." }
+  ],
+
+  "inputs": [
+    { "key": "deploy-app", "type": "plugin", "plugin": "nix/app",
+      "name": "deploy",
+      "program": "/nix/store/abc-deploy-1.0/bin/deploy" },
+
+    { "type": "env", "name": "DEPLOY_TOKEN", "expect": "string", "secret": true },
+
+    { "key": "git-branch", "type": "plugin", "plugin": "git/branch",
+      "pattern": "^(main|release/.*)$" },
+    { "key": "git-clean", "type": "plugin", "plugin": "git/clean" },
+
+    { "type": "command", "name": "deploy", "phase": "exec",
+      "run": ["sh", "-c", "deploy --env $DEPLOY_ENV ${DEPLOY_DRY_RUN:+--dry-run}"],
+      "env": { "DEPLOY_TOKEN": "$DEPLOY_TOKEN" },
+      "extract": {
+        "format": "json",
+        "fields": { "DEPLOY_URL": "$.url", "DEPLOY_VERSION": "$.version" }
+      },
+      "validate": { "DEPLOY_URL": "url" }
+    },
+
+    { "type": "service", "name": "healthcheck", "phase": "exec",
+      "http": "$DEPLOY_URL/health",
+      "validate": { "status": { "type": "integer", "values": [200] } },
+      "retry": { "attempts": 10, "interval": "5s" },
+      "after": ["deploy"]
+    }
+  ]
+}

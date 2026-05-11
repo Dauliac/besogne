@@ -1,0 +1,42 @@
+name = "multi-probe"
+description = "Test all native probe types"
+
+[inputs.HOME]
+type = "env"
+
+[inputs.USER]
+type = "env"
+
+[inputs.CUSTOM]
+type = "env"
+value = "/tmp/besogne-probe"
+
+[inputs.data-file]
+type = "file"
+path = "data.txt"
+
+[inputs.sh]
+type = "binary"
+
+[inputs.platform]
+type = "platform"
+
+[inputs.user-check]
+type = "user"
+
+[inputs.cpu]
+type = "metric"
+metric = "cpu.count"
+
+[inputs.memory]
+type = "metric"
+metric = "memory.available_mb"
+
+[inputs.dns-localhost]
+type = "dns"
+host = "localhost"
+
+[inputs.summary]
+type = "command"
+phase = "exec"
+run = ["echo", "all-probes-passed"]

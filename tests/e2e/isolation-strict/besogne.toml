@@ -1,0 +1,15 @@
+name = "isolation-strict"
+description = "Strict env sandbox — only declared vars visible"
+sandbox = "strict"
+
+[inputs.sh]
+type = "binary"
+
+[inputs.ALLOWED_VAR]
+type = "env"
+value = "visible"
+
+[inputs.check]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo ALLOWED=$ALLOWED_VAR HOME=$HOME"]

@@ -1,0 +1,24 @@
+{
+  "name": "npm-install",
+  "description": "Install Node.js dependencies",
+  "idempotent": true,
+
+  "flags": [
+    { "name": "production", "kind": "bool", "description": "Install production dependencies only" },
+    { "name": "registry", "kind": "string", "description": "Override npm registry URL" }
+  ],
+
+  "inputs": [
+    { "type": "binary", "name": "node",
+    { "type": "binary", "name": "npm" },
+    { "type": "file", "path": "package.json" },
+    { "type": "file", "path": "package-lock.json" },
+
+    { "type": "command", "name": "install", "phase": "exec",
+      "run": ["sh", "-c", "npm install ${NPM_INSTALL_PRODUCTION:+--omit=dev} ${NPM_INSTALL_REGISTRY:+--registry=$NPM_INSTALL_REGISTRY}"],
+      "ensure": [
+        { "type": "file", "path": "node_modules", "expect": "directory", "required": true }
+      ]
+    }
+  ]
+}
