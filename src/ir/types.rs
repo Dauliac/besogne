@@ -35,7 +35,6 @@ pub struct BesogneIR {
     #[serde(default)]
     pub flags: Vec<ResolvedFlag>,
     pub inputs: Vec<ResolvedInput>,
-    pub idempotent: bool,
 }
 
 /// A resolved user-defined flag
@@ -198,8 +197,12 @@ pub enum ResolvedNativeInput {
         /// Postconditions (was: outputs)
         #[serde(default)]
         ensure: Vec<manifest::EnsureSpec>,
+        /// Opt out of caching: always run, never skip
         #[serde(default)]
-        always_run: bool,
+        side_effects: bool,
+        /// Output assertions (opt-in)
+        #[serde(default)]
+        output: Option<manifest::OutputSpec>,
     },
     User {
         #[serde(default)]

@@ -7,10 +7,6 @@ pub struct Manifest {
     pub name: String,
     pub description: String,
 
-    /// Idempotent besogne: skip if preconditions unchanged + postconditions valid
-    #[serde(default)]
-    pub idempotent: bool,
-
     /// Sandbox configuration (effect handler)
     #[serde(default)]
     pub sandbox: Option<Sandbox>,
@@ -305,7 +301,8 @@ pub struct CommandInput {
     pub on_fail: Option<OnFail>,
 
     #[serde(default)]
-    pub always_run: Option<bool>,
+    /// Opt out of caching: always run, never skip (deploy, notify, etc.)
+    pub side_effects: Option<bool>,
 
     /// Postconditions — what must be true after this command (was: outputs)
     #[serde(default)]
@@ -320,6 +317,39 @@ pub struct CommandInput {
 
     #[serde(default)]
     pub extract: Option<ExtractConfig>,
+
+    /// Output assertions — validate command stdout/stderr/exit_code.
+    /// Opt-in: disabled by default (output is non-deterministic in general).
+    #[serde(default)]
+    pub output: Option<OutputSpec>,
+}
+
+/// Specification for command output validation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputSpec {
+    /// Expected exit code (default: 0)
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+
+    /// Assert stdout contains this string
+    #[serde(default)]
+    pub stdout_contains: Option<Vec<String>>,
+
+    /// Assert stderr contains this string
+    #[serde(default)]
+    pub stderr_contains: Option<Vec<String>>,
+
+    /// Assert stdout matches this regex
+    #[serde(default)]
+    pub stdout_matches: Option<String>,
+
+    /// Assert stderr matches this regex
+    #[serde(default)]
+    pub stderr_matches: Option<String>,
+
+    /// Parse stdout as JSON and assert it matches (json path → expected value)
+    #[serde(default)]
+    pub json: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

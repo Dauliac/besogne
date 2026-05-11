@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod cli;
 pub mod config;
+pub mod verify;
 
 use crate::ir::{BesogneIR, ResolvedInput, ResolvedNativeInput};
 use crate::ir::dag;
@@ -64,7 +65,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     }
 
     // 2. Pre-phase — check preconditions
-    let warmup_cached = !args.force && pre_inputs.iter().all(|input| {
+    let warmup_cached = !args.force && !args.verify && pre_inputs.iter().all(|input| {
         if context.get_probe(&input.id.0).is_none() {
             return false;
         }
@@ -107,7 +108,8 @@ pub fn run(ir: BesogneIR) -> ExitCode {
             .to_hex()
             .to_string();
 
-        if ir.idempotent && context.can_skip(&input_hash) {
+        if !has_side_effects(&ir) && context.can_skip(&input_hash) {
+            replay_cached_commands(&ir, &context, &mut *renderer);
             let wall_ms = start.elapsed().as_millis() as u64;
             renderer.on_skip("preconditions cached, postconditions valid");
             renderer.on_summary(0, wall_ms);
@@ -171,7 +173,8 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         .to_hex()
         .to_string();
 
-    if ir.idempotent && context.can_skip(&input_hash) {
+    if !has_side_effects(&ir) && context.can_skip(&input_hash) {
+        replay_cached_commands(&ir, &context, &mut *renderer);
         let wall_ms = start.elapsed().as_millis() as u64;
         renderer.on_skip("preconditions unchanged, postconditions valid");
         renderer.on_summary(0, wall_ms);
@@ -183,6 +186,15 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         if result.success {
             context.set_probe(input.id.0.clone(), result.hash.clone(), result.variables.clone());
         }
+    }
+
+    // Idempotency verification mode: run twice, compare
+    if args.verify {
+        let results = verify::verify_idempotency(&ir, &all_variables, &mut *renderer);
+        let all_ok = results.iter().all(|r| r.idempotent || r.side_effects_declared);
+        let wall_ms = start.elapsed().as_millis() as u64;
+        renderer.on_summary(if all_ok { 0 } else { 3 }, wall_ms);
+        return ExitCode::from(if all_ok { 0 } else { 3 });
     }
 
     execute_dag(&ir, all_variables, input_hash, &mut *renderer, &mut context, start)
@@ -232,9 +244,9 @@ fn execute_dag(
 
             match &input.input {
                 ResolvedNativeInput::Command {
-                    name, run, env, always_run, ..
+                    name, run, env, side_effects, output, ..
                 } => {
-                    if last_exit_code != 0 && !always_run {
+                    if last_exit_code != 0 && !side_effects {
                         continue;
                     }
 
@@ -252,10 +264,34 @@ fn execute_dag(
                         }
                     };
 
-                    let stdout = String::from_utf8_lossy(&result.stdout);
-                    let cmd_stderr = String::from_utf8_lossy(&result.stderr);
+                    let stdout = String::from_utf8_lossy(&result.stdout).to_string();
+                    let cmd_stderr = String::from_utf8_lossy(&result.stderr).to_string();
                     renderer.on_command_output(name, &stdout, &cmd_stderr);
                     renderer.on_command_end(name, &result);
+
+                    // Cache command output for replay on future skips
+                    context.set_command(
+                        name.clone(),
+                        cache::CachedCommand {
+                            stdout: stdout.clone(),
+                            stderr: cmd_stderr.clone(),
+                            exit_code: result.exit_code,
+                            wall_ms: result.wall_ms,
+                            user_ms: result.user_ms,
+                            sys_ms: result.sys_ms,
+                            max_rss_kb: result.max_rss_kb,
+                            ran_at: chrono::Utc::now().to_rfc3339(),
+                        },
+                    );
+
+                    // Validate output assertions (opt-in)
+                    if let Some(spec) = output {
+                        if let Err(e) = verify::check_output(spec, &stdout, &cmd_stderr, result.exit_code) {
+                            eprintln!("  \x1b[31mfail\x1b[0m {name} output: {e}");
+                            last_exit_code = 3;
+                            continue;
+                        }
+                    }
 
                     if result.exit_code != 0 {
                         last_exit_code = result.exit_code;
@@ -304,6 +340,7 @@ fn handle_dump(ir: &BesogneIR, mode: &DumpMode) -> ExitCode {
         DumpMode::Human => {
             println!("{} v{}", ir.metadata.name, ir.metadata.version);
             println!("{}", ir.metadata.description);
+            println!("Compiler: {}", cache::compiler_self_hash());
             println!();
 
             let build_inputs: Vec<_> = ir.inputs.iter().filter(|i| i.phase == Phase::Build).collect();
@@ -326,10 +363,40 @@ fn handle_dump(ir: &BesogneIR, mode: &DumpMode) -> ExitCode {
                 println!();
             }
 
-            println!("Idempotent: {}", if ir.idempotent { "yes" } else { "no" });
+            let se_count = ir.inputs.iter().filter(|i| matches!(&i.input,
+                ResolvedNativeInput::Command { side_effects: true, .. }
+            )).count();
+            if se_count > 0 {
+                println!("Side effects: {se_count} command(s) always run");
+            }
         }
     }
     ExitCode::SUCCESS
+}
+
+/// Replay cached command output for all exec-phase commands (on skip)
+fn replay_cached_commands(
+    ir: &BesogneIR,
+    context: &ContextCache,
+    renderer: &mut dyn output::OutputRenderer,
+) {
+    for input in &ir.inputs {
+        if input.phase != Phase::Exec {
+            continue;
+        }
+        if let ResolvedNativeInput::Command { name, run, .. } = &input.input {
+            if let Some(cached) = context.get_command(name) {
+                renderer.on_command_cached(name, run, cached);
+            }
+        }
+    }
+}
+
+/// Returns true if any exec-phase command has side_effects = true
+fn has_side_effects(ir: &BesogneIR) -> bool {
+    ir.inputs.iter().any(|i| matches!(&i.input,
+        ResolvedNativeInput::Command { side_effects: true, .. }
+    ))
 }
 
 fn compute_besogne_hash(ir: &BesogneIR) -> String {

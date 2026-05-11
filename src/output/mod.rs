@@ -1,5 +1,6 @@
 use crate::ir::{BesogneIR, ResolvedInput, ResolvedNativeInput};
 use crate::probe::ProbeResult;
+use crate::runtime::cache::CachedCommand;
 use crate::runtime::cli::LogFormat;
 use crate::tracer::CommandResult;
 
@@ -24,6 +25,8 @@ pub trait OutputRenderer {
     fn on_command_start(&mut self, name: &str, exec: &[String]);
     fn on_command_output(&mut self, name: &str, stdout: &str, stderr: &str);
     fn on_command_end(&mut self, name: &str, result: &CommandResult);
+    /// Replay a cached command (skipped because inputs unchanged)
+    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand);
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64);
 }
 
@@ -200,29 +203,76 @@ impl OutputRenderer for HumanRenderer {
     }
 
     fn on_command_end(&mut self, name: &str, result: &CommandResult) {
-        let time = format!("time:{:.3}s", result.wall_ms as f64 / 1000.0);
+        let time = format!("\x1b[36m⏱ time:{:.3}s\x1b[0m", result.wall_ms as f64 / 1000.0);
         let cpu = if result.user_ms > 0 || result.sys_ms > 0 {
-            format!("  cpu:{:.2}s user + {:.2}s kernel", result.user_ms as f64 / 1000.0, result.sys_ms as f64 / 1000.0)
+            let cores_used = if result.wall_ms > 0 {
+                (result.user_ms + result.sys_ms) as f64 / result.wall_ms as f64
+            } else { 0.0 };
+            format!(
+                "  \x1b[33m⚡ cpu:{:.2}s user + {:.2}s kernel ({:.1} cores)\x1b[0m",
+                result.user_ms as f64 / 1000.0,
+                result.sys_ms as f64 / 1000.0,
+                cores_used,
+            )
         } else { String::new() };
         let mem = if result.max_rss_kb > 0 {
-            format!("  memory:{}", format_bytes(result.max_rss_kb * 1024))
+            format!("  \x1b[35m🧠 memory:{}\x1b[0m", format_bytes(result.max_rss_kb * 1024))
         } else { String::new() };
         let disk = {
             let r = result.disk_read_bytes;
             let w = result.disk_write_bytes;
             if r > 0 || w > 0 {
-                format!("  disk:read {} write {}", format_bytes(r), format_bytes(w))
+                format!("  \x1b[34m💾 disk:read {} write {}\x1b[0m", format_bytes(r), format_bytes(w))
             } else { String::new() }
         };
-        let procs = if result.processes_spawned > 0 {
-            format!("  processes:{}", result.processes_spawned)
-        } else { String::new() };
+        let net = {
+            let r = result.net_read_bytes;
+            let w = result.net_write_bytes;
+            if r > 0 || w > 0 {
+                format!("  \x1b[32m🌐 net:download {} upload {}\x1b[0m", format_bytes(r), format_bytes(w))
+            } else { String::new() }
+        };
+        let procs = format!("  \x1b[31m🔀 processes:{}\x1b[0m", result.processes_spawned + 1);
 
         if result.exit_code == 0 {
-            eprintln!("  \x1b[32mok\x1b[0m {name}  {time}{cpu}{mem}{disk}{procs}");
+            eprintln!("  \x1b[32mok\x1b[0m {name}  {time}{cpu}{mem}{disk}{net}{procs}");
         } else {
-            eprintln!("  \x1b[31mfail\x1b[0m {name}  exit {}  {time}{cpu}{mem}{disk}{procs}", result.exit_code);
+            eprintln!("  \x1b[31mfail\x1b[0m {name}  exit {}  {time}{cpu}{mem}{disk}{net}{procs}", result.exit_code);
         }
+    }
+
+    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand) {
+        eprintln!(
+            "\n\x1b[33mcached\x1b[0m {name}: {}  (ran {})",
+            exec.join(" "),
+            format_relative_time(&cached.ran_at),
+        );
+        let stdout = &cached.stdout;
+        let stderr = &cached.stderr;
+        if !stdout.is_empty() || !stderr.is_empty() {
+            for line in stdout.lines() {
+                eprintln!("    \x1b[2m{line}\x1b[0m");
+            }
+            for line in stderr.lines() {
+                eprintln!("    \x1b[2m{line}\x1b[0m");
+            }
+        }
+        let time = format!("time:{:.3}s", cached.wall_ms as f64 / 1000.0);
+        let cpu = if cached.user_ms > 0 || cached.sys_ms > 0 {
+            format!(
+                "  cpu:{:.2}s user + {:.2}s kernel",
+                cached.user_ms as f64 / 1000.0,
+                cached.sys_ms as f64 / 1000.0,
+            )
+        } else {
+            String::new()
+        };
+        let mem = if cached.max_rss_kb > 0 {
+            format!("  memory:{:.1}MB", cached.max_rss_kb as f64 / 1024.0)
+        } else {
+            String::new()
+        };
+        eprintln!("  \x1b[33mcached\x1b[0m {name}  {time}{cpu}{mem}");
     }
 
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64) {
@@ -231,6 +281,27 @@ impl OutputRenderer for HumanRenderer {
         } else {
             eprintln!("\n\x1b[31mfailed\x1b[0m exit {exit_code}  {:.3}s", wall_ms as f64 / 1000.0);
         }
+    }
+}
+
+/// Format an ISO timestamp as a relative time string (e.g., "2m ago", "1h ago")
+fn format_relative_time(iso_time: &str) -> String {
+    let Ok(then) = chrono::DateTime::parse_from_rfc3339(iso_time) else {
+        return iso_time.to_string();
+    };
+    let now = chrono::Utc::now();
+    let delta = now.signed_duration_since(then);
+
+    if delta.num_seconds() < 5 {
+        "just now".to_string()
+    } else if delta.num_seconds() < 60 {
+        format!("{}s ago", delta.num_seconds())
+    } else if delta.num_minutes() < 60 {
+        format!("{}m ago", delta.num_minutes())
+    } else if delta.num_hours() < 24 {
+        format!("{}h ago", delta.num_hours())
+    } else {
+        format!("{}d ago", delta.num_days())
     }
 }
 
@@ -305,6 +376,9 @@ impl OutputRenderer for JsonRenderer {
     }
 
     fn on_command_end(&mut self, name: &str, result: &CommandResult) {
+        let cores_used = if result.wall_ms > 0 {
+            (result.user_ms + result.sys_ms) as f64 / result.wall_ms as f64
+        } else { 0.0 };
         self.emit(&serde_json::json!({
             "event": "command_end",
             "name": name,
@@ -312,12 +386,28 @@ impl OutputRenderer for JsonRenderer {
             "time_ms": result.wall_ms,
             "cpu_user_ms": result.user_ms,
             "cpu_kernel_ms": result.sys_ms,
+            "cpu_cores_used": cores_used,
             "memory_bytes": result.max_rss_kb * 1024,
             "disk_read_bytes": result.disk_read_bytes,
             "disk_write_bytes": result.disk_write_bytes,
-            "processes_spawned": result.processes_spawned,
+            "net_download_bytes": result.net_read_bytes,
+            "net_upload_bytes": result.net_write_bytes,
+            "processes": result.processes_spawned + 1,
             "context_switches_voluntary": result.voluntary_cs,
             "context_switches_involuntary": result.involuntary_cs,
+        }));
+    }
+
+    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand) {
+        self.emit(&serde_json::json!({
+            "event": "command_cached",
+            "name": name,
+            "exec": exec,
+            "exit_code": cached.exit_code,
+            "time_ms": cached.wall_ms,
+            "ran_at": cached.ran_at,
+            "stdout": cached.stdout,
+            "stderr": cached.stderr,
         }));
     }
 
@@ -389,14 +479,43 @@ impl OutputRenderer for CiRenderer {
                 format!("  disk:read {} write {}", format_bytes(r), format_bytes(w))
             } else { String::new() }
         };
-        let procs = if result.processes_spawned > 0 {
-            format!("  processes:{}", result.processes_spawned)
+        let cpu = if result.user_ms > 0 || result.sys_ms > 0 {
+            let cores_used = if result.wall_ms > 0 {
+                (result.user_ms + result.sys_ms) as f64 / result.wall_ms as f64
+            } else { 0.0 };
+            format!(
+                "  cpu:{:.2}s user + {:.2}s kernel ({:.1} cores)",
+                result.user_ms as f64 / 1000.0,
+                result.sys_ms as f64 / 1000.0,
+                cores_used,
+            )
         } else { String::new() };
+        let net = {
+            let r = result.net_read_bytes;
+            let w = result.net_write_bytes;
+            if r > 0 || w > 0 {
+                format!("  net:download {} upload {}", format_bytes(r), format_bytes(w))
+            } else { String::new() }
+        };
+        let procs = format!("  processes:{}", result.processes_spawned + 1);
         if result.exit_code == 0 {
-            eprintln!("  [PASS] {name}  {time}{mem}{disk}{procs}");
+            eprintln!("  [PASS] {name}  {time}{cpu}{mem}{disk}{net}{procs}");
         } else {
-            eprintln!("  [FAIL] {name}  exit {}  {time}{mem}{disk}{procs}", result.exit_code);
+            eprintln!("  [FAIL] {name}  exit {}  {time}{cpu}{mem}{disk}{net}{procs}", result.exit_code);
         }
+        eprintln!("::endgroup::");
+    }
+
+    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand) {
+        eprintln!("::group::[CACHE] {name}: {} (ran {})", exec.join(" "), cached.ran_at);
+        if !cached.stdout.is_empty() {
+            for line in cached.stdout.lines() { eprintln!("    {line}"); }
+        }
+        if !cached.stderr.is_empty() {
+            for line in cached.stderr.lines() { eprintln!("    {line}"); }
+        }
+        let time = format!("{:.3}s", cached.wall_ms as f64 / 1000.0);
+        eprintln!("  [CACHE] {name}  {time}");
         eprintln!("::endgroup::");
     }
 

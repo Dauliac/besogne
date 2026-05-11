@@ -46,8 +46,11 @@ pub fn lower_manifest(manifest: &manifest::Manifest) -> Result<BesogneIR, String
 
     for (key, input) in &manifest.inputs {
         match input {
-            Input::Plugin(_) => {
-                // TODO: expand plugins via Nickel
+            Input::Plugin(p) => {
+                return Err(format!(
+                    "input '{key}': plugin '{}' not expanded before lowering (bug in compile pipeline)",
+                    p.plugin
+                ));
             }
             _ => {
                 let resolved = lower_input(key, input)?;
@@ -64,7 +67,6 @@ pub fn lower_manifest(manifest: &manifest::Manifest) -> Result<BesogneIR, String
         sandbox,
         flags,
         inputs: resolved_inputs,
-        idempotent: manifest.idempotent,
     })
 }
 
@@ -136,7 +138,8 @@ fn lower_input(key: &str, input: &Input) -> Result<ResolvedInput, String> {
                 run: run_resolved,
                 env: c.env.clone().unwrap_or_default(),
                 ensure: c.ensure.clone().unwrap_or_default(),
-                always_run: c.always_run.unwrap_or(false),
+                side_effects: c.side_effects.unwrap_or(false),
+                output: c.output.clone(),
             };
             let phase = c.phase.clone().unwrap_or(Phase::Exec);
             let id = ContentId::from_content("command", key, key.as_bytes());

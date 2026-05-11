@@ -430,7 +430,8 @@ mod tests {
                 run: vec!["echo".into()],
                 env: HashMap::new(),
                 ensure: vec![],
-                always_run: false,
+                side_effects: false,
+                output: None,
             },
         ];
 
