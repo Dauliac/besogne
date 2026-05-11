@@ -116,15 +116,6 @@ fn exec_binary(path: &PathBuf, args: &[String]) -> std::io::Error {
     }
 }
 
-/// Hash the besogne compiler binary itself — used as part of the run cache key.
-/// If besogne is updated, all cached produced binaries are invalidated.
-fn self_hash() -> String {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| std::fs::read(&p).ok())
-        .map(|bytes| blake3::hash(&bytes).to_hex()[..16].to_string())
-        .unwrap_or_else(|| "unknown".to_string())
-}
 
 fn main() -> ExitCode {
     // Check if we're a sealed besogne binary (has IR embedded)
@@ -203,7 +194,7 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            let compiler_hash = self_hash();
+            let compiler_hash = runtime::cache::compiler_self_hash();
             let mut hasher = blake3::Hasher::new();
             hasher.update(&manifest_content);
             hasher.update(compiler_hash.as_bytes());

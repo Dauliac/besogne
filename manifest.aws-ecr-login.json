@@ -1,7 +1,6 @@
 {
   "name": "aws-ecr-login",
   "description": "Authenticate Docker to AWS ECR registry",
-  "idempotent": true,
   "sandbox": { "preset": "strict", "network": "host" },
 
   "flags": [

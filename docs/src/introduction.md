@@ -26,7 +26,6 @@ TOML:
 ```toml
 name = "npm-install"
 description = "Install npm dependencies"
-idempotent = true
 
 [inputs.npm]
 type = "binary"
@@ -56,7 +55,6 @@ YAML:
 ```yaml
 name: npm-install
 description: Install npm dependencies
-idempotent: true
 
 inputs:
   npm:

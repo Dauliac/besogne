@@ -1,0 +1,5 @@
+[tasks.verify]
+run = "besogne run -- --verify"
+
+[tasks.clean]
+run = "rm -f task"

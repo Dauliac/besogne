@@ -28,6 +28,7 @@ pub struct RuntimeArgs {
     pub run_mode: RunMode,
     pub dump: Option<DumpMode>,
     pub force: bool,
+    pub verify: bool,
     pub subcommand: Option<String>,
     /// All resolved flag values keyed by env_var name
     pub flag_env: HashMap<String, String>,
@@ -61,6 +62,10 @@ fn global_args(besogne_name_upper: &str) -> Vec<Arg> {
             .long("force")
             .short('f')
             .help("Force re-probe all preconditions (ignore cached warmup)")
+            .action(ArgAction::SetTrue),
+        Arg::new("verify")
+            .long("verify")
+            .help("Idempotency detector: run exec phase twice, compare outputs, report non-idempotent commands")
             .action(ArgAction::SetTrue),
         Arg::new("dump")
             .long("dump")
@@ -318,12 +323,14 @@ pub fn parse_runtime_args(ir: &BesogneIR) -> RuntimeArgs {
     }
 
     let force = active_matches.get_flag("force");
+    let verify = active_matches.get_flag("verify");
 
     RuntimeArgs {
         log_format,
         run_mode,
         dump,
         force,
+        verify,
         subcommand: subcommand_name,
         flag_env,
     }

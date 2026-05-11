@@ -1,6 +1,5 @@
 name = "cache-invalidate"
 description = "Re-runs when input file changes"
-idempotent = true
 
 [inputs.input-file]
 type = "file"

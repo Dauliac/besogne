@@ -115,17 +115,37 @@ fn expand_plugin_input(
         expand_produces_json(&plugin_def.produces, &resolved)?
     };
 
-    // Parse each produced JSON value into a native Input
+    // First pass: collect sub-keys so we can rewrite `after` references
+    let sub_keys: Vec<String> = produced_json
+        .iter()
+        .enumerate()
+        .map(|(idx, v)| derive_sub_key(v, idx))
+        .collect();
+
+    // Second pass: rewrite `after` arrays to use full keys, parse into native Inputs
     let mut result = Vec::new();
     for (idx, mut value) in produced_json.into_iter().enumerate() {
-        // Apply overrides if any
+        // Apply overrides
         if let (Some(overrides), Some(obj)) = (overrides, value.as_object_mut()) {
             for (k, v) in overrides {
                 obj.insert(k.clone(), v.clone());
             }
         }
 
-        let sub_key = derive_sub_key(&value, idx);
+        // Rewrite `after` references: if a ref matches a sibling sub-key, prefix with input_key
+        if let Some(obj) = value.as_object_mut() {
+            if let Some(serde_json::Value::Array(after)) = obj.get_mut("after") {
+                for dep in after.iter_mut() {
+                    if let serde_json::Value::String(dep_name) = dep {
+                        if sub_keys.contains(dep_name) {
+                            *dep_name = format!("{input_key}.{dep_name}");
+                        }
+                    }
+                }
+            }
+        }
+
+        let sub_key = sub_keys[idx].clone();
 
         let input: Input = serde_json::from_value(value.clone()).map_err(|e| {
             format!(

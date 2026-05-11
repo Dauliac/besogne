@@ -1,0 +1,7 @@
+name = "verify-idempotent"
+description = "This besogne IS idempotent — verify should pass"
+
+[inputs.greet]
+type = "command"
+phase = "exec"
+run = ["echo", "hello"]

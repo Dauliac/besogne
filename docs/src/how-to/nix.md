@@ -9,7 +9,6 @@ besogne integrates deeply with Nix. Store paths are sealed at build time, binari
   "name": "npm-install",
   "version": "0.1.0",
   "description": "Install Node.js dependencies (Nix devShell)",
-  "idempotent": true,
   "sandbox": "strict",
   "inputs": [
     { "key": "nodejs", "type": "plugin", "plugin": "nix/package",

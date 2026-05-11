@@ -1,7 +1,6 @@
 {
   "name": "npm-install",
   "description": "Install Node.js dependencies",
-  "idempotent": true,
 
   "flags": [
     { "name": "production", "kind": "bool", "description": "Install production dependencies only" },

@@ -1,5 +1,6 @@
 pub mod embed;
 mod lower;
+pub mod nickel;
 pub mod plugin;
 
 use crate::ir::types::{BesogneIR, ResolvedNativeInput, SealedSnapshot};
@@ -11,7 +12,13 @@ use std::path::{Path, PathBuf};
 /// Uses a content-addressed cache in $XDG_CACHE_HOME/besogne/compiled/ to avoid rebuilds.
 pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
     // 1. Parse manifest
-    let manifest = manifest::load_manifest(manifest_path)?;
+    let mut manifest = manifest::load_manifest(manifest_path)?;
+
+    // 1b. Expand plugins → native inputs
+    if manifest.inputs.values().any(|i| matches!(i, manifest::Input::Plugin(_))) {
+        let expanded = plugin::expand_plugins(&manifest, manifest_path)?;
+        manifest.inputs = expanded;
+    }
 
     // 2. Lower manifest to IR (resolve types, compute hashes)
     let mut ir = lower::lower_manifest(&manifest)?;
@@ -54,7 +61,10 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
 
 /// Compile without progress messages (for `besogne run` where the binary handles output)
 pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
-    let manifest = manifest::load_manifest(manifest_path)?;
+    let mut manifest = manifest::load_manifest(manifest_path)?;
+    if manifest.inputs.values().any(|i| matches!(i, manifest::Input::Plugin(_))) {
+        manifest.inputs = plugin::expand_plugins(&manifest, manifest_path)?;
+    }
     let mut ir = lower::lower_manifest(&manifest)?;
     resolve_build_binaries_quiet(&mut ir)?;
 
@@ -88,7 +98,10 @@ pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), Str
 
 /// Validate a manifest without compiling
 pub fn check(manifest_path: &Path) -> Result<(), String> {
-    let manifest = manifest::load_manifest(manifest_path)?;
+    let mut manifest = manifest::load_manifest(manifest_path)?;
+    if manifest.inputs.values().any(|i| matches!(i, manifest::Input::Plugin(_))) {
+        manifest.inputs = plugin::expand_plugins(&manifest, manifest_path)?;
+    }
     let mut ir = lower::lower_manifest(&manifest)?;
     resolve_build_binaries(&mut ir)?;
     Ok(())

@@ -9,7 +9,6 @@ Create `besogne.toml`:
 ```toml
 name = "npm-install"
 description = "Install npm dependencies"
-idempotent = true
 
 [inputs.node]
 type = "binary"
@@ -42,7 +41,7 @@ What this declares:
 - **Preconditions**: `node` (>= 18) and `npm` in PATH, `package.json` and lock file exist
 - **Execution**: run `npm install`
 - **Postcondition**: `node_modules/` must exist after
-- **`idempotent = true`**: skip if nothing changed
+- **Memoization**: cached by default — skip if nothing changed
 
 ## Build and run
 

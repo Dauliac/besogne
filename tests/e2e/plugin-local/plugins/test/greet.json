@@ -1,0 +1,24 @@
+{
+  "name": "test/greet",
+  "description": "Test plugin: echoes a greeting",
+  "params": {
+    "message": { "type": "string" },
+    "loud": { "type": "bool", "optional": true }
+  },
+  "produces": [
+    {
+      "type": "command",
+      "name": "greet",
+      "phase": "exec",
+      "run": ["echo", "{{ message }}"]
+    },
+    {
+      "type": "command",
+      "name": "greet-loud",
+      "phase": "exec",
+      "run": ["sh", "-c", "echo '{{ message }}' | tr a-z A-Z"],
+      "after": ["greet"],
+      "when": "loud"
+    }
+  ]
+}

@@ -1,6 +1,5 @@
 name = "npm-install"
 description = "Install npm dependencies"
-idempotent = true
 
 [inputs.node]
 type = "binary"

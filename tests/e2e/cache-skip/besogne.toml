@@ -1,6 +1,5 @@
 name = "cache-skip"
 description = "Second run skips if inputs unchanged"
-idempotent = true
 
 [inputs.input-file]
 type = "file"

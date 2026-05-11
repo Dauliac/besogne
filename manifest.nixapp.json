@@ -1,7 +1,6 @@
 {
   "name": "deploy",
   "description": "Deploy application via Nix flake app",
-  "idempotent": true,
   "sandbox": { "preset": "strict", "network": "host" },
 
   "flags": [

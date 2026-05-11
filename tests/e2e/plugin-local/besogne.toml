@@ -1,0 +1,11 @@
+name = "plugin-local"
+description = "Test local JSON plugin expansion"
+
+[plugins]
+test = "./plugins"
+
+[inputs.greeting]
+type = "plugin"
+plugin = "test/greet"
+message = "hello from plugin"
+loud = true

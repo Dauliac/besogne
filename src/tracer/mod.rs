@@ -34,6 +34,8 @@ pub struct CommandResult {
     pub processes_spawned: u64,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
+    pub net_read_bytes: u64,
+    pub net_write_bytes: u64,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub events: Vec<TraceEvent>,
@@ -122,6 +124,28 @@ fn read_proc_io(pid: u32) -> (u64, u64) {
     (read_bytes, write_bytes)
 }
 
+/// Read total network rx/tx bytes from /proc/net/dev, summing all non-loopback interfaces.
+/// Returns (received_bytes, transmitted_bytes).
+#[cfg(target_os = "linux")]
+fn read_net_dev() -> (u64, u64) {
+    let Ok(content) = std::fs::read_to_string("/proc/net/dev") else {
+        return (0, 0);
+    };
+    let mut rx_total = 0u64;
+    let mut tx_total = 0u64;
+    for line in content.lines().skip(2) {
+        // Format: "  iface: rx_bytes rx_packets ... tx_bytes tx_packets ..."
+        let Some((iface, rest)) = line.split_once(':') else { continue };
+        if iface.trim() == "lo" { continue; }
+        let fields: Vec<&str> = rest.split_whitespace().collect();
+        if fields.len() >= 9 {
+            rx_total += fields[0].parse::<u64>().unwrap_or(0);
+            tx_total += fields[8].parse::<u64>().unwrap_or(0);
+        }
+    }
+    (rx_total, tx_total)
+}
+
 /// Linux: fork + exec + wait4 for rusage
 #[cfg(target_os = "linux")]
 fn execute_with_wait4(
@@ -135,6 +159,7 @@ fn execute_with_wait4(
     use std::time::Instant;
 
     let start = Instant::now();
+    let (net_rx_before, net_tx_before) = read_net_dev();
 
     // Create pipes for stdout and stderr
     let (stdout_read, stdout_write) = pipe().map_err(|e| format!("pipe failed: {e}"))?;
@@ -244,6 +269,9 @@ fn execute_with_wait4(
     };
 
     let wall_ms = start.elapsed().as_millis() as u64;
+    let (net_rx_after, net_tx_after) = read_net_dev();
+    let net_read_bytes = net_rx_after.saturating_sub(net_rx_before);
+    let net_write_bytes = net_tx_after.saturating_sub(net_tx_before);
 
     // Stop the scanner thread and collect metrics
     stop.store(true, Ordering::Relaxed);
@@ -286,6 +314,8 @@ fn execute_with_wait4(
         processes_spawned,
         disk_read_bytes,
         disk_write_bytes,
+        net_read_bytes,
+        net_write_bytes,
         stdout,
         stderr,
         events: vec![
@@ -361,6 +391,8 @@ fn execute_simple(
         processes_spawned: 0,
         disk_read_bytes: 0,
         disk_write_bytes: 0,
+        net_read_bytes: 0,
+        net_write_bytes: 0,
         stdout: output.stdout,
         stderr: output.stderr,
         events: vec![],

@@ -12,7 +12,7 @@ besogne is **not a task manager or orchestrator**. It produces a single self-con
 | Typed preconditions | 9 native types | No | No | No | No | No |
 | Postconditions (ensure) | Yes | No | No | No | No | No |
 | Sandbox (env/fs/network) | Yes | No | No | No | No | Container |
-| Memoization (idempotent) | Yes | Partial | No | No | No | Yes |
+| Memoization (default) | Yes | Partial | No | No | No | Yes |
 | Process tracing | wait4/rusage | No | No | No | No | No |
 | Nix integration | Native (plugins) | No | No | No | No | No |
 | Multi-mode output | human/CI/JSON | No | No | No | No | TUI |

@@ -1,7 +1,6 @@
 {
   "name": "npm-install-nix",
   "description": "Install Node.js dependencies (Nix devShell)",
-  "idempotent": true,
   "sandbox": "strict",
 
   "flags": [

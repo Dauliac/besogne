@@ -53,33 +53,34 @@ For binaries (which can be large), besogne uses a hybrid strategy:
 
 BLAKE3 hashes at ~3 GB/s on a single core. A 100MB binary takes ~33ms.
 
-## Two-tier cache
-
-### Tier 1: per-repo (automatic)
+## Global cache layout
 
 ```
-$XDG_CACHE_HOME/besogne/repo/<repo_hash>/context.json
+$XDG_CACHE_HOME/besogne/<compiler_hash>/<besogne_hash>/context.json
 ```
 
-The repo hash is computed from the full IR. Different manifest = different cache. This is always active and safe -- no cross-contamination between projects.
+Two content-addressed levels:
 
-### Tier 2: global CAS (with `sandbox: strict`)
+- **`<compiler_hash>`**: BLAKE3 of the sealed besogne binary. When the compiler is updated or the manifest is rebuilt, a new directory is created. Old directories are garbage-collected on the next save.
+- **`<besogne_hash>`**: BLAKE3 of the IR JSON. Two repos with identical manifests produce the same IR, so they share this cache directory automatically.
 
-```
-$XDG_CACHE_HOME/besogne/cas/<output_hash>/
-```
+### Cross-repo sharing
 
-When `sandbox: strict` is set, besogne can guarantee that all inputs are captured (empty env, isolated filesystem, no network). This makes the input hash a **complete** description of the computation, enabling:
+Because the cache is keyed by content (not by repo path), two repos with the same manifest share probe results and skip decisions. The `input_hash` (combined hash of all probe results) still differs if the environments differ (different file contents, different binary versions, etc.), so there is no false sharing.
 
-- **Cross-repo sharing**: `binary:go:a1b2c3d4` producing the same output in repo A and repo B -> single cache entry
-- **Output restoration**: if inputs haven't changed but outputs disappeared, restore from CAS without re-running
+### Compiler update invalidation
 
-The invariant: a command only enters the global CAS if the sandbox enforces complete input capture. Without `sandbox: strict`, implicit dependencies (env vars, filesystem state, network) could make same-hash produce different results.
+The sealed binary hash changes whenever:
+- The besogne compiler itself is updated
+- The manifest is modified (different IR -> different binary)
+
+This means compiler updates automatically invalidate all caches. Old `<compiler_hash>` directories are cleaned up (GC) on the next successful save. Only directories that look like hex hashes (16 chars) are removed -- other directories like `run/` and `compiled/` are preserved.
 
 ## Cache invalidation
 
 - Change any input file -> hash changes -> re-run
-- Change manifest -> different besogne hash -> new cache
+- Change manifest -> different besogne hash -> new cache dir
+- Update compiler binary -> different compiler hash -> new cache dir + GC old
 - Delete a postcondition file -> postcondition check fails -> re-run
 - `rm -rf ~/.cache/besogne/` -> clear all caches
-- Compiler binary hash is part of cache key -> compiler update invalidates
+- `--force` flag -> bypass cache, re-probe everything

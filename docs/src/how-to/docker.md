@@ -45,7 +45,7 @@ This checks the socket exists and `docker info` succeeds.
 { "type": "command", "name": "stop-db", "phase": "exec",
   "run": ["docker", "compose", "down"],
   "after": ["test"],
-  "always_run": true }
+  "side_effects": true }
 ```
 
-`always_run: true` ensures cleanup runs even if tests fail.
+`side_effects: true` ensures cleanup runs even if tests fail (never cached, always executes).

@@ -45,6 +45,15 @@ fn run_in(workdir: &Path) -> std::process::Output {
         .unwrap()
 }
 
+fn run_in_with_args(workdir: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(workdir.join("besogne-out"))
+        .args(args)
+        .current_dir(workdir)
+        .env("XDG_CACHE_HOME", workdir.join(".cache"))
+        .output()
+        .unwrap()
+}
+
 fn run_in_with_env(workdir: &Path, env: &[(&str, &str)]) -> std::process::Output {
     let mut cmd = Command::new(workdir.join("besogne-out"));
     cmd.current_dir(workdir);
@@ -411,3 +420,38 @@ fn e2e_env_secret_not_leaked() {
     assert!(r.status.success(), "run: {err}");
     assert!(!err.contains("super-secret-value"), "secret leaked: {err}");
 }
+
+// ─── verify-idempotent ──────────────────────────────────────────
+
+#[test]
+fn e2e_verify_idempotent_passes() {
+    let dir = setup_case("verify-idempotent");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    let r = run_in_with_args(dir.path(), &["--verify"]);
+    let err = stderr(&r);
+    assert!(r.status.success(), "verify should pass for idempotent command: {err}");
+    assert!(
+        err.contains("verification PASSED") || err.contains("idempotent"),
+        "should report idempotent: {err}"
+    );
+}
+
+// ─── verify-non-idempotent ──────────────────────────────────────
+
+#[test]
+fn e2e_verify_non_idempotent_fails() {
+    let dir = setup_case("verify-non-idempotent");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    let r = run_in_with_args(dir.path(), &["--verify"]);
+    let err = stderr(&r);
+    assert!(!r.status.success(), "verify should FAIL for non-idempotent: {err}");
+    assert!(
+        err.contains("NOT IDEMPOTENT") || err.contains("verification FAILED"),
+        "should report non-idempotent: {err}"
+    );
+}
+
