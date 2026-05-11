@@ -1,0 +1,85 @@
+name = "nested-scripts"
+description = "Nested shell scripts: 3 levels deep, forks, sleep, pipes, traps"
+verify_first_run = false
+
+[inputs.sh]
+type = "binary"
+
+[inputs.head]
+type = "binary"
+
+[inputs.od]
+type = "binary"
+
+[inputs.tr]
+type = "binary"
+
+[inputs.tee]
+type = "binary"
+
+[inputs.cat]
+type = "binary"
+
+[inputs.date]
+type = "binary"
+
+[inputs.sleep]
+type = "binary"
+
+[inputs.level1]
+type = "file"
+path = "level1.sh"
+
+[inputs.level2]
+type = "file"
+path = "level2.sh"
+
+[inputs.level3]
+type = "file"
+path = "level3.sh"
+
+[inputs.setup]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "rm -rf results && mkdir -p results"]
+
+[inputs.run-scripts]
+type = "command"
+phase = "exec"
+run = { file = "./level1.sh" }
+after = ["setup"]
+
+[[inputs.run-scripts.ensure]]
+type = "file"
+path = "results/level1.txt"
+required = true
+
+[[inputs.run-scripts.ensure]]
+type = "file"
+path = "results/level2.txt"
+required = true
+
+[[inputs.run-scripts.ensure]]
+type = "file"
+path = "results/level3.txt"
+required = true
+
+[[inputs.run-scripts.ensure]]
+type = "file"
+path = "results/forks.txt"
+required = true
+
+[[inputs.run-scripts.ensure]]
+type = "file"
+path = "results/background.txt"
+required = true
+
+[[inputs.run-scripts.ensure]]
+type = "file"
+path = "results/pipe.txt"
+required = true
+
+[[inputs.run-scripts.ensure]]
+type = "file"
+path = "results/heredoc.txt"
+required = true

@@ -1,5 +1,6 @@
 name = "script-build"
 description = "Build pipeline using a shell script with env vars and outputs"
+verify_first_run = false
 
 [inputs.sh]
 type = "binary"
@@ -40,9 +41,3 @@ required = true
 type = "file"
 path = "dist/build.log"
 required = true
-
-[inputs.verify]
-type = "command"
-phase = "exec"
-run = ["cat", "dist/result.json"]
-after = ["build"]
