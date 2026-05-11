@@ -21,8 +21,15 @@ type = "command"
 phase = "exec"
 run = ["go", "mod", "download"]
 
+[inputs.mod-download.output]
+exit_code = 0
+
 [inputs.test]
 type = "command"
 phase = "exec"
 run = ["go", "test", "-v", "./..."]
 after = ["mod-download"]
+
+[inputs.test.output]
+exit_code = 0
+stdout_contains = ["PASS"]
