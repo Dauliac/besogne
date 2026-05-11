@@ -149,7 +149,7 @@ fn e2e_npm_install_skip_on_second_run() {
     let c = compile_in(dir.path());
     assert!(c.status.success());
 
-    // First run triggers verify (runs npm install twice)
+    // First run — execute
     let r1 = run_in(dir.path());
     assert!(r1.status.success(), "run 1: {}", stderr(&r1));
 
@@ -432,40 +432,6 @@ fn e2e_env_secret_not_leaked() {
     assert!(!err.contains("super-secret-value"), "secret leaked: {err}");
 }
 
-// ─── verify-idempotent ──────────────────────────────────────────
-
-#[test]
-fn e2e_verify_idempotent_passes() {
-    let dir = setup_case("verify-idempotent");
-    let c = compile_in(dir.path());
-    assert!(c.status.success(), "compile: {}", stderr(&c));
-
-    let r = run_in_with_args(dir.path(), &["--verify"]);
-    let err = stderr(&r);
-    assert!(r.status.success(), "verify should pass for idempotent command: {err}");
-    assert!(
-        err.contains("verification PASSED") || err.contains("idempotent"),
-        "should report idempotent: {err}"
-    );
-}
-
-// ─── verify-non-idempotent ──────────────────────────────────────
-
-#[test]
-fn e2e_verify_non_idempotent_fails() {
-    let dir = setup_case("verify-non-idempotent");
-    let c = compile_in(dir.path());
-    assert!(c.status.success(), "compile: {}", stderr(&c));
-
-    let r = run_in_with_args(dir.path(), &["--verify"]);
-    let err = stderr(&r);
-    assert!(!r.status.success(), "verify should FAIL for non-idempotent: {err}");
-    assert!(
-        err.contains("NOT IDEMPOTENT") || err.contains("verification FAILED"),
-        "should report non-idempotent: {err}"
-    );
-}
-
 // ─── adopt-npm ──────────────────────────────────────────────────
 
 #[test]
@@ -541,5 +507,88 @@ fn e2e_adopt_npm_dry_run() {
     let content = std::fs::read_to_string(&pkg_path).unwrap();
     let pkg: serde_json::Value = serde_json::from_str(&content).unwrap();
     assert_eq!(pkg["scripts"]["build"], "echo compile", "dry run should not modify package.json");
+}
+
+// ─── nested-scripts ─────────────────────────────────────────────
+
+#[test]
+fn e2e_nested_scripts() {
+    if !has_docker() {
+        eprintln!("SKIP: docker not available");
+        return;
+    }
+    let dir = setup_case("nested-scripts");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    let r = run_in(dir.path());
+    let err = stderr(&r);
+    assert!(r.status.success(), "run: {err}");
+
+    // Check all result files were created
+    for name in &["level1.txt", "level2.txt", "level3.txt", "forks.txt",
+                   "background.txt", "pipe.txt", "heredoc.txt", "docker.txt"] {
+        assert!(
+            dir.path().join("results").join(name).exists(),
+            "results/{name} not created. stderr: {err}"
+        );
+    }
+
+    // Docker hello-world output should contain the expected message
+    let docker_out = std::fs::read_to_string(dir.path().join("results/docker.txt")).unwrap();
+    assert!(
+        docker_out.contains("Hello from Docker"),
+        "docker hello-world should print greeting: {docker_out}"
+    );
+
+    // Process tree should be visible (nested scripts spawn many processes)
+    assert!(err.contains("process tree"), "should show process tree: {err}");
+
+    // JSON output should include container metadata when docker ran
+    let r_json = run_in_with_args(dir.path(), &["--log-format", "json"]);
+    assert!(r_json.status.success());
+    let stdout = String::from_utf8_lossy(&r_json.stdout);
+    // At least one JSON line should contain process_tree or container info
+    let has_tree = stdout.lines().any(|line| line.contains("process_tree"));
+    // Process tree is in command_end events — check for the docker process
+    assert!(
+        has_tree || err.contains("docker"),
+        "JSON output should include process tree data"
+    );
+}
+
+// ─── go-testcontainers ──────────────────────────────────────────
+
+#[test]
+fn e2e_go_testcontainers() {
+    if !has_tool("go") {
+        eprintln!("SKIP: go not available");
+        return;
+    }
+    if !has_docker() {
+        eprintln!("SKIP: docker not available");
+        return;
+    }
+    let dir = setup_case("go-testcontainers");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    let r = run_in(dir.path());
+    let err = stderr(&r);
+    assert!(r.status.success(), "run: {err}");
+
+    // Go test output should show PASS
+    assert!(err.contains("PASS"), "go tests should pass: {err}");
+
+    // Process tree should be visible (testcontainers spawns docker processes)
+    assert!(err.contains("process tree"), "should show process tree: {err}");
+
+    // JSON output should include container metadata from Docker API
+    let r_json = run_in_with_args(dir.path(), &["--log-format", "json"]);
+    assert!(r_json.status.success(), "json run: {}", stderr(&r_json));
+    let stdout = String::from_utf8_lossy(&r_json.stdout);
+    // Check that process tree data is present in JSON output
+    let has_tree = stdout.lines().any(|line| line.contains("process_tree"));
+    assert!(has_tree, "JSON output should include process tree: {stdout}");
 }
 

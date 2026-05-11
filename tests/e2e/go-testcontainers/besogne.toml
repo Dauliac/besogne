@@ -1,0 +1,35 @@
+name = "go-testcontainers"
+description = "Run Go tests with testcontainers (Docker)"
+
+[inputs.go]
+type = "binary"
+
+[inputs.docker]
+type = "binary"
+
+[inputs.go-mod]
+type = "file"
+path = "go.mod"
+
+[inputs.test-go]
+type = "file"
+path = "container_test.go"
+
+[inputs.mod-download]
+type = "command"
+phase = "exec"
+run = ["go", "mod", "download"]
+
+[inputs.mod-download.output]
+exit_code = 0
+
+[inputs.test]
+type = "command"
+phase = "exec"
+run = ["go", "test", "-v", "-count=1", "./..."]
+after = ["mod-download"]
+side_effects = true
+
+[inputs.test.output]
+exit_code = 0
+stdout_contains = ["PASS"]

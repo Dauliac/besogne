@@ -355,6 +355,25 @@ fn format_command_context_human(exec: &[String], ctx: &CommandContext) {
     }
 }
 
+/// Format container metadata tag for human output
+fn format_container_tag_human(container: &crate::tracer::ContainerMetadata) -> String {
+    let mut tag = format!(
+        "\x1b[1;35m🐳 {}\x1b[0m \x1b[2m{}\x1b[0m",
+        container.image,
+        &container.container_id,
+    );
+    if !container.container_name.is_empty() {
+        tag.push_str(&format!(" \x1b[2m({})\x1b[0m", container.container_name));
+    }
+    if !container.ports.is_empty() {
+        tag.push_str(&format!(" \x1b[36m{}\x1b[0m", container.ports.join(", ")));
+    }
+    if !container.status.is_empty() {
+        tag.push_str(&format!(" \x1b[2m[{}]\x1b[0m", container.status));
+    }
+    tag
+}
+
 fn format_process_metrics_human(p: &ProcessMetrics) -> String {
     let mut parts = Vec::new();
     parts.push(format!("\x1b[36m{:.3}s\x1b[0m", p.wall_ms as f64 / 1000.0));
@@ -378,6 +397,9 @@ fn format_process_metrics_human(p: &ProcessMetrics) -> String {
             format_bytes(p.read_bytes),
             format_bytes(p.write_bytes),
         ));
+    }
+    if let Some(ref container) = p.container {
+        parts.push(format_container_tag_human(container));
     }
     parts.join("  ")
 }
@@ -503,7 +525,7 @@ fn print_tree_node_recursive(
 /// Format process tree for JSON output
 fn format_process_tree_json(tree: &[ProcessMetrics]) -> serde_json::Value {
     tree.iter().map(|p| {
-        serde_json::json!({
+        let mut obj = serde_json::json!({
             "pid": p.pid,
             "ppid": p.ppid,
             "comm": p.comm,
@@ -517,7 +539,17 @@ fn format_process_tree_json(tree: &[ProcessMetrics]) -> serde_json::Value {
             "write_bytes": p.write_bytes,
             "voluntary_cs": p.voluntary_cs,
             "involuntary_cs": p.involuntary_cs,
-        })
+        });
+        if let Some(ref container) = p.container {
+            obj.as_object_mut().unwrap().insert("container".to_string(), serde_json::json!({
+                "container_id": container.container_id,
+                "image": container.image,
+                "name": container.container_name,
+                "status": container.status,
+                "ports": container.ports,
+            }));
+        }
+        obj
     }).collect()
 }
 
@@ -855,8 +887,11 @@ impl OutputRenderer for CiRenderer {
             eprintln!("  process tree ({} processes):", result.process_tree.len());
             for p in &result.process_tree {
                 let label = if p.comm.is_empty() { format!("pid:{}", p.pid) } else { p.comm.clone() };
-                eprintln!("    {} ppid:{} exit:{} {}ms rss:{}",
-                    label, p.ppid, p.exit_code, p.wall_ms, format_bytes(p.max_rss_kb * 1024));
+                let container_tag = p.container.as_ref()
+                    .map(|c| format!(" [container:{} image:{}]", c.container_id, c.image))
+                    .unwrap_or_default();
+                eprintln!("    {} ppid:{} exit:{} {}ms rss:{}{}",
+                    label, p.ppid, p.exit_code, p.wall_ms, format_bytes(p.max_rss_kb * 1024), container_tag);
             }
         }
         eprintln!("::endgroup::");

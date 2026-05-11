@@ -1,7 +1,7 @@
 pub mod cache;
 pub mod cli;
 pub mod config;
-pub mod verify;
+mod verify;
 
 use crate::ir::{BesogneIR, ResolvedInput, ResolvedNativeInput};
 use crate::ir::dag;
@@ -49,7 +49,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     let pre_inputs: Vec<&ResolvedInput> = ir.inputs.iter().filter(|i| i.phase == Phase::Pre).collect();
 
     // 2. Pre-phase — check preconditions
-    let warmup_cached = !args.force && !args.verify && pre_inputs.iter().all(|input| {
+    let warmup_cached = !args.force && pre_inputs.iter().all(|input| {
         if context.get_probe(&input.id.0).is_none() {
             return false;
         }
@@ -197,40 +197,6 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         if result.success {
             context.set_probe(input.id.0.clone(), result.hash.clone(), result.variables.clone());
         }
-    }
-
-    // Idempotency verification: explicit --verify only (no auto-verify)
-    if args.verify {
-        let json_mode = args.log_format == cli::LogFormat::Json;
-        let results = verify::verify_idempotency(&ir, &all_variables, &mut *renderer, json_mode);
-
-        context.verified = true;
-        context.non_idempotent = results
-            .iter()
-            .filter(|r| !r.idempotent && !r.side_effects_declared)
-            .map(|r| r.name.clone())
-            .collect();
-
-        if !context.non_idempotent.is_empty() {
-            let wall_ms = start.elapsed().as_millis() as u64;
-            context.set_last_run(input_hash, 3, wall_ms);
-            let _ = context.save();
-            renderer.on_summary(3, wall_ms);
-            return ExitCode::from(3);
-        }
-
-        context.set_last_run(input_hash, 0, start.elapsed().as_millis() as u64);
-        let _ = context.save();
-        let wall_ms = start.elapsed().as_millis() as u64;
-        renderer.on_summary(0, wall_ms);
-        return ExitCode::SUCCESS;
-    }
-
-    if context.verified && !context.non_idempotent.is_empty() {
-        eprintln!(
-            "\x1b[33m  non-idempotent: {}\x1b[0m",
-            context.non_idempotent.join(", ")
-        );
     }
 
     execute_dag(&ir, all_variables, input_hash, &mut *renderer, &mut context, start)

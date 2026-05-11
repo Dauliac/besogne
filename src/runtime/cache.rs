@@ -25,14 +25,6 @@ pub struct ContextCache {
     /// Per-command cached output from the last successful run
     #[serde(default)]
     pub commands: HashMap<String, CachedCommand>,
-    /// Whether idempotency verification has been performed.
-    /// On first run, besogne auto-verifies (runs twice) and stores results.
-    #[serde(default)]
-    pub verified: bool,
-    /// Per-command verification results from the idempotency check.
-    /// Commands found non-idempotent are listed here so the user can add side_effects = true.
-    #[serde(default)]
-    pub non_idempotent: Vec<String>,
 }
 
 /// Cached output of a single command execution

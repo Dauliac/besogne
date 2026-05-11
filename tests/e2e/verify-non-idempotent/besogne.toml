@@ -1,7 +1,0 @@
-name = "verify-non-idempotent"
-description = "This besogne is NOT idempotent — verify should fail"
-
-[inputs.append]
-type = "command"
-phase = "exec"
-run = ["sh", "-c", "echo $RANDOM"]

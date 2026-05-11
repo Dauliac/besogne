@@ -1,6 +1,0 @@
-[tasks.verify]
-description = "Should FAIL — $RANDOM produces different output each time"
-run = "besogne run -- --verify; echo exit=$?"
-
-[tasks.clean]
-run = "rm -f task"

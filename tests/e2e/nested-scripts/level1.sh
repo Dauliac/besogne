@@ -21,4 +21,7 @@ echo "level1: background finished"
 # Fork a subshell pipeline
 echo "hello-from-pipe" | tr 'a-z' 'A-Z' | tee results/pipe.txt > /dev/null
 
+# Run a Docker hello-world container
+docker run --rm hello-world > results/docker.txt 2>&1
+
 echo "level1: done"

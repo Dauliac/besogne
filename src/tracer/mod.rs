@@ -8,6 +8,19 @@
 use std::collections::HashMap;
 use std::io::Read;
 
+/// Metadata collected from Docker for container processes
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ContainerMetadata {
+    pub container_id: String,
+    pub image: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub container_name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ports: Vec<String>,
+}
+
 /// Per-process metrics collected via wait4 rusage + /proc scanning
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProcessMetrics {
@@ -26,6 +39,9 @@ pub struct ProcessMetrics {
     pub involuntary_cs: u64,
     pub read_bytes: u64,
     pub write_bytes: u64,
+    /// Container metadata if this process is a `docker run` invocation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<ContainerMetadata>,
 }
 
 /// Events emitted by the tracer during command execution
@@ -101,6 +117,7 @@ struct ProcSnapshot {
     write_bytes: u64,
     first_seen: std::time::Instant,
     last_seen: std::time::Instant,
+    container: Option<ContainerMetadata>,
 }
 
 /// Metrics collected by the background scanner thread
@@ -202,6 +219,129 @@ fn read_net_dev() -> (u64, u64) {
     (rx_total, tx_total)
 }
 
+/// Parse a `docker run` cmdline and extract the image name.
+/// Handles: `docker run [OPTIONS] IMAGE [COMMAND] [ARG...]`
+#[cfg(target_os = "linux")]
+fn parse_docker_run_image(cmdline: &str) -> Option<String> {
+    let parts: Vec<&str> = cmdline.split_whitespace().collect();
+    // Find "run" after "docker"
+    let run_idx = parts.iter().position(|&p| p == "run")?;
+    // Skip flags after "run" to find the image
+    let mut i = run_idx + 1;
+    while i < parts.len() {
+        let arg = parts[i];
+        if arg == "--" {
+            // Everything after -- is the command, image was before
+            return None;
+        }
+        if arg.starts_with('-') {
+            // Flags that take a value (common docker run flags)
+            let takes_value = matches!(arg,
+                "-e" | "--env" | "-v" | "--volume" | "-p" | "--publish" |
+                "-w" | "--workdir" | "--name" | "--network" | "--entrypoint" |
+                "-u" | "--user" | "--memory" | "--cpus" | "-l" | "--label" |
+                "--mount" | "--platform" | "--restart" | "--hostname" |
+                "--add-host" | "--cap-add" | "--cap-drop" | "--device" |
+                "--tmpfs" | "--env-file" | "--log-driver" | "--log-opt" |
+                "--pid" | "--ipc" | "--uts" | "--cgroupns" | "--shm-size"
+            );
+            if takes_value && !arg.contains('=') {
+                i += 2; // skip flag + value
+            } else {
+                i += 1; // skip flag (boolean or --flag=value)
+            }
+        } else {
+            // First non-flag arg after `run` is the image
+            return Some(arg.to_string());
+        }
+    }
+    None
+}
+
+/// Query Docker daemon via Unix socket for running containers.
+/// Returns a list of (container_id_short, image, name, status, ports).
+#[cfg(target_os = "linux")]
+fn query_docker_containers() -> Vec<ContainerMetadata> {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+
+    let sock_path = std::env::var("DOCKER_HOST")
+        .unwrap_or_else(|_| "/var/run/docker.sock".to_string())
+        .strip_prefix("unix://")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "/var/run/docker.sock".to_string());
+
+    let Ok(mut stream) = UnixStream::connect(&sock_path) else {
+        return Vec::new();
+    };
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(200)));
+
+    let request = "GET /containers/json HTTP/1.0\r\nHost: localhost\r\n\r\n";
+    if stream.write_all(request.as_bytes()).is_err() {
+        return Vec::new();
+    }
+
+    let mut response = Vec::new();
+    let _ = stream.read_to_end(&mut response);
+    let response_str = String::from_utf8_lossy(&response);
+
+    // Find JSON body after \r\n\r\n
+    let Some(body_start) = response_str.find("\r\n\r\n") else {
+        return Vec::new();
+    };
+    let body = &response_str[body_start + 4..];
+
+    let Ok(containers) = serde_json::from_str::<Vec<serde_json::Value>>(body) else {
+        return Vec::new();
+    };
+
+    containers.iter().filter_map(|c| {
+        let id = c.get("Id")?.as_str()?;
+        let image = c.get("Image")?.as_str()?;
+        let names: Vec<String> = c.get("Names")
+            .and_then(|n| n.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.trim_start_matches('/').to_string())).collect())
+            .unwrap_or_default();
+        let status = c.get("Status").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let ports: Vec<String> = c.get("Ports")
+            .and_then(|p| p.as_array())
+            .map(|arr| arr.iter().filter_map(|p| {
+                let private = p.get("PrivatePort")?.as_u64()?;
+                let public = p.get("PublicPort").and_then(|v| v.as_u64());
+                let proto = p.get("Type").and_then(|v| v.as_str()).unwrap_or("tcp");
+                match public {
+                    Some(pub_port) => Some(format!("{pub_port}->{private}/{proto}")),
+                    None => Some(format!("{private}/{proto}")),
+                }
+            }).collect())
+            .unwrap_or_default();
+
+        Some(ContainerMetadata {
+            container_id: id[..12.min(id.len())].to_string(),
+            image: image.to_string(),
+            container_name: names.first().cloned().unwrap_or_default(),
+            status,
+            ports,
+        })
+    }).collect()
+}
+
+/// Try to match a docker run process to a running container by image name.
+#[cfg(target_os = "linux")]
+fn detect_container_for_process(cmdline: &str, containers: &[ContainerMetadata]) -> Option<ContainerMetadata> {
+    let image = parse_docker_run_image(cmdline)?;
+    // Match by image name (exact or tag-stripped)
+    containers.iter().find(|c| {
+        c.image == image
+            || c.image.starts_with(&format!("{image}:"))
+            || c.image.split(':').next() == Some(&image)
+            // Docker may resolve to full registry path
+            || c.image.ends_with(&format!("/{image}"))
+            || c.image.contains(&image)
+    }).cloned()
+}
+
 /// Convert libc::rusage to per-process metrics
 #[cfg(target_os = "linux")]
 fn rusage_to_metrics(
@@ -230,6 +370,7 @@ fn rusage_to_metrics(
         involuntary_cs: rusage.ru_nivcsw as u64,
         read_bytes: snapshot.map_or(0, |s| s.read_bytes),
         write_bytes: snapshot.map_or(0, |s| s.write_bytes),
+        container: snapshot.and_then(|s| s.container.clone()),
     }
 }
 
@@ -334,6 +475,9 @@ fn execute_with_wait4(
         let metrics = Arc::clone(&metrics);
         std::thread::spawn(move || {
             let root_pid = pid as u32;
+            let mut docker_queried = false;
+            let mut docker_containers: Vec<ContainerMetadata> = Vec::new();
+            let mut scan_count = 0u32;
             while !stop.load(Ordering::Relaxed) {
                 let now = Instant::now();
                 let found = collect_descendants(pid);
@@ -343,7 +487,31 @@ fn execute_with_wait4(
                     for &dpid in &found {
                         snapshot_pid(&mut m, dpid, now);
                     }
+
+                    // Detect docker run processes and query Docker API for metadata.
+                    // Query Docker every ~50 scans (~150ms) to avoid hammering the socket.
+                    let has_docker_proc = m.snapshots.values().any(|s| {
+                        s.container.is_none() && s.cmdline.contains("docker") && s.cmdline.contains(" run ")
+                    });
+                    if has_docker_proc && (!docker_queried || scan_count % 50 == 0) {
+                        docker_containers = query_docker_containers();
+                        docker_queried = true;
+                    }
+
+                    // Match docker run processes to containers
+                    if !docker_containers.is_empty() {
+                        let pids_to_update: Vec<u32> = m.snapshots.iter()
+                            .filter(|(_, s)| s.container.is_none() && s.cmdline.contains("docker") && s.cmdline.contains(" run "))
+                            .map(|(&pid, _)| pid)
+                            .collect();
+                        for dpid in pids_to_update {
+                            if let Some(snap) = m.snapshots.get_mut(&dpid) {
+                                snap.container = detect_container_for_process(&snap.cmdline, &docker_containers);
+                            }
+                        }
+                    }
                 }
+                scan_count = scan_count.wrapping_add(1);
                 std::thread::sleep(std::time::Duration::from_millis(3));
             }
         })
@@ -379,6 +547,7 @@ fn execute_with_wait4(
 
     // Build ProcessMetrics for the root child
     let root_snapshot = metrics.lock().ok().and_then(|m| m.snapshots.get(&(pid as u32)).cloned());
+    let root_container = root_snapshot.as_ref().and_then(|s| s.container.clone());
     let mut process_tree = vec![ProcessMetrics {
         comm: root_snapshot.as_ref().map_or_else(
             || args[0].clone(),
@@ -389,6 +558,7 @@ fn execute_with_wait4(
             |s| if s.cmdline.is_empty() { args.join(" ") } else { s.cmdline.clone() },
         ),
         ppid: std::process::id(),
+        container: root_container,
         ..rusage_to_metrics(pid as u32, &rusage, main_exit, root_snapshot.as_ref(), main_wall_ms)
     }];
 
@@ -448,6 +618,7 @@ fn execute_with_wait4(
                 involuntary_cs: 0,
                 read_bytes: snap.read_bytes,
                 write_bytes: snap.write_bytes,
+                container: snap.container.clone(),
             });
         }
     }
@@ -507,6 +678,7 @@ fn snapshot_pid(m: &mut ScannerMetrics, pid: u32, now: std::time::Instant) {
         write_bytes: 0,
         first_seen: now,
         last_seen: now,
+        container: None,
     });
     entry.read_bytes = entry.read_bytes.max(r);
     entry.write_bytes = entry.write_bytes.max(w);

@@ -31,6 +31,9 @@ type = "binary"
 [inputs.sleep]
 type = "binary"
 
+[inputs.docker]
+type = "binary"
+
 [inputs.level1]
 type = "file"
 path = "level1.sh"
@@ -87,4 +90,9 @@ required = true
 [[inputs.run-scripts.ensure]]
 type = "file"
 path = "results/heredoc.txt"
+required = true
+
+[[inputs.run-scripts.ensure]]
+type = "file"
+path = "results/docker.txt"
 required = true
