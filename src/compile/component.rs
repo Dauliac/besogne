@@ -1,4 +1,5 @@
 use crate::manifest::{Node, Manifest, PatchOp};
+use crate::output::style::{self, DiagBuilder};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -42,15 +43,31 @@ pub fn expand_components(
 
                     let full_key = format!("{key}.{sub_key}");
                     let node: Node = serde_json::from_value(value.clone()).map_err(|e| {
-                        format!(
-                            "component '{key}' node '{sub_key}': {e}\n  value: {}",
-                            serde_json::to_string_pretty(&value).unwrap_or_default()
-                        )
+                        let header = style::error_diag(&format!(
+                            "invalid node '{}' in component {}",
+                            sub_key, style::bold(key)
+                        ));
+                        let body = DiagBuilder::new()
+                            .location(&format!("component {key} [nodes.{sub_key}]"))
+                            .blank()
+                            .code(&serde_json::to_string_pretty(&value).unwrap_or_default())
+                            .blank()
+                            .note(&e.to_string())
+                            .build();
+                        format!("{header}\n{body}")
                     })?;
                     if expanded.contains_key(&full_key) {
-                        return Err(format!(
-                            "component '{key}' produces duplicate node '{full_key}'"
+                        let header = style::error_diag(&format!(
+                            "duplicate node '{}' from component {}",
+                            style::bold(&full_key), key
                         ));
+                        let body = DiagBuilder::new()
+                            .location(&format!("manifest [nodes.\"{key}\"]"))
+                            .blank()
+                            .note(&format!("node '{full_key}' already exists"))
+                            .hint("two components produce the same node — rename one or use overrides")
+                            .build();
+                        return Err(format!("{header}\n{body}"));
                     }
                     expanded.insert(full_key, node);
                 }
@@ -87,17 +104,40 @@ fn expand_component_json(
 ) -> Result<Vec<(String, serde_json::Value)>, String> {
     // Cycle detection
     if visited.contains(&component_ref.to_string()) {
-        return Err(format!(
-            "circular component: {} \u{2192} {}",
-            visited.join(" \u{2192} "),
-            component_ref
+        let chain = format!("{} \u{2192} {}", visited.join(" \u{2192} "), component_ref);
+        let header = style::error_diag(&format!(
+            "circular component reference: {}",
+            style::bold(component_ref)
         ));
+        let body = DiagBuilder::new()
+            .location(&format!("component {component_ref}"))
+            .blank()
+            .note(&format!("composition chain: {chain}"))
+            .hint("break the cycle by removing one of the component references")
+            .build();
+        return Err(format!("{header}\n{body}"));
     }
     visited.push(component_ref.to_string());
 
     // Load component nodes
-    let component_path = resolve_component_path(source, component_ref, manifest_path)?;
-    let mut nodes = load_component_nodes(&component_path)?;
+    let component_path = resolve_component_path(source, component_ref, manifest_path)
+        .map_err(|e| {
+            if visited.len() > 1 {
+                let chain = visited.join(" \u{2192} ");
+                format!("{e}\n   = note: composition chain: {chain}")
+            } else {
+                e
+            }
+        })?;
+    let mut nodes = load_component_nodes(&component_path)
+        .map_err(|e| {
+            if visited.len() > 1 {
+                let chain = visited.join(" \u{2192} ");
+                format!("{e}\n   = note: composition chain: {chain}")
+            } else {
+                e
+            }
+        })?;
 
     // Apply per-node overrides (shallow merge — replaces fields)
     if let Some(overrides) = overrides {

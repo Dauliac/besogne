@@ -501,9 +501,14 @@ fn resolve_ordering(
                 .iter()
                 .map(|dep_name| {
                     name_to_id.get(dep_name).cloned().ok_or_else(|| {
-                        format!(
+                        let suggestion = closest_match(dep_name, name_to_id.keys());
+                        let mut msg = format!(
                             "node '{cmd_name}' has parents: ['{dep_name}'] which is not a resolvable node"
-                        )
+                        );
+                        if let Some(closest) = suggestion {
+                            msg.push_str(&format!("\n   = hint: did you mean '{closest}'?"));
+                        }
+                        msg
                     })
                 })
                 .collect();
@@ -530,6 +535,41 @@ fn extract_version_constraint(
             ver.get("range").and_then(|r| r.as_str().map(|s| s.to_string()))
         })
     })
+}
+
+/// Find the closest matching name within edit distance 2.
+fn closest_match<'a, I>(target: &str, candidates: I) -> Option<String>
+where
+    I: IntoIterator<Item = &'a String>,
+{
+    candidates
+        .into_iter()
+        .filter_map(|c| {
+            let d = levenshtein(target, c);
+            if d <= 2 { Some((d, c.clone())) } else { None }
+        })
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, name)| name)
+}
+
+/// Levenshtein edit distance between two strings.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let (m, n) = (a.len(), b.len());
+    let mut prev = (0..=n).collect::<Vec<_>>();
+    let mut curr = vec![0; n + 1];
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1)
+                .min(curr[j - 1] + 1)
+                .min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[n]
 }
 
 fn compute_flag_env_var(flag: &Flag, besogne_name_upper: &str) -> String {
