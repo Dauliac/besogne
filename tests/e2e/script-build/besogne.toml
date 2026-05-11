@@ -2,8 +2,12 @@ name = "script-build"
 description = "Build pipeline using a shell script with env vars and outputs"
 verify_first_run = false
 
-[inputs.sh]
-type = "binary"
+[plugins]
+coreutils = "builtin"
+
+[inputs.shell]
+type = "plugin"
+plugin = "coreutils/shell"
 
 [inputs.build-script]
 type = "file"
