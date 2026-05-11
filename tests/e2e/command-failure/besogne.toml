@@ -1,6 +1,5 @@
 name = "failure-stops"
 description = "Failing command prevents dependents from running"
-verify_first_run = false
 
 [inputs.fail]
 type = "command"

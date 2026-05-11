@@ -268,20 +268,15 @@ fn e2e_cache_skip() {
     let c = compile_in(dir.path());
     assert!(c.status.success(), "compile: {}", stderr(&c));
 
-    // First run — triggers idempotency verification (runs exec twice)
+    // First run — should execute
     let r1 = run_in(dir.path());
     let err1 = stderr(&r1);
     assert!(r1.status.success(), "run 1 failed: {err1}");
-    assert!(
-        err1.contains("idempotency check"),
-        "first run should trigger verify: {err1}"
-    );
     let marker = dir.path().join("marker.txt");
     assert!(marker.exists(), "marker.txt not created. stderr: {err1}");
-    // Verify runs exec twice → 2 lines in marker
     assert_eq!(
         std::fs::read_to_string(&marker).unwrap().lines().count(),
-        2, "run 1 (verify): should execute twice"
+        1, "run 1: should execute once"
     );
 
     // Second run — should skip (cache populated)
@@ -289,12 +284,12 @@ fn e2e_cache_skip() {
     assert!(r2.status.success());
     let err2 = stderr(&r2);
     assert!(
-        err2.contains("cached") || err2.contains("skip"),
-        "run 2 should use cache: {err2}"
+        err2.contains("cached") || err2.contains("nothing to do"),
+        "run 2 should be cached: {err2}"
     );
     assert_eq!(
         std::fs::read_to_string(dir.path().join("marker.txt")).unwrap().lines().count(),
-        2, "run 2: marker should still be 2 lines (no new run)"
+        1, "run 2: marker should still be 1 line (no new run)"
     );
 }
 

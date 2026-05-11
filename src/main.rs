@@ -134,10 +134,67 @@ fn exec_binary(path: &PathBuf, args: &[String]) -> std::io::Error {
 }
 
 
+/// Handle `besogne run --help`: parse manifest (no compile), show merged grouped help.
+fn handle_run_help(raw_args: &[String]) -> ExitCode {
+    let mut input_path: Option<PathBuf> = None;
+    let mut i = 2;
+    while i < raw_args.len() {
+        if (raw_args[i] == "-i" || raw_args[i] == "--input") && i + 1 < raw_args.len() {
+            input_path = Some(PathBuf::from(&raw_args[i + 1]));
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+
+    let manifest_path = match resolve_single_input_quiet(&input_path) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("besogne run — build + run in one shot\n");
+            eprintln!("Usage: besogne run [-i <manifest>] [FLAGS]\n");
+            eprintln!("Run options:");
+            eprintln!("  -i, --input <PATH>  Manifest file (auto-discovers if omitted)\n");
+            eprintln!("Cannot show full help: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    // Just PARSE — no compile needed for help
+    let ir = match compile::check_to_ir(&manifest_path) {
+        Ok(ir) => ir,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    // Print header
+    eprintln!("besogne run — build + run in one shot");
+    eprintln!("manifest: {}\n", manifest_path.display());
+    eprintln!("Run options:");
+    eprintln!("  -i, --input <PATH>  Manifest file (auto-discovers if omitted)\n");
+
+    // Build the clap Command from IR and print its help (with grouped headings)
+    let mut cmd = runtime::cli::build_runtime_cli(&ir);
+    let mut buf = Vec::new();
+    cmd.write_long_help(&mut buf).ok();
+    eprint!("{}", String::from_utf8_lossy(&buf));
+
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     // Check if we're a sealed besogne binary (has IR embedded)
     if let Some(ir_data) = compile::embed::extract_ir_from_self() {
         return runtime::run(ir_data);
+    }
+
+    // Intercept `besogne run --help` BEFORE clap (clap would consume it)
+    let raw_args: Vec<String> = std::env::args().collect();
+    if raw_args.len() >= 3 && raw_args[1] == "run"
+        && raw_args.iter().skip(2).any(|a| a == "--help" || a == "-h")
+    {
+        return handle_run_help(&raw_args);
     }
 
     // Otherwise, we're the builder CLI

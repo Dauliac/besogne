@@ -25,7 +25,15 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         return handle_dump(&ir, dump_mode);
     }
 
-    let mut renderer = output::renderer_for_format(&args.log_format);
+    let mut renderer = output::renderer_for_format(&args.log_format, args.verbose);
+
+    // cd to the manifest's directory — ensures mise/direnv/relative paths work
+    if !ir.metadata.workdir.is_empty() {
+        if let Err(e) = std::env::set_current_dir(&ir.metadata.workdir) {
+            eprintln!("error: cannot cd to {}: {e}", ir.metadata.workdir);
+            return ExitCode::from(2);
+        }
+    }
 
     let start = Instant::now();
     renderer.on_start(&ir);
@@ -191,22 +199,11 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         }
     }
 
-    // Idempotency verification:
-    // - Automatic on first run (no cache, not yet verified) — detect issues early, WARN only
-    // - Forced with --verify — strict mode, FAIL on non-idempotent
-    // Idempotency verification triggers on:
-    // 1. Explicit --verify flag (strict: fails on non-idempotent)
-    // 2. First run when manifest declares verify_first_run (warn only)
-    let first_run = context.last_run.is_none() && !context.verified;
-    let should_verify = args.verify || (first_run && ir.verify_first_run);
-
-    if should_verify {
-        let explicit = args.verify;
+    // Idempotency verification: explicit --verify only (no auto-verify)
+    if args.verify {
         let json_mode = args.log_format == cli::LogFormat::Json;
-
         let results = verify::verify_idempotency(&ir, &all_variables, &mut *renderer, json_mode);
 
-        // Store verification results in cache
         context.verified = true;
         context.non_idempotent = results
             .iter()
@@ -214,10 +211,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
             .map(|r| r.name.clone())
             .collect();
 
-        let all_ok = context.non_idempotent.is_empty();
-
-        if !all_ok && explicit {
-            // Explicit --verify: fail hard
+        if !context.non_idempotent.is_empty() {
             let wall_ms = start.elapsed().as_millis() as u64;
             context.set_last_run(input_hash, 3, wall_ms);
             let _ = context.save();
@@ -225,24 +219,18 @@ pub fn run(ir: BesogneIR) -> ExitCode {
             return ExitCode::from(3);
         }
 
-        // Store the result — second run is the "real" run
         context.set_last_run(input_hash, 0, start.elapsed().as_millis() as u64);
         let _ = context.save();
-
         let wall_ms = start.elapsed().as_millis() as u64;
         renderer.on_summary(0, wall_ms);
         return ExitCode::SUCCESS;
     }
 
-    // Not first run — show one-liner that idempotency was already checked
-    if context.verified {
-        verify::display_already_verified();
-        if !context.non_idempotent.is_empty() {
-            eprintln!(
-                "\x1b[33m  non-idempotent: {}\x1b[0m",
-                context.non_idempotent.join(", ")
-            );
-        }
+    if context.verified && !context.non_idempotent.is_empty() {
+        eprintln!(
+            "\x1b[33m  non-idempotent: {}\x1b[0m",
+            context.non_idempotent.join(", ")
+        );
     }
 
     execute_dag(&ir, all_variables, input_hash, &mut *renderer, &mut context, start)
@@ -338,7 +326,7 @@ fn execute_dag(
 
             match &input.input {
                 ResolvedNativeInput::Command {
-                    name, run, env, side_effects, output, ..
+                    name, run, env, side_effects, output, workdir, ..
                 } => {
                     if last_exit_code != 0 && !side_effects {
                         continue;
@@ -355,7 +343,7 @@ fn execute_dag(
                     };
                     renderer.on_command_start(name, run, &ctx);
 
-                    let result = match tracer::execute_traced(run, &cmd_env, &ir.sandbox.env) {
+                    let result = match tracer::execute_traced(run, &cmd_env, &ir.sandbox.env, workdir.as_deref()) {
                         Ok(r) => r,
                         Err(e) => {
                             eprintln!("error: {e}");

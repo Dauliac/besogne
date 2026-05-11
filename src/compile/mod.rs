@@ -21,7 +21,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
     }
 
     // 2. Lower manifest to IR (resolve types, compute hashes)
-    let mut ir = lower::lower_manifest(&manifest)?;
+    let mut ir = lower::lower_manifest(&manifest, manifest_path)?;
 
     // 2b. Build-time binary resolution — shift-left validation
     resolve_build_binaries(&mut ir)?;
@@ -65,7 +65,7 @@ pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), Str
     if manifest.inputs.values().any(|i| matches!(i, manifest::Input::Plugin(_))) {
         manifest.inputs = plugin::expand_plugins(&manifest, manifest_path)?;
     }
-    let mut ir = lower::lower_manifest(&manifest)?;
+    let mut ir = lower::lower_manifest(&manifest, manifest_path)?;
     resolve_build_binaries_quiet(&mut ir)?;
 
     let ir_json = serde_json::to_vec(&ir)
@@ -96,13 +96,23 @@ pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), Str
     Ok(())
 }
 
+/// Parse manifest and lower to IR — no binary resolution, no compilation.
+/// Used for `--help` display where we only need metadata and flags.
+pub fn check_to_ir(manifest_path: &Path) -> Result<crate::ir::BesogneIR, String> {
+    let mut manifest = manifest::load_manifest(manifest_path)?;
+    if manifest.inputs.values().any(|i| matches!(i, manifest::Input::Plugin(_))) {
+        manifest.inputs = plugin::expand_plugins(&manifest, manifest_path)?;
+    }
+    lower::lower_manifest(&manifest, manifest_path)
+}
+
 /// Validate a manifest without compiling
 pub fn check(manifest_path: &Path) -> Result<(), String> {
     let mut manifest = manifest::load_manifest(manifest_path)?;
     if manifest.inputs.values().any(|i| matches!(i, manifest::Input::Plugin(_))) {
         manifest.inputs = plugin::expand_plugins(&manifest, manifest_path)?;
     }
-    let mut ir = lower::lower_manifest(&manifest)?;
+    let mut ir = lower::lower_manifest(&manifest, manifest_path)?;
     resolve_build_binaries(&mut ir)?;
     Ok(())
 }

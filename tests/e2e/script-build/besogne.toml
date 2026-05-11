@@ -1,6 +1,5 @@
 name = "script-build"
 description = "Build pipeline using a shell script with env vars and outputs"
-verify_first_run = false
 
 [plugins]
 coreutils = "builtin"

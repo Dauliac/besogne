@@ -1,6 +1,5 @@
 name = "command-chain"
 description = "DAG execution: step-1 then step-2a/2b in parallel then step-3"
-verify_first_run = false
 
 [inputs.step-1]
 type = "command"

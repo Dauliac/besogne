@@ -72,6 +72,7 @@ pub fn execute_traced(
     args: &[String],
     env: &HashMap<String, String>,
     env_isolation: &crate::ir::EnvSandboxResolved,
+    workdir: Option<&str>,
 ) -> Result<CommandResult, String> {
     if args.is_empty() {
         return Err("empty command".into());
@@ -79,12 +80,12 @@ pub fn execute_traced(
 
     #[cfg(target_os = "linux")]
     {
-        execute_with_wait4(args, env, env_isolation)
+        execute_with_wait4(args, env, env_isolation, workdir)
     }
 
     #[cfg(not(target_os = "linux"))]
     {
-        execute_simple(args, env, env_isolation)
+        execute_simple(args, env, env_isolation, workdir)
     }
 }
 
@@ -239,6 +240,7 @@ fn execute_with_wait4(
     args: &[String],
     env: &HashMap<String, String>,
     env_isolation: &crate::ir::EnvSandboxResolved,
+    workdir: Option<&str>,
 ) -> Result<CommandResult, String> {
     use std::os::unix::io::FromRawFd;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -268,6 +270,15 @@ fn execute_with_wait4(
             libc::setpgid(0, 0);
             // Allow parent to read /proc/<child>/io for disk I/O metrics
             libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0);
+
+            // chdir to per-command workdir if specified
+            if let Some(dir) = workdir {
+                let c_dir = std::ffi::CString::new(dir).unwrap();
+                if libc::chdir(c_dir.as_ptr()) != 0 {
+                    eprintln!("chdir failed: {}: {}", dir, std::io::Error::last_os_error());
+                    libc::_exit(126);
+                }
+            }
 
             libc::close(stdout_read);
             libc::close(stderr_read);
@@ -530,6 +541,7 @@ fn execute_simple(
     args: &[String],
     env: &HashMap<String, String>,
     env_isolation: &crate::ir::EnvSandboxResolved,
+    workdir: Option<&str>,
 ) -> Result<CommandResult, String> {
     use std::process::{Command, Stdio};
     use std::time::Instant;
@@ -538,6 +550,9 @@ fn execute_simple(
 
     let mut cmd = Command::new(&args[0]);
     cmd.args(&args[1..]);
+    if let Some(dir) = workdir {
+        cmd.current_dir(dir);
+    }
 
     match env_isolation {
         crate::ir::EnvSandboxResolved::Strict => {

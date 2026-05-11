@@ -44,9 +44,9 @@ pub trait OutputRenderer {
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64);
 }
 
-pub fn renderer_for_format(format: &LogFormat) -> Box<dyn OutputRenderer> {
+pub fn renderer_for_format(format: &LogFormat, verbose: bool) -> Box<dyn OutputRenderer> {
     match format {
-        LogFormat::Human => Box::new(HumanRenderer::new()),
+        LogFormat::Human => Box::new(HumanRenderer::new(verbose)),
         LogFormat::Json => Box::new(JsonRenderer::new()),
         LogFormat::Ci => Box::new(CiRenderer::new()),
     }
@@ -305,6 +305,13 @@ fn crop_path(path: &str, max_len: usize) -> String {
     format!("{}.../{basename}", &path[..prefix_len])
 }
 
+/// Resolve exec args to their absolute paths where known.
+fn resolve_exec_display(exec: &[String], ctx: &CommandContext) -> String {
+    exec.iter().map(|arg| {
+        ctx.binary_paths.get(arg.as_str()).cloned().unwrap_or_else(|| arg.clone())
+    }).collect::<Vec<_>>().join(" ")
+}
+
 /// Display resolved binary paths and env vars under the exec line (human output).
 fn format_command_context_human(exec: &[String], ctx: &CommandContext) {
     // Show resolved binary paths for args that match declared binaries
@@ -392,6 +399,17 @@ fn format_process_tree_human(tree: &[ProcessMetrics]) {
     print_tree_node(tree, &children, 0, "    ", true);
 }
 
+/// Label for a process tree node: prefer cmdline (full path), fall back to comm, then pid.
+fn process_label(p: &ProcessMetrics) -> String {
+    if !p.cmdline.is_empty() {
+        p.cmdline.clone()
+    } else if !p.comm.is_empty() {
+        p.comm.clone()
+    } else {
+        format!("pid:{}", p.pid)
+    }
+}
+
 fn print_tree_node(
     tree: &[ProcessMetrics],
     children: &HashMap<u32, Vec<usize>>,
@@ -400,7 +418,7 @@ fn print_tree_node(
     is_root: bool,
 ) {
     let p = &tree[idx];
-    let label = if p.comm.is_empty() { format!("pid:{}", p.pid) } else { p.comm.clone() };
+    let label = process_label(p);
     let metrics = format_process_metrics_human(p);
     let exit_tag = if p.exit_code == 0 {
         "\x1b[32m0\x1b[0m".to_string()
@@ -425,11 +443,7 @@ fn print_tree_node(
         } else {
             format!("{prefix}│  ")
         };
-        // Print the connector on the same line as the child
-        let child_label = {
-            let cp = &tree[kid_idx];
-            if cp.comm.is_empty() { format!("pid:{}", cp.pid) } else { cp.comm.clone() }
-        };
+        let child_label = process_label(&tree[kid_idx]);
         let child_metrics = format_process_metrics_human(&tree[kid_idx]);
         let child_exit = if tree[kid_idx].exit_code == 0 {
             "\x1b[32m0\x1b[0m".to_string()
@@ -463,7 +477,7 @@ fn print_tree_node_recursive(
     my_prefix: &str,
 ) {
     let p = &tree[idx];
-    let label = if p.comm.is_empty() { format!("pid:{}", p.pid) } else { p.comm.clone() };
+    let label = process_label(p);
     let metrics = format_process_metrics_human(p);
     let exit_tag = if p.exit_code == 0 {
         "\x1b[32m0\x1b[0m".to_string()
@@ -509,10 +523,16 @@ fn format_process_tree_json(tree: &[ProcessMetrics]) -> serde_json::Value {
 
 // ── Human renderer ──────────────────────────────────────────────────
 
-pub struct HumanRenderer;
+pub struct HumanRenderer {
+    verbose: bool,
+    cached_probes: usize,
+    cached_commands: usize,
+}
 
 impl HumanRenderer {
-    pub fn new() -> Self { Self }
+    pub fn new(verbose: bool) -> Self {
+        Self { verbose, cached_probes: 0, cached_commands: 0 }
+    }
 }
 
 impl OutputRenderer for HumanRenderer {
@@ -526,6 +546,11 @@ impl OutputRenderer for HumanRenderer {
     fn on_phase_start(&mut self, _phase: &str, _count: usize) {}
 
     fn on_probe_result(&mut self, input: &ResolvedInput, result: &ProbeResult, status: ProbeStatus) {
+        // In non-verbose mode, silently count cached probes
+        if !self.verbose && status == ProbeStatus::Cached {
+            self.cached_probes += 1;
+            return;
+        }
         let detail = probe_detail(input, result);
         if result.success {
             let tag = match status {
@@ -546,6 +571,7 @@ impl OutputRenderer for HumanRenderer {
 
     fn on_command_start(&mut self, name: &str, exec: &[String], ctx: &CommandContext) {
         eprintln!("\n\x1b[1mexec\x1b[0m {name}: {}", exec.join(" "));
+        // Always show context on fresh execution (not cached replay)
         format_command_context_human(exec, ctx);
     }
 
@@ -561,13 +587,18 @@ impl OutputRenderer for HumanRenderer {
         } else {
             eprintln!("  \x1b[31mfail\x1b[0m {name}  exit {}  {metrics}", result.exit_code);
         }
+        // Always show process tree on fresh execution
         format_process_tree_human(&result.process_tree);
     }
 
     fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand, ctx: &CommandContext) {
+        if !self.verbose {
+            self.cached_commands += 1;
+            return;
+        }
         eprintln!(
             "\n\x1b[33mcached\x1b[0m {name}: {}  \x1b[2m(ran {})\x1b[0m",
-            exec.join(" "),
+            resolve_exec_display(exec, ctx),
             format_relative_time(&cached.ran_at),
         );
         format_command_context_human(exec, ctx);
@@ -599,7 +630,21 @@ impl OutputRenderer for HumanRenderer {
     }
 
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64) {
-        if exit_code == 0 {
+        let has_cached = self.cached_probes > 0 || self.cached_commands > 0;
+        if !self.verbose && has_cached && exit_code == 0 {
+            let mut parts = Vec::new();
+            if self.cached_probes > 0 {
+                parts.push(format!("{} inputs", self.cached_probes));
+            }
+            if self.cached_commands > 0 {
+                parts.push(format!("{} commands", self.cached_commands));
+            }
+            eprintln!(
+                "\n\x1b[32mnothing to do\x1b[0m \x1b[2m({} cached, use -v for details)\x1b[0m  {:.3}s",
+                parts.join(" + "),
+                wall_ms as f64 / 1000.0,
+            );
+        } else if exit_code == 0 {
             eprintln!("\n\x1b[32mdone\x1b[0m {:.3}s", wall_ms as f64 / 1000.0);
         } else {
             eprintln!("\n\x1b[31mfailed\x1b[0m exit {exit_code}  {:.3}s", wall_ms as f64 / 1000.0);

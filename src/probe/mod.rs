@@ -432,6 +432,7 @@ mod tests {
                 ensure: vec![],
                 side_effects: false,
                 output: None,
+                workdir: None,
             },
         ];
 

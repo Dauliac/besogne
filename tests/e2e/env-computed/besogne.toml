@@ -1,6 +1,5 @@
 name = "env-computed"
 description = "Set computed env vars with value field"
-verify_first_run = false
 
 [inputs.MY_VAR]
 type = "env"

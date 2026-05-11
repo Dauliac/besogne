@@ -1,6 +1,5 @@
 name = "nested-scripts"
-description = "Nested shell scripts: 3 levels deep, forks, sleep, pipes, traps"
-verify_first_run = false
+description = "Nested shell scripts"
 
 [inputs.sh]
 type = "binary"

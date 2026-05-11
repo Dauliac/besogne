@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-fn default_true() -> bool { true }
-
 /// Top-level manifest structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -23,11 +21,6 @@ pub struct Manifest {
 
     #[serde(default)]
     pub inputs: HashMap<String, Input>,
-
-    /// Auto-verify idempotency on first run (runs exec twice, warns on mismatch).
-    /// Default: true — catches non-determinism early. Set to false to disable.
-    #[serde(default = "default_true")]
-    pub verify_first_run: bool,
 }
 
 /// A user-defined flag for the produced besogne binary
@@ -314,6 +307,11 @@ pub struct CommandInput {
     /// Postconditions — what must be true after this command (was: outputs)
     #[serde(default)]
     pub ensure: Option<Vec<EnsureSpec>>,
+
+    /// Working directory for this command (relative to manifest dir).
+    /// If omitted, runs in the manifest directory.
+    #[serde(default)]
+    pub workdir: Option<String>,
 
     /// Ordering constraints (was: dependencies)
     #[serde(default)]

@@ -1,6 +1,5 @@
 name = "npm-install"
 description = "Install npm dependencies"
-verify_first_run = false
 
 [inputs.node]
 type = "binary"

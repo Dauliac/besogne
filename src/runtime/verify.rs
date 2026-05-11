@@ -439,14 +439,14 @@ fn execute_and_fingerprint(
             };
 
             if let ResolvedNativeInput::Command {
-                name, run, env, ensure, side_effects, ..
+                name, run, env, ensure, side_effects, workdir, ..
             } = &input.input {
                 if *side_effects { continue; }
 
                 let mut cmd_env = all_variables.clone();
                 cmd_env.extend(env.clone());
 
-                let result = match tracer::execute_traced(run, &cmd_env, &ir.sandbox.env) {
+                let result = match tracer::execute_traced(run, &cmd_env, &ir.sandbox.env, workdir.as_deref()) {
                     Ok(r) => r,
                     Err(_) => continue,
                 };

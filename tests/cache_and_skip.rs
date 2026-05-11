@@ -49,8 +49,8 @@ run = ["sh", "-c", "echo ran >> {}"]
     assert!(run2.status.success());
     let stderr2 = String::from_utf8_lossy(&run2.stderr);
     assert!(
-        stderr2.contains("(ran "),
-        "second run should replay cached output: {stderr2}"
+        stderr2.contains("cached") || stderr2.contains("nothing to do"),
+        "second run should be cached: {stderr2}"
     );
 }
 
@@ -67,7 +67,6 @@ fn test_no_skip_when_cache_disabled() {
         format!(
             r#"
 name = "no-skip-test"
-verify_first_run = false
 description = "No skip with side effects"
 
 [inputs.write-marker]
@@ -111,7 +110,6 @@ fn test_rusage_metrics_populated() {
         &manifest,
         r#"
 name = "rusage-test"
-verify_first_run = false
 description = "Test rusage metrics"
 
 [inputs.busy]
@@ -152,7 +150,6 @@ fn test_parallel_warmup_all_probed() {
         format!(
             r#"
 name = "parallel-warmup"
-verify_first_run = false
 description = "Test all warmup probes run"
 
 [inputs.HOME]
@@ -220,7 +217,6 @@ fn test_env_isolation_strict() {
         &manifest,
         r#"
 name = "strict-test"
-verify_first_run = false
 description = "Test strict env isolation"
 sandbox = "strict"
 

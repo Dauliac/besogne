@@ -29,7 +29,6 @@ fn test_compile_and_run_hello() {
         &manifest,
         r#"
 name = "hello"
-verify_first_run = false
 description = "Say hello"
 
 [inputs.echo]
@@ -77,7 +76,6 @@ fn test_compile_and_run_with_env() {
         &manifest,
         r#"
 name = "env-test"
-verify_first_run = false
 description = "Test env input"
 
 [inputs.HOME]
@@ -112,7 +110,6 @@ fn test_compile_and_run_missing_env_fails() {
         &manifest,
         r#"
 name = "missing-env"
-verify_first_run = false
 description = "Test missing env"
 
 [inputs.BESOGNE_NONEXISTENT_REQUIRED_VAR_XYZ]
@@ -151,7 +148,6 @@ fn test_compile_and_run_file_input() {
         format!(
             r#"
 name = "file-test"
-verify_first_run = false
 description = "Test file input"
 
 [inputs.data-file]
@@ -190,7 +186,6 @@ fn test_compile_and_run_command_chain() {
         &manifest,
         r#"
 name = "chain-test"
-verify_first_run = false
 description = "Test command dependencies"
 
 [inputs.first]
@@ -229,7 +224,6 @@ fn test_compile_and_run_failing_command() {
         &manifest,
         r#"
 name = "fail-test"
-verify_first_run = false
 description = "Test failing command"
 
 [inputs.fail]
@@ -266,7 +260,6 @@ fn test_check_valid_manifest() {
         &manifest,
         r#"
 name = "check-test"
-verify_first_run = false
 description = "Valid manifest"
 
 [inputs.HOME]
@@ -343,7 +336,6 @@ fn test_platform_probe_runs() {
         format!(
             r#"
 name = "platform-test"
-verify_first_run = false
 description = "Test platform input"
 
 [inputs.platform]

@@ -1,6 +1,5 @@
 name = "docker-alpine"
 description = "Run a command inside an Alpine container"
-verify_first_run = false
 
 [inputs.docker]
 type = "binary"

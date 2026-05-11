@@ -29,6 +29,7 @@ pub struct RuntimeArgs {
     pub dump: Option<DumpMode>,
     pub force: bool,
     pub verify: bool,
+    pub verbose: bool,
     pub subcommand: Option<String>,
     /// All resolved flag values keyed by env_var name
     pub flag_env: HashMap<String, String>,
@@ -40,55 +41,72 @@ fn leak_str(s: &str) -> &'static str {
 
 fn global_args(besogne_name_upper: &str) -> Vec<Arg> {
     let config_env = leak_str(&format!("{besogne_name_upper}_CONFIG"));
+    let h = "Runtime options";
     vec![
         Arg::new("log-format")
             .long("log-format")
             .short('l')
             .help("Output format")
             .value_parser(["human", "json", "ci"])
-            .default_value("human"),
+            .default_value("human")
+            .help_heading(h),
         Arg::new("config")
             .long("config")
             .short('c')
             .help("Config file path (JSON/YAML/TOML)")
             .long_help("Load flag values from a config file. Supports .json, .yaml/.yml, and .toml.\nPriority: CLI arg > env var > config file > default.\nUse nested keys for subcommand flags: { \"integration\": { \"timeout\": \"600\" } }")
             .env(config_env)
-            .action(ArgAction::Set),
+            .action(ArgAction::Set)
+            .help_heading(h),
         Arg::new("all")
             .long("all")
             .help("Run all phases (build + pre + exec) in one shot")
-            .action(ArgAction::SetTrue),
+            .action(ArgAction::SetTrue)
+            .help_heading(h),
+        Arg::new("verbose")
+            .long("verbose")
+            .short('v')
+            .help("Show all details including cached probes, env values, and process trees")
+            .action(ArgAction::SetTrue)
+            .help_heading(h),
         Arg::new("force")
             .long("force")
             .short('f')
             .help("Force re-probe all preconditions (ignore cached warmup)")
-            .action(ArgAction::SetTrue),
+            .action(ArgAction::SetTrue)
+            .help_heading(h),
         Arg::new("verify")
             .long("verify")
-            .help("Idempotency detector: run exec phase twice, compare outputs, report non-idempotent commands")
-            .action(ArgAction::SetTrue),
+            .help("Run exec phase twice and compare — detect non-idempotent commands")
+            .action(ArgAction::SetTrue)
+            .help_heading(h),
         Arg::new("dump")
             .long("dump")
             .help("Show human-friendly summary and exit")
-            .action(ArgAction::SetTrue),
+            .action(ArgAction::SetTrue)
+            .help_heading(h),
         Arg::new("dump-internal")
             .long("dump-internal")
             .help("Dump raw IR as JSON and exit")
-            .action(ArgAction::SetTrue),
+            .action(ArgAction::SetTrue)
+            .help_heading(h),
         Arg::new("completions")
             .long("completions")
             .help("Generate shell completions and exit")
             .long_help("Generate shell completions for the given shell and print to stdout.\nSupported: bash, zsh, fish, elvish, powershell")
             .value_parser(["bash", "zsh", "fish", "elvish", "powershell"])
-            .action(ArgAction::Set),
+            .action(ArgAction::Set)
+            .help_heading(h),
         Arg::new("man")
             .long("man")
             .help("Generate man page and exit")
-            .action(ArgAction::SetTrue),
+            .action(ArgAction::SetTrue)
+            .help_heading(h),
         Arg::new("markdown")
             .long("markdown")
             .help("Generate markdown documentation and exit")
-            .action(ArgAction::SetTrue),
+            .action(ArgAction::SetTrue)
+            .help_heading(h),
     ]
 }
 
@@ -148,7 +166,8 @@ fn build_flag_arg(flag: &ResolvedFlag) -> Arg {
             let mut arg = Arg::new(name)
                 .long(name)
                 .action(ArgAction::SetTrue)
-                .env(env_var);
+                .env(env_var)
+                .help_heading("Task flags");
             if let Some(s) = flag.short {
                 arg = arg.short(s);
             }
@@ -164,7 +183,8 @@ fn build_flag_arg(flag: &ResolvedFlag) -> Arg {
             let mut arg = Arg::new(name)
                 .long(name)
                 .action(ArgAction::Set)
-                .env(env_var);
+                .env(env_var)
+                .help_heading("Task flags");
             if let Some(s) = flag.short {
                 arg = arg.short(s);
             }
@@ -191,7 +211,8 @@ fn build_flag_arg(flag: &ResolvedFlag) -> Arg {
         ResolvedFlagKind::Positional => {
             let mut arg = Arg::new(name)
                 .action(ArgAction::Set)
-                .env(env_var);
+                .env(env_var)
+                .help_heading("Task flags");
             if let Some(desc) = &flag.description {
                 arg = arg.help(leak_str(desc));
             }
@@ -329,6 +350,7 @@ pub fn parse_runtime_args(ir: &BesogneIR) -> RuntimeArgs {
 
     let force = active_matches.get_flag("force");
     let verify = active_matches.get_flag("verify");
+    let verbose = active_matches.get_flag("verbose");
 
     RuntimeArgs {
         log_format,
@@ -336,6 +358,7 @@ pub fn parse_runtime_args(ir: &BesogneIR) -> RuntimeArgs {
         dump,
         force,
         verify,
+        verbose,
         subcommand: subcommand_name,
         flag_env,
     }

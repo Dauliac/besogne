@@ -3,16 +3,23 @@ use crate::manifest::{self, Input, Phase, Flag, FlagKind};
 use std::collections::{HashMap, HashSet};
 
 /// Lower a parsed manifest into the intermediate representation
-pub fn lower_manifest(manifest: &manifest::Manifest) -> Result<BesogneIR, String> {
+pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::Path) -> Result<BesogneIR, String> {
     // Version is the content hash of the manifest — deterministic, no user-specified version
     let manifest_json = serde_json::to_vec(manifest)
         .map_err(|e| format!("cannot serialize manifest for hashing: {e}"))?;
     let version = blake3::hash(&manifest_json).to_hex()[..16].to_string();
 
+    let workdir = manifest_path
+        .parent()
+        .and_then(|p| p.canonicalize().ok())
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| ".".to_string());
+
     let metadata = Metadata {
         name: manifest.name.clone(),
         version,
         description: manifest.description.clone(),
+        workdir,
     };
 
     let sandbox = resolve_sandbox(&manifest.sandbox);
@@ -53,7 +60,7 @@ pub fn lower_manifest(manifest: &manifest::Manifest) -> Result<BesogneIR, String
                 ));
             }
             _ => {
-                let resolved = lower_input(key, input)?;
+                let resolved = lower_input(key, input, &metadata.workdir)?;
                 resolved_inputs.push(resolved);
             }
         }
@@ -62,17 +69,19 @@ pub fn lower_manifest(manifest: &manifest::Manifest) -> Result<BesogneIR, String
     // Resolve exec-phase ordering constraints
     resolve_ordering(&mut resolved_inputs, &manifest.inputs)?;
 
+    // Validate script-as-command patterns: files used as command first args
+    validate_script_commands(&resolved_inputs, &metadata.workdir)?;
+
     Ok(BesogneIR {
         metadata,
         sandbox,
         flags,
         inputs: resolved_inputs,
-        verify_first_run: manifest.verify_first_run,
     })
 }
 
 /// Lower a manifest input to IR. The `key` is the map key (= the input's name).
-fn lower_input(key: &str, input: &Input) -> Result<ResolvedInput, String> {
+fn lower_input(key: &str, input: &Input, base_workdir: &str) -> Result<ResolvedInput, String> {
     let (native, phase, id) = match input {
         Input::Env(e) => {
             let env_name = e.name.clone().unwrap_or_else(|| key.to_string());
@@ -134,6 +143,10 @@ fn lower_input(key: &str, input: &Input) -> Result<ResolvedInput, String> {
 
         Input::Command(c) => {
             let run_resolved = resolve_run_spec(&c.run);
+            let cmd_workdir = c.workdir.as_ref().map(|w| {
+                let p = std::path::Path::new(base_workdir).join(w);
+                p.to_string_lossy().to_string()
+            });
             let native = ResolvedNativeInput::Command {
                 name: key.to_string(),
                 run: run_resolved,
@@ -141,6 +154,7 @@ fn lower_input(key: &str, input: &Input) -> Result<ResolvedInput, String> {
                 ensure: c.ensure.clone().unwrap_or_default(),
                 side_effects: c.side_effects.unwrap_or(false),
                 output: c.output.clone(),
+                workdir: cmd_workdir,
             };
             let phase = c.phase.clone().unwrap_or(Phase::Exec);
             let id = ContentId::from_content("command", key, key.as_bytes());
@@ -205,6 +219,150 @@ fn lower_input(key: &str, input: &Input) -> Result<ResolvedInput, String> {
         from_plugin: None,
         sealed: None,
     })
+}
+
+/// Validate that files used as command first arguments are proper executables.
+///
+/// Detects when a file input is also used as the first word of a command's `run:` —
+/// meaning it's actually a binary/script, not just a data file. Validates:
+/// 1. The file has the executable bit set
+/// 2. The file has a valid shebang
+/// 3. The shebang interpreter is declared as a binary input
+///
+/// This catches the common mistake of declaring a script as `type = "file"` when
+/// it's actually executed as a command.
+fn validate_script_commands(
+    inputs: &[ResolvedInput],
+    workdir: &str,
+) -> Result<(), String> {
+    // Collect file paths (relative → absolute)
+    let file_paths: HashMap<String, String> = inputs
+        .iter()
+        .filter_map(|i| {
+            if let ResolvedNativeInput::File { path, .. } = &i.input {
+                Some((path.clone(), path.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Collect declared binary names
+    let binary_names: HashSet<String> = inputs
+        .iter()
+        .filter_map(|i| {
+            if let ResolvedNativeInput::Binary { name, .. } = &i.input {
+                Some(name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Collect command first words
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+
+    for input in inputs {
+        if let ResolvedNativeInput::Command { name, run, .. } = &input.input {
+            if run.is_empty() {
+                continue;
+            }
+            let first_word = &run[0];
+
+            // Check if the command first word matches a file input path
+            // Normalize: "./level1.sh" matches "level1.sh" and vice versa
+            let normalized_first = first_word
+                .strip_prefix("./")
+                .unwrap_or(first_word);
+
+            let matched_file = file_paths.keys().find(|fp| {
+                let normalized_fp = fp.strip_prefix("./").unwrap_or(fp);
+                normalized_fp == normalized_first || *fp == first_word
+            });
+
+            if let Some(file_path) = matched_file {
+                let abs_path = std::path::Path::new(workdir).join(file_path);
+
+                // Check executable bit
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(meta) = std::fs::metadata(&abs_path) {
+                        let mode = meta.permissions().mode();
+                        if mode & 0o111 == 0 {
+                            errors.push(format!(
+                                "command '{name}': file '{file_path}' is used as a command but is not executable\n  \
+                                 hint: either:\n    \
+                                 1. chmod +x {file_path}  (make it executable, and consider removing .sh extension)\n    \
+                                 2. use run = [\"sh\", \"{file_path}\"]  (and declare 'sh' as a binary input)"
+                            ));
+                            continue;
+                        }
+                    }
+                }
+
+                // Check shebang
+                if let Ok(content) = std::fs::read_to_string(&abs_path) {
+                    if let Some(first_line) = content.lines().next() {
+                        if first_line.starts_with("#!") {
+                            let shebang = first_line.trim_start_matches("#!");
+                            let shebang = shebang.trim();
+
+                            // Parse interpreter from shebang
+                            // Common forms: "#!/bin/sh", "#!/usr/bin/env bash", "#!/usr/bin/python3"
+                            let interpreter = if shebang.starts_with("/usr/bin/env ") || shebang.starts_with("/bin/env ") {
+                                // env form: take the command after env
+                                shebang.split_whitespace().nth(1)
+                            } else {
+                                // Direct path: take basename
+                                shebang.split_whitespace().next()
+                                    .and_then(|p| p.rsplit('/').next())
+                            };
+
+                            if let Some(interp) = interpreter {
+                                if !binary_names.contains(interp) {
+                                    errors.push(format!(
+                                        "command '{name}': script '{file_path}' has shebang '#!{shebang}' \
+                                         but interpreter '{interp}' is not declared as a binary input\n  \
+                                         hint: add [inputs.{interp}] with type = \"binary\" to your manifest"
+                                    ));
+                                }
+                            }
+                        } else {
+                            // No shebang — warn
+                            warnings.push(format!(
+                                "command '{name}': file '{file_path}' is used as a command but has no shebang (#!)\n  \
+                                 hint: add a shebang line (e.g., #!/bin/sh) to '{file_path}'"
+                            ));
+                        }
+                    }
+                }
+
+                // Advise about .sh extension
+                if file_path.ends_with(".sh") || file_path.ends_with(".bash") {
+                    warnings.push(format!(
+                        "command '{name}': '{file_path}' is used as an executable — \
+                         consider removing the .sh extension (executables don't need file extensions)"
+                    ));
+                }
+            }
+        }
+    }
+
+    // Print warnings (non-fatal)
+    for w in &warnings {
+        eprintln!("warning: {w}");
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "script validation failed:\n  {}",
+            errors.join("\n  ")
+        ))
+    }
 }
 
 /// Resolve the run spec (was: exec) into a flat command vec
