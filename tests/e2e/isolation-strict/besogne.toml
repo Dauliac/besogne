@@ -13,3 +13,9 @@ value = "visible"
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo ALLOWED=$ALLOWED_VAR HOME=$HOME"]
+
+[nodes.check-stdout]
+type = "std"
+stream = "stdout"
+contains = ["ALLOWED=visible"]
+parents = ["check"]

@@ -23,3 +23,9 @@ type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo step-3 >> order.txt"]
 parents = ["step-2a", "step-2b"]
+
+[nodes.step-3-exit]
+type = "std"
+stream = "exit_code"
+expect = "0"
+parents = ["step-3"]

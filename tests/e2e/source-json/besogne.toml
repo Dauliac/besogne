@@ -13,3 +13,9 @@ path = "env.json"
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo GOPATH=$GOPATH CGO=$CGO_ENABLED"]
+
+[nodes.check-stdout]
+type = "std"
+stream = "stdout"
+contains = ["GOPATH=", "CGO="]
+parents = ["check"]

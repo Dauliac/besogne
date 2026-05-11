@@ -9,3 +9,9 @@ path = "input.txt"
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo ran >> marker.txt"]
+
+[nodes.mark-exit]
+type = "std"
+stream = "exit_code"
+expect = "0"
+parents = ["mark"]

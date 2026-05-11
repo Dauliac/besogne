@@ -30,3 +30,9 @@ type = "command"
 phase = "exec"
 run = { file = "./build.sh" }
 parents = ["setup"]
+
+[nodes.build-exit]
+type = "std"
+stream = "exit_code"
+expect = "0"
+parents = ["build"]

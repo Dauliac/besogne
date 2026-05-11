@@ -9,3 +9,9 @@ secret = true
 type = "command"
 phase = "exec"
 run = ["echo", "secret-handled"]
+
+[nodes.ok-stdout]
+type = "std"
+stream = "stdout"
+contains = ["secret-handled"]
+parents = ["ok"]

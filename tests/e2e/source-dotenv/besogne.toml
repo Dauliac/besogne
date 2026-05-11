@@ -13,3 +13,9 @@ path = ".env"
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo DB=$DATABASE_URL NAME=$APP_NAME"]
+
+[nodes.check-stdout]
+type = "std"
+stream = "stdout"
+contains = ["DB=", "NAME="]
+parents = ["check"]

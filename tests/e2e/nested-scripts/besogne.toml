@@ -36,3 +36,9 @@ type = "command"
 phase = "exec"
 run = ["sh", "-c", "cat results/level1.txt results/level2.txt results/level3.txt results/forks.txt results/background.txt results/pipe.txt results/heredoc.txt results/forked.txt"]
 parents = ["run-scripts"]
+
+[nodes.verify-exit]
+type = "std"
+stream = "exit_code"
+expect = "0"
+parents = ["verify"]

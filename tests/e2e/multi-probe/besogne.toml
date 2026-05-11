@@ -40,3 +40,9 @@ host = "localhost"
 type = "command"
 phase = "exec"
 run = ["echo", "all-probes-passed"]
+
+[nodes.summary-stdout]
+type = "std"
+stream = "stdout"
+contains = ["all-probes-passed"]
+parents = ["summary"]
