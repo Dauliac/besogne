@@ -56,7 +56,7 @@ The key serves as:
 
 ## Native input types
 
-`env`, `file`, `binary`, `service`, `command`, `user`, `platform`, `dns`, `metric`, `plugin`.
+`env`, `file`, `binary`, `service`, `command`, `source`, `user`, `platform`, `dns`, `metric`, `plugin`.
 
 ### Phase
 

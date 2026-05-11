@@ -17,6 +17,7 @@ Probe (hashable, no execution)         Action (requires execution)
 ├── binary
 ├── service
 ├── std  (stdout/stderr/exit_code)
+├── source (env map from file/tool)
 ├── user
 ├── platform
 ├── dns

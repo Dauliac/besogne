@@ -240,4 +240,17 @@ pub enum ResolvedNativeNode {
         #[serde(default)]
         path: Option<String>,
     },
+    Source {
+        /// Parse format: "json", "dotenv", "shell"
+        format: String,
+        /// File to parse directly (if no std parent)
+        #[serde(default)]
+        path: Option<String>,
+        /// Only keep these env var names
+        #[serde(default)]
+        select: Option<Vec<String>>,
+        /// Build-time sealed env map (if phase=build)
+        #[serde(default)]
+        sealed_env: Option<HashMap<String, String>>,
+    },
 }

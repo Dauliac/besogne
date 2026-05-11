@@ -1,5 +1,6 @@
 use crate::ir::types::*;
 use crate::manifest::{self, Node, Phase, Flag, FlagKind};
+use crate::output::style::{self, DiagBuilder};
 use std::collections::{HashMap, HashSet};
 
 /// Lower a parsed manifest into the intermediate representation
@@ -210,6 +211,18 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
             (native, phase, id)
         }
 
+        Node::Source(s) => {
+            let native = ResolvedNativeNode::Source {
+                format: s.format.clone(),
+                path: s.path.clone(),
+                select: s.select.clone(),
+                sealed_env: None,
+            };
+            let phase = s.phase.clone().unwrap_or(Phase::Seal);
+            let id = ContentId::from_content("source", key, key.as_bytes());
+            (native, phase, id)
+        }
+
         Node::Plugin(_) => {
             return Err("plugins should be expanded before lowering".into());
         }
@@ -295,12 +308,18 @@ fn validate_script_commands(
                     if let Ok(meta) = std::fs::metadata(&abs_path) {
                         let mode = meta.permissions().mode();
                         if mode & 0o111 == 0 {
-                            errors.push(format!(
-                                "command '{name}': file '{file_path}' is used as a command but is not executable\n  \
-                                 hint: either:\n    \
-                                 1. chmod +x {file_path}  (make it executable, and consider removing .sh extension)\n    \
-                                 2. use run = [\"sh\", \"{file_path}\"]  (and declare 'sh' as a binary input)"
-                            ));
+                            let header = style::error_diag(&format!(
+                                "command {}: file '{}' is used as a command but is not executable",
+                                style::bold(name), file_path));
+                            let body = DiagBuilder::new()
+                                .location(&format!("manifest [nodes.{name}]"))
+                                .blank()
+                                .code(&format!("run = [\"{file_path}\"]"))
+                                .blank()
+                                .hint(&format!("chmod +x {file_path}  (make it executable)"))
+                                .hint(&format!("or use run = [\"sh\", \"{file_path}\"]  (and declare 'sh' as a binary node)"))
+                                .build();
+                            errors.push(format!("{header}\n{body}"));
                             continue;
                         }
                     }
@@ -326,29 +345,43 @@ fn validate_script_commands(
 
                             if let Some(interp) = interpreter {
                                 if !binary_names.contains(interp) {
-                                    errors.push(format!(
-                                        "command '{name}': script '{file_path}' has shebang '#!{shebang}' \
-                                         but interpreter '{interp}' is not declared as a binary input\n  \
-                                         hint: add [nodes.{interp}] with type = \"binary\" to your manifest"
-                                    ));
+                                    let header = style::error_diag(&format!(
+                                        "command {}: script '{}' uses undeclared interpreter '{interp}'",
+                                        style::bold(name), file_path));
+                                    let body = DiagBuilder::new()
+                                        .location(&format!("manifest [nodes.{name}]"))
+                                        .blank()
+                                        .code(&format!("#!{shebang}"))
+                                        .blank()
+                                        .hint(&format!("add [nodes.{interp}] with type = \"binary\" to your manifest"))
+                                        .build();
+                                    errors.push(format!("{header}\n{body}"));
                                 }
                             }
                         } else {
                             // No shebang — warn
-                            warnings.push(format!(
-                                "command '{name}': file '{file_path}' is used as a command but has no shebang (#!)\n  \
-                                 hint: add a shebang line (e.g., #!/bin/sh) to '{file_path}'"
-                            ));
+                            let header = style::warning_diag(&format!(
+                                "command {}: file '{}' has no shebang (#!)",
+                                style::bold(name), file_path));
+                            let body = DiagBuilder::new()
+                                .location(&format!("manifest [nodes.{name}]"))
+                                .hint(&format!("add a shebang line (e.g., #!/bin/sh) to '{file_path}'"))
+                                .build();
+                            warnings.push(format!("{header}\n{body}"));
                         }
                     }
                 }
 
                 // Advise about .sh extension
                 if file_path.ends_with(".sh") || file_path.ends_with(".bash") {
-                    warnings.push(format!(
-                        "command '{name}': '{file_path}' is used as an executable — \
-                         consider removing the .sh extension (executables don't need file extensions)"
-                    ));
+                    let header = style::warning_diag(&format!(
+                        "command {}: '{}' is used as an executable",
+                        style::bold(name), file_path));
+                    let body = DiagBuilder::new()
+                        .location(&format!("manifest [nodes.{name}]"))
+                        .hint("consider removing the .sh extension (executables don't need file extensions)")
+                        .build();
+                    warnings.push(format!("{header}\n{body}"));
                 }
             }
         }
@@ -356,7 +389,7 @@ fn validate_script_commands(
 
     // Print warnings (non-fatal)
     for w in &warnings {
-        eprintln!("warning: {w}");
+        eprintln!("{w}");
     }
 
     if errors.is_empty() {
@@ -396,17 +429,23 @@ fn resolve_ordering(
     nodes: &mut Vec<ResolvedNode>,
     manifest_nodes: &HashMap<String, manifest::Node>,
 ) -> Result<(), String> {
-    // Build name→id map for exec-phase inputs
+    // Build name→id map for exec-phase inputs + source nodes (any phase)
     let name_to_id: HashMap<String, ContentId> = nodes
         .iter()
-        .filter(|i| i.phase == Phase::Exec)
         .filter_map(|i| {
-            if let ResolvedNativeNode::Command { name, .. } = &i.node {
-                Some((name.clone(), i.id.clone()))
-            } else if let ResolvedNativeNode::Service { name: Some(name), .. } = &i.node {
-                Some((name.clone(), i.id.clone()))
-            } else {
-                None
+            match &i.node {
+                ResolvedNativeNode::Command { name, .. } if i.phase == Phase::Exec => {
+                    Some((name.clone(), i.id.clone()))
+                }
+                ResolvedNativeNode::Service { name: Some(name), .. } if i.phase == Phase::Exec => {
+                    Some((name.clone(), i.id.clone()))
+                }
+                ResolvedNativeNode::Source { .. } => {
+                    // Source nodes are referenceable as parents from any phase
+                    let key = i.id.0.split(':').nth(1).unwrap_or("").to_string();
+                    Some((key, i.id.clone()))
+                }
+                _ => None,
             }
         })
         .collect();
@@ -425,6 +464,11 @@ fn resolve_ordering(
                     parents_by_name.insert(key.clone(), parents.clone());
                 }
             }
+            manifest::Node::Source(s) => {
+                if let Some(parents) = &s.parents {
+                    parents_by_name.insert(key.clone(), parents.clone());
+                }
+            }
             _ => {}
         }
     }
@@ -433,11 +477,15 @@ fn resolve_ordering(
     let resolutions: Vec<(usize, Vec<ContentId>)> = nodes
         .iter()
         .enumerate()
-        .filter(|(_, i)| i.phase == Phase::Exec)
+        .filter(|(_, i)| i.phase == Phase::Exec || matches!(&i.node, ResolvedNativeNode::Source { .. }))
         .filter_map(|(idx, input)| {
             let cmd_name = match &input.node {
-                ResolvedNativeNode::Command { name, .. } => Some(name),
-                ResolvedNativeNode::Service { name: Some(name), .. } => Some(name),
+                ResolvedNativeNode::Command { name, .. } => Some(name.as_str()),
+                ResolvedNativeNode::Service { name: Some(name), .. } => Some(name.as_str()),
+                ResolvedNativeNode::Source { .. } => {
+                    // Extract key from content ID "source:<key>:<hash>"
+                    Some(input.id.0.split(':').nth(1).unwrap_or(""))
+                }
                 _ => None,
             }?;
 
@@ -447,7 +495,7 @@ fn resolve_ordering(
                 .map(|dep_name| {
                     name_to_id.get(dep_name).cloned().ok_or_else(|| {
                         format!(
-                            "command '{cmd_name}' has parents: ['{dep_name}'] which is not an exec-phase input"
+                            "node '{cmd_name}' has parents: ['{dep_name}'] which is not a resolvable node"
                         )
                     })
                 })

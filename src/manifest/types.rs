@@ -131,6 +131,7 @@ pub enum Node {
     Dns(DnsInput),
     Metric(MetricInput),
     Plugin(PluginInput),
+    Source(SourceInput),
 }
 
 impl Node {
@@ -147,6 +148,7 @@ impl Node {
             Node::Dns(d) => d.phase.clone().unwrap_or(Phase::Seal),
             Node::Metric(m) => m.phase.clone().unwrap_or(Phase::Seal),
             Node::Plugin(_) => Phase::Seal,
+            Node::Source(s) => s.phase.clone().unwrap_or(Phase::Seal),
         }
     }
 }
@@ -437,6 +439,29 @@ pub struct PluginInput {
     /// All remaining fields are plugin params
     #[serde(flatten)]
     pub params: HashMap<String, serde_json::Value>,
+}
+
+/// Source input — reads a map of env vars from a file or std parent.
+/// The env vars are injected into commands that have this source as a parent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceInput {
+    /// Parse format: "json", "dotenv", "shell"
+    pub format: String,
+
+    /// File to parse directly (alternative to reading from a std parent)
+    #[serde(default)]
+    pub path: Option<String>,
+
+    /// Only keep these env var names (filter). If omitted, keep all.
+    #[serde(default)]
+    pub select: Option<Vec<String>>,
+
+    #[serde(default)]
+    pub phase: Option<Phase>,
+
+    /// Parent nodes in the DAG
+    #[serde(default)]
+    pub parents: Option<Vec<String>>,
 }
 
 // --- Shared types ---

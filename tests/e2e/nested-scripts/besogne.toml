@@ -55,39 +55,39 @@ run = ["sh", "-c", "rm -rf results && mkdir -p results"]
 type = "command"
 phase = "exec"
 run = { file = "./level1.sh" }
-after = ["setup"]
+parents = ["setup"]
 
-[[nodes.run-scripts.ensure]]
+[[nodes.run-scripts.postconditions]]
 type = "file"
 path = "results/level1.txt"
 required = true
 
-[[nodes.run-scripts.ensure]]
+[[nodes.run-scripts.postconditions]]
 type = "file"
 path = "results/level2.txt"
 required = true
 
-[[nodes.run-scripts.ensure]]
+[[nodes.run-scripts.postconditions]]
 type = "file"
 path = "results/level3.txt"
 required = true
 
-[[nodes.run-scripts.ensure]]
+[[nodes.run-scripts.postconditions]]
 type = "file"
 path = "results/forks.txt"
 required = true
 
-[[nodes.run-scripts.ensure]]
+[[nodes.run-scripts.postconditions]]
 type = "file"
 path = "results/background.txt"
 required = true
 
-[[nodes.run-scripts.ensure]]
+[[nodes.run-scripts.postconditions]]
 type = "file"
 path = "results/pipe.txt"
 required = true
 
-[[nodes.run-scripts.ensure]]
+[[nodes.run-scripts.postconditions]]
 type = "file"
 path = "results/heredoc.txt"
 required = true
@@ -96,4 +96,4 @@ required = true
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "cat results/level1.txt results/level2.txt results/level3.txt results/forks.txt results/background.txt results/pipe.txt results/heredoc.txt"]
-after = ["run-scripts"]
+parents = ["run-scripts"]

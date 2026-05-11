@@ -1,6 +1,6 @@
 # Native node types
 
-All 10 native types are implemented in pure Rust with syscalls — no external dependencies.
+All 11 native types are implemented in pure Rust with syscalls — no external dependencies.
 
 Nodes are either **probes** (hashable, no execution) or **actions** (execute commands). The `parents:` field connects them into a DAG. Edge meaning is derived from node types.
 
@@ -221,6 +221,57 @@ db_host = ".database.host"
 ```
 
 See [content types](./content-types.md) for the full format reference.
+
+## source
+
+Load a map of environment variables from a file or command output. Env vars are injected into commands that depend on this node.
+
+```toml
+# From a .env file
+[nodes.secrets]
+type = "source"
+format = "dotenv"
+path = ".env"
+
+# From a JSON file (e.g. direnv export, mise env)
+[nodes.dev-env]
+type = "source"
+format = "json"
+path = "env.json"
+
+# With select filter (only keep specific vars)
+[nodes.nix-env]
+type = "source"
+format = "json"
+path = "nix-env.json"
+phase = "build"
+select = ["GOPATH", "PATH", "CC"]
+```
+
+| Field | Description |
+|---|---|
+| `format` | Parse format: `json` (flat object), `dotenv` (KEY=VALUE), `shell` (export KEY=VALUE) |
+| `path` | File to parse (omit if reading from a `std` parent) |
+| `select` | Only keep these env var names (filter) |
+| `parents` | DAG parents (file nodes, std nodes, etc.) |
+
+Source nodes are **probes** — they read environment state without executing anything. The parsed env vars flow into `all_variables` and are available to all commands.
+
+### Using plugins for common tools
+
+Instead of writing source nodes manually, use builtin `env/*` plugins:
+
+```toml
+[nodes.dev-env]
+type = "plugin"
+plugin = "env/direnv"
+
+[nodes.secrets]
+type = "plugin"
+plugin = "env/dotenv"
+```
+
+Available: `env/direnv`, `env/mise`, `env/nix`, `env/venv`, `env/dotenv`, `env/conda`.
 
 ## plugin
 

@@ -140,25 +140,42 @@ fn read_proc_ppid(pid: u32) -> u32 {
     fields.get(1).and_then(|s| s.parse().ok()).unwrap_or(0)
 }
 
-/// Collect all descendant PIDs of a given root PID by walking /proc.
+/// Collect all descendant PIDs by walking the process tree top-down.
+///
+/// Uses `/proc/<pid>/task/<pid>/children` (Linux 3.5+) which directly lists
+/// child PIDs — O(tree_size) instead of O(all_procs_on_system).
+/// Falls back to full /proc scan if the children file is unavailable.
 #[cfg(target_os = "linux")]
 fn collect_descendants(root_pid: i32) -> std::collections::HashSet<u32> {
     let mut descendants = std::collections::HashSet::new();
-    let Ok(entries) = std::fs::read_dir("/proc") else { return descendants };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(name_str) = name.to_str() else { continue };
-        let Ok(pid) = name_str.parse::<u32>() else { continue };
-        if pid == root_pid as u32 { continue; }
-        let mut cur = pid;
-        for _ in 0..64 {
-            let ppid = read_proc_ppid(cur);
-            if ppid == root_pid as u32 {
-                descendants.insert(pid);
-                break;
+    let mut stack = vec![root_pid as u32];
+
+    while let Some(pid) = stack.pop() {
+        // Try fast path: /proc/<pid>/task/<pid>/children
+        let children_path = format!("/proc/{pid}/task/{pid}/children");
+        if let Ok(content) = std::fs::read_to_string(&children_path) {
+            for token in content.split_whitespace() {
+                if let Ok(child_pid) = token.parse::<u32>() {
+                    if child_pid != root_pid as u32 && descendants.insert(child_pid) {
+                        stack.push(child_pid);
+                    }
+                }
             }
-            if ppid <= 1 { break; }
-            cur = ppid;
+        } else if pid == root_pid as u32 {
+            // Fallback for root only: scan /proc for direct children by ppid
+            if let Ok(entries) = std::fs::read_dir("/proc") {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let Some(name_str) = name.to_str() else { continue };
+                    let Ok(cpid) = name_str.parse::<u32>() else { continue };
+                    if cpid == root_pid as u32 { continue; }
+                    if read_proc_ppid(cpid) == root_pid as u32 {
+                        if descendants.insert(cpid) {
+                            stack.push(cpid);
+                        }
+                    }
+                }
+            }
         }
     }
     descendants
@@ -334,6 +351,8 @@ fn execute_with_wait4(
         let metrics = Arc::clone(&metrics);
         std::thread::spawn(move || {
             let root_pid = pid as u32;
+            let scan_start = Instant::now();
+            let mut scan_count = 0u64;
             while !stop.load(Ordering::Relaxed) {
                 let now = Instant::now();
                 let found = collect_descendants(pid);
@@ -344,8 +363,18 @@ fn execute_with_wait4(
                         snapshot_pid(&mut m, dpid, now);
                     }
                 }
-                std::thread::sleep(std::time::Duration::from_millis(3));
+
+                // Adaptive frequency: fast at start to catch short-lived processes,
+                // then slow down to reduce CPU overhead on long-running commands.
+                // 500μs for first 200ms, 1ms until 1s, then 5ms steady-state.
+                scan_count += 1;
+                let elapsed = scan_start.elapsed().as_millis();
+                let sleep_us = if elapsed < 200 { 500 }
+                    else if elapsed < 1000 { 1000 }
+                    else { 5000 };
+                std::thread::sleep(std::time::Duration::from_micros(sleep_us));
             }
+            let _ = scan_count; // suppress unused warning
         })
     };
 

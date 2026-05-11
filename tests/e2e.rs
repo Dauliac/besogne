@@ -589,3 +589,33 @@ fn e2e_go_testcontainers() {
     assert!(has_tree, "JSON output should include process tree: {stdout}");
 }
 
+// ─── source-dotenv ──────────────────────────────────────────────
+
+#[test]
+fn e2e_source_dotenv() {
+    let dir = setup_case("source-dotenv");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    let r = run_in(dir.path());
+    assert!(r.status.success(), "run: {}", stderr(&r));
+    let err = stderr(&r);
+    assert!(err.contains("DB=postgres://localhost:5432/mydb"), "source env vars should be injected: {err}");
+    assert!(err.contains("NAME=besogne-test"), "source env vars should be injected: {err}");
+}
+
+// ─── source-json ────────────────────────────────────────────────
+
+#[test]
+fn e2e_source_json() {
+    let dir = setup_case("source-json");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    let r = run_in(dir.path());
+    assert!(r.status.success(), "run: {}", stderr(&r));
+    let err = stderr(&r);
+    assert!(err.contains("GOPATH=/home/user/go"), "source env vars should be injected: {err}");
+    assert!(err.contains("CGO=0"), "source env vars should be injected: {err}");
+}
+

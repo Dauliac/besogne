@@ -5,6 +5,7 @@ pub mod plugin;
 
 use crate::ir::types::{BesogneIR, ResolvedNativeNode, SealedSnapshot};
 use crate::manifest;
+use crate::output::style::{self, DiagBuilder};
 use crate::probe::binary;
 use std::path::{Path, PathBuf};
 
@@ -194,16 +195,17 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
                     } else {
                         String::new()
                     };
-                    errors.push(format!(
-                        "\x1b[1;31merror\x1b[0m: binary \x1b[1m'{name}'\x1b[0m not found{parents_info}\n\
-                         \x1b[1;34m  -->\x1b[0m manifest [nodes.{name}]\n\
-                         \x1b[1;34m   |\x1b[0m\n\
-                         \x1b[1;34m   |\x1b[0m  [nodes.{name}]\n\
-                         \x1b[1;34m   |\x1b[0m  type = \"binary\"\n\
-                         \x1b[1;34m   |\x1b[0m\n\
-                         \x1b[1;34m   =\x1b[0m {e}\n\
-                         \x1b[1;34m   =\x1b[0m \x1b[33mhint\x1b[0m: add it to PATH, set an explicit \"path\" field, or remove this input"
-                    ));
+                    let header = style::error_diag(&format!("binary {} not found{parents_info}", style::bold(name)));
+                    let body = DiagBuilder::new()
+                        .location(&format!("manifest [nodes.{name}]"))
+                        .blank()
+                        .code(&format!("[nodes.{name}]"))
+                        .code("type = \"binary\"")
+                        .blank()
+                        .note(&e.to_string())
+                        .hint("add it to PATH, set an explicit \"path\" field, or remove this node")
+                        .build();
+                    errors.push(format!("{header}\n{body}"));
                 }
             }
         }
@@ -249,15 +251,16 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
                         hasher.update(parent_hash.as_bytes());
                     }
                     None => {
-                        errors.push(format!(
-                            "\x1b[1;31merror\x1b[0m: binary \x1b[1m'{name}'\x1b[0m parent not found\n\
-                             \x1b[1;34m  -->\x1b[0m manifest [nodes.{name}]\n\
-                             \x1b[1;34m   |\x1b[0m\n\
-                             \x1b[1;34m   |\x1b[0m  parents = [\"{parent_name}\"]\n\
-                             \x1b[1;34m   |\x1b[0m\n\
-                             \x1b[1;34m   =\x1b[0m parent '{parent_name}' not found or not resolved\n\
-                             \x1b[1;34m   =\x1b[0m \x1b[33mhint\x1b[0m: '{parent_name}' must be declared as a binary input"
-                        ));
+                        let header = style::error_diag(&format!("binary {} parent not found", style::bold(name)));
+                        let body = DiagBuilder::new()
+                            .location(&format!("manifest [nodes.{name}]"))
+                            .blank()
+                            .code(&format!("parents = [\"{parent_name}\"]"))
+                            .blank()
+                            .note(&format!("parent '{parent_name}' not found or not resolved"))
+                            .hint(&format!("'{parent_name}' must be declared as a binary node"))
+                            .build();
+                        errors.push(format!("{header}\n{body}"));
                     }
                 }
             }

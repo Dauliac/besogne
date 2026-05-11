@@ -351,7 +351,7 @@ pub fn parse_runtime_args(ir: &BesogneIR) -> RuntimeArgs {
                 merge_config(&mut flag_env, &config_values, ir);
             }
             Err(e) => {
-                eprintln!("warning: {e}");
+                eprintln!("{}", crate::output::style::warning_diag(&e.to_string()));
             }
         }
     }

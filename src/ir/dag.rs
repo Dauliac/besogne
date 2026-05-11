@@ -28,12 +28,8 @@ pub fn build_exec_dag(
             for parent_id in &input.parents {
                 if let Some(parent_idx) = node_map.get(parent_id) {
                     graph.add_edge(*parent_idx, *node_idx, ());
-                } else {
-                    return Err(format!(
-                        "exec input {} has parents: [{}] which is not an exec-phase input",
-                        input.id, parent_id
-                    ));
                 }
+                // Skip parents not in exec DAG (cross-phase refs like source nodes)
             }
         }
     }

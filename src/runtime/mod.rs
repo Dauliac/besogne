@@ -25,24 +25,37 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         return handle_dump(&ir, dump_mode);
     }
 
+    // Compute besogne hash for memoization (needed by both --status and normal run)
+    let besogne_hash = compute_besogne_hash(&ir);
+
     let mut renderer = output::renderer_for_format(&args.log_format, args.verbose);
 
     // cd to the manifest's directory — ensures mise/direnv/relative paths work
     if !ir.metadata.workdir.is_empty() {
         if let Err(e) = std::env::set_current_dir(&ir.metadata.workdir) {
-            eprintln!("error: cannot cd to {}: {e}", ir.metadata.workdir);
+            eprintln!("{}", crate::output::style::error_diag(&format!("cannot cd to {}: {e}", ir.metadata.workdir)));
             return ExitCode::from(2);
         }
     }
 
     let start = Instant::now();
-    renderer.on_start(&ir);
 
     let flag_vars = args.flag_env;
 
-    // Compute besogne hash for memoization
-    let besogne_hash = compute_besogne_hash(&ir);
     let mut context = ContextCache::load(&besogne_hash);
+
+    // --status: show DAG tree + cached command replays, then exit
+    if args.status {
+        output::render_status_tree(&ir, &context);
+        eprintln!();
+        let all_vars = flag_vars;
+        replay_cached_commands(&ir, &context, &mut *renderer, &all_vars);
+        let wall_ms = start.elapsed().as_millis() as u64;
+        renderer.on_summary(0, wall_ms);
+        return ExitCode::SUCCESS;
+    }
+
+    renderer.on_start(&ir);
 
     // Partition inputs by phase
     let build_nodes: Vec<&ResolvedNode> = ir.nodes.iter().filter(|i| i.phase == Phase::Build).collect();
@@ -121,7 +134,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
             .to_hex()
             .to_string();
 
-        if args.status || (!has_side_effects(&ir) && context.can_skip(&input_hash)) {
+        if !has_side_effects(&ir) && context.can_skip(&input_hash) {
             replay_cached_commands(&ir, &context, &mut *renderer, &all_vars);
             let wall_ms = start.elapsed().as_millis() as u64;
             renderer.on_summary(0, wall_ms);
@@ -216,7 +229,7 @@ fn execute_dag(
     let (graph, _) = match dag::build_exec_dag(ir) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("error: {e}");
+            eprintln!("{}", crate::output::style::error_diag(&e.to_string()));
             return ExitCode::from(2);
         }
     };
@@ -224,7 +237,7 @@ fn execute_dag(
     let tiers = match dag::compute_tiers(&graph) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("error: {e}");
+            eprintln!("{}", crate::output::style::error_diag(&e.to_string()));
             return ExitCode::from(2);
         }
     };
@@ -323,7 +336,7 @@ fn execute_dag(
                     let result = match tracer::execute_traced(&effective_run, &cmd_env, &ir.sandbox.env, workdir.as_deref()) {
                         Ok(r) => r,
                         Err(e) => {
-                            eprintln!("error: {e}");
+                            eprintln!("{}", crate::output::style::error_diag(&e.to_string()));
                             last_exit_code = 126;
                             continue;
                         }
@@ -338,14 +351,16 @@ fn execute_dag(
                     let run_basenames: std::collections::HashSet<&str> = run.iter()
                         .filter_map(|a| a.rsplit('/').next())
                         .collect();
-                    for proc in &result.process_tree {
+                    for (proc_idx, proc) in result.process_tree.iter().enumerate() {
                         if proc.comm.is_empty() { continue; }
+                        if proc_idx == 0 { continue; } // skip root (the command itself)
                         let comm = &proc.comm;
-                        // Skip: declared binaries, shell interpreters, the run command itself
                         if declared_binaries.contains(comm) { continue; }
                         if run_basenames.contains(comm.as_str()) { continue; }
-                        // Skip common shells (they're the interpreter, not a dependency)
+                        // Skip shells, besogne itself, and hex-hash cache binary names
                         if ["bash", "sh", "dash", "zsh", "fish", "csh", "tcsh"].contains(&comm.as_str()) { continue; }
+                        if comm.chars().all(|c| c.is_ascii_hexdigit()) { continue; }
+                        if proc.cmdline.contains("besogne") { continue; }
                         undeclared_binaries.insert(comm.clone());
                     }
 
@@ -377,7 +392,7 @@ fn execute_dag(
                     // Validate output assertions (opt-in)
                     if let Some(spec) = output {
                         if let Err(e) = verify::check_output(spec, &stdout, &cmd_stderr, result.exit_code) {
-                            eprintln!("  \x1b[31mfail\x1b[0m {name} output: {e}");
+                            eprintln!("  {} {name} output: {e}", output::style::styled(output::style::status::FAILED, output::style::label::FAILED));
                             last_exit_code = 3;
                             continue;
                         }
@@ -396,7 +411,8 @@ fn execute_dag(
                     let result = probe::probe_input(&input.node);
                     if !result.success {
                         eprintln!(
-                            "  \x1b[31m✗\x1b[0m {label}: {}",
+                            "  {} {label}: {}",
+                            output::style::styled(output::style::status::FAILED, "✗"),
                             result.error.as_deref().unwrap_or("unreachable")
                         );
                         last_exit_code = 1;

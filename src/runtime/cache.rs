@@ -165,6 +165,11 @@ impl ContextCache {
         self.commands.insert(command_name, cached);
     }
 
+    /// Get last run info
+    pub fn get_last_run(&self) -> Option<&LastRun> {
+        self.last_run.as_ref()
+    }
+
     /// Store last run result
     pub fn set_last_run(&mut self, input_hash: String, exit_code: i32, duration_ms: u64) {
         self.probed_at = Some(now_iso());

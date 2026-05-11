@@ -28,6 +28,9 @@ toml = "0.8"
 # DAG operations
 petgraph = "0.6"
 
+# Tree rendering
+termtree = "1"
+
 # Parallelism (scoped threads)
 crossbeam = "0.8"
 

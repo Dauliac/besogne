@@ -163,7 +163,7 @@ fn handle_run_help(raw_args: &[String]) -> ExitCode {
     let ir = match compile::check_to_ir(&manifest_path) {
         Ok(ir) => ir,
         Err(e) => {
-            eprintln!("error: {e}");
+            eprintln!("{}", output::style::error_diag(&e.to_string()));
             return ExitCode::from(2);
         }
     };
@@ -204,11 +204,11 @@ fn main() -> ExitCode {
         Some(Commands::Build { input, output }) => {
             let manifests = match resolve_manifests(&input) {
                 Ok(i) => i,
-                Err(e) => { eprintln!("error: {e}"); return ExitCode::from(2); }
+                Err(e) => { eprintln!("{}", output::style::error_diag(&e.to_string())); return ExitCode::from(2); }
             };
 
             if manifests.len() > 1 && output.is_some() {
-                eprintln!("error: --output cannot be used with multiple manifests");
+                eprintln!("{}", output::style::error_diag("--output cannot be used with multiple manifests"));
                 return ExitCode::from(2);
             }
 
@@ -229,7 +229,7 @@ fn main() -> ExitCode {
                         eprintln!("besogne: built {} → {}", manifest_path.display(), out.display());
                     }
                     Err(e) => {
-                        eprintln!("error: {}: {e}", manifest_path.display());
+                        eprintln!("{}", output::style::error_diag(&format!("{}: {e}", manifest_path.display())));
                         failed = true;
                     }
                 }
@@ -249,11 +249,11 @@ fn main() -> ExitCode {
                     if wants_help {
                         eprintln!("besogne run: build + run a manifest in one shot");
                         eprintln!("  All flags after 'run' are forwarded to the produced binary.\n");
-                        eprintln!("error: {e}");
+                        eprintln!("{}", output::style::error_diag(&e.to_string()));
                         eprintln!("  Cannot show full help without a manifest to build.\n");
                         eprintln!("Usage: besogne run [-i <manifest>] [-- <flags>]");
                     } else {
-                        eprintln!("error: {e}");
+                        eprintln!("{}", output::style::error_diag(&e.to_string()));
                     }
                     return ExitCode::from(2);
                 }
@@ -279,7 +279,7 @@ fn main() -> ExitCode {
             let manifest_content = match std::fs::read(&manifest_path) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("error: cannot read {}: {e}", manifest_path.display());
+                    eprintln!("{}", output::style::error_diag(&format!("cannot read {}: {e}", manifest_path.display())));
                     return ExitCode::from(2);
                 }
             };
@@ -295,7 +295,7 @@ fn main() -> ExitCode {
 
             if needs_build {
                 if let Err(e) = compile::compile_quiet(&manifest_path, &bin_path) {
-                    eprintln!("error: {e}");
+                    eprintln!("{}", output::style::error_diag(&e.to_string()));
                     return ExitCode::from(2);
                 }
                 if json_mode {
@@ -331,7 +331,7 @@ fn main() -> ExitCode {
 
             // exec replaces this process — the besogne binary takes over
             let err = exec_binary(&bin_path, &args);
-            eprintln!("error: cannot exec {}: {err}", bin_path.display());
+            eprintln!("{}", output::style::error_diag(&format!("cannot exec {}: {err}", bin_path.display())));
             ExitCode::from(126)
         }
 
@@ -343,12 +343,12 @@ fn main() -> ExitCode {
                     if name == "package.json" {
                         adopt::AdoptSource::PackageJson
                     } else {
-                        eprintln!("error: unsupported source file. Currently only package.json is supported.");
+                        eprintln!("{}", output::style::error_diag("unsupported source file (currently only package.json is supported)"));
                         return ExitCode::from(2);
                     }
                 }
                 _ => {
-                    eprintln!("error: unsupported source format. Currently only package.json is supported.");
+                    eprintln!("{}", output::style::error_diag("unsupported source format (currently only package.json is supported)"));
                     return ExitCode::from(2);
                 }
             };
@@ -371,7 +371,7 @@ fn main() -> ExitCode {
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{}", output::style::error_diag(&e.to_string()));
                     ExitCode::from(2)
                 }
             }
@@ -380,7 +380,7 @@ fn main() -> ExitCode {
         Some(Commands::Check { input }) => {
             let manifests = match resolve_manifests(&input) {
                 Ok(i) => i,
-                Err(e) => { eprintln!("error: {e}"); return ExitCode::from(2); }
+                Err(e) => { eprintln!("{}", output::style::error_diag(&e.to_string())); return ExitCode::from(2); }
             };
 
             let mut failed = false;
@@ -390,7 +390,7 @@ fn main() -> ExitCode {
                         eprintln!("besogne: {} is valid", manifest_path.display());
                     }
                     Err(e) => {
-                        eprintln!("error: {}: {e}", manifest_path.display());
+                        eprintln!("{}", output::style::error_diag(&format!("{}: {e}", manifest_path.display())));
                         failed = true;
                     }
                 }

@@ -5,6 +5,7 @@ pub mod file;
 pub mod metric;
 pub mod platform;
 pub mod service;
+pub mod source;
 pub mod user;
 
 use crate::ir::ResolvedNativeNode;
@@ -85,6 +86,19 @@ pub fn probe_input(input: &ResolvedNativeNode) -> ProbeResult {
         ResolvedNativeNode::Metric { metric, path, .. } => metric::MetricProbe {
             metric,
             path: path.as_deref(),
+        }
+        .probe(),
+
+        ResolvedNativeNode::Source {
+            format,
+            path,
+            select,
+            sealed_env,
+        } => source::SourceProbe {
+            format,
+            path: path.as_deref(),
+            select: select.as_deref(),
+            sealed_env: sealed_env.as_ref(),
         }
         .probe(),
 
@@ -436,6 +450,12 @@ mod tests {
                 workdir: None,
                 force_args: vec![],
                 debug_args: vec![],
+            },
+            ResolvedNativeNode::Source {
+                format: "dotenv".into(),
+                path: None,
+                select: None,
+                sealed_env: None,
             },
         ];
 
