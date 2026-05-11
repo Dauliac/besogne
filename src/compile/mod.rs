@@ -55,7 +55,10 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, Stri
     }
     embed::emit(&store_binary, &ir)?;
 
-    // 5. Copy to output path
+    // 5. Write metadata sidecar (provenance + Nix store compatibility)
+    write_store_metadata(&store_binary, &ir, &cache_hash, manifest_path);
+
+    // 6. Copy to output path
     std::fs::copy(&store_binary, output_path)
         .map_err(|e| format!("cannot copy to output: {e}"))?;
 
@@ -93,6 +96,7 @@ pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), Str
         let _ = std::fs::create_dir_all(parent);
     }
     embed::emit(&store_bin, &ir)?;
+    write_store_metadata(&store_bin, &ir, &cache_hash, manifest_path);
     std::fs::copy(&store_bin, output_path)
         .map_err(|e| format!("cannot copy to output: {e}"))?;
 
@@ -292,6 +296,82 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
             "build-time binary resolution failed:\n  {}",
             errors.join("\n  ")
         ))
+    }
+}
+
+/// Write metadata sidecar alongside the binary in the store.
+/// Contains provenance info and Nix store references for future `besogne push`.
+fn write_store_metadata(
+    store_binary: &Path,
+    ir: &BesogneIR,
+    cache_hash: &str,
+    manifest_path: &Path,
+) {
+    use crate::ir::types::{ResolvedNativeNode, BinarySourceResolved};
+
+    let store_dir = store_binary.parent().unwrap_or(Path::new("."));
+    let metadata_path = store_dir.join("metadata.json");
+
+    // Extract Nix store references from sealed binaries
+    let mut nix_references: Vec<String> = Vec::new();
+    let mut sealed_binaries = serde_json::Map::new();
+    let mut components: Vec<String> = Vec::new();
+
+    for node in &ir.nodes {
+        // Collect Nix references from binary nodes
+        if let ResolvedNativeNode::Binary { name, source, resolved_path, binary_hash, .. } = &node.node {
+            let mut entry = serde_json::Map::new();
+            if let Some(hash) = binary_hash {
+                entry.insert("hash".into(), serde_json::Value::String(hash.clone()));
+            }
+            if let Some(path) = resolved_path {
+                entry.insert("resolved_path".into(), serde_json::Value::String(path.clone()));
+            }
+            if let Some(BinarySourceResolved::Nix { store_path, pname }) = source {
+                entry.insert("nix_store_path".into(), serde_json::Value::String(store_path.clone()));
+                if let Some(pname) = pname {
+                    entry.insert("nix_pname".into(), serde_json::Value::String(pname.clone()));
+                }
+                // Extract the derivation path (everything up to /bin/)
+                let drv_path = store_path.split("/bin/").next().unwrap_or(store_path);
+                if !nix_references.contains(&drv_path.to_string()) {
+                    nix_references.push(drv_path.to_string());
+                }
+            }
+            sealed_binaries.insert(name.clone(), serde_json::Value::Object(entry));
+        }
+
+        // Collect component origins
+        if let Some(comp) = &node.from_component {
+            if !components.contains(comp) {
+                components.push(comp.clone());
+            }
+        }
+    }
+
+    nix_references.sort();
+    components.sort();
+
+    let system = std::env::consts::ARCH.to_string() + "-" + std::env::consts::OS;
+
+    let metadata = serde_json::json!({
+        "name": ir.metadata.name,
+        "description": ir.metadata.description,
+        "blake3": cache_hash,
+        "built_at": chrono::Utc::now().to_rfc3339(),
+        "manifest_path": manifest_path.display().to_string(),
+        "compiler_hash": crate::runtime::cache::compiler_self_hash(),
+        "components": components,
+        "sealed_binaries": sealed_binaries,
+        "nix": {
+            "system": system,
+            "references": nix_references,
+        }
+    });
+
+    // Best-effort write — metadata is non-critical
+    if let Ok(json) = serde_json::to_string_pretty(&metadata) {
+        let _ = std::fs::write(&metadata_path, json);
     }
 }
 
