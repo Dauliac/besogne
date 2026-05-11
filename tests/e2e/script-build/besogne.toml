@@ -34,13 +34,3 @@ type = "command"
 phase = "exec"
 run = { file = "./build.sh" }
 parents = ["setup"]
-
-[[nodes.build.postconditions]]
-type = "file"
-path = "dist/result.json"
-required = true
-
-[[nodes.build.postconditions]]
-type = "file"
-path = "dist/build.log"
-required = true

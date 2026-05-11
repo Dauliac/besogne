@@ -1,58 +1,83 @@
-//! Output assertion validation for commands.
+//! Idempotency verification and output assertion validation.
 
-/// Validate command output against an OutputSpec.
-/// Returns Ok(()) if all assertions pass, Err(message) on first failure.
-pub fn check_output(
-    spec: &crate::manifest::OutputSpec,
-    stdout: &str,
-    stderr: &str,
+use crate::output::style;
+use std::collections::HashMap;
+
+/// Fingerprint of a single command execution — used to compare two runs.
+struct CommandFingerprint {
     exit_code: i32,
-) -> Result<(), String> {
-    if let Some(expected) = spec.exit_code {
-        if exit_code != expected {
-            return Err(format!("exit_code: expected {expected}, got {exit_code}"));
+    stdout_hash: String,
+    stderr_hash: String,
+}
+
+impl CommandFingerprint {
+    fn from_result(result: &crate::tracer::CommandResult) -> Self {
+        Self {
+            exit_code: result.exit_code,
+            stdout_hash: blake3::hash(&result.stdout).to_hex()[..16].to_string(),
+            stderr_hash: blake3::hash(&result.stderr).to_hex()[..16].to_string(),
         }
     }
-    if let Some(patterns) = &spec.stdout_contains {
-        for pat in patterns {
-            if !stdout.contains(pat.as_str()) {
-                return Err(format!("stdout_contains: expected \"{pat}\""));
-            }
+
+    fn matches(&self, other: &Self) -> Vec<String> {
+        let mut mismatches = Vec::new();
+        if self.exit_code != other.exit_code {
+            mismatches.push(format!(
+                "{}: {} vs {}",
+                style::message::VERIFY_MISMATCH_EXIT,
+                self.exit_code,
+                other.exit_code,
+            ));
+        }
+        if self.stdout_hash != other.stdout_hash {
+            mismatches.push(style::message::VERIFY_MISMATCH_STDOUT.to_string());
+        }
+        if self.stderr_hash != other.stderr_hash {
+            mismatches.push(style::message::VERIFY_MISMATCH_STDERR.to_string());
+        }
+        mismatches
+    }
+}
+
+/// Re-run a command and compare fingerprints to verify idempotency.
+/// Returns None if idempotent, Some(mismatches) if not.
+pub fn verify_command(
+    run: &[String],
+    env: &HashMap<String, String>,
+    sandbox: &crate::ir::EnvSandboxResolved,
+    workdir: Option<&str>,
+    first_fingerprint: &crate::tracer::CommandResult,
+) -> Option<Vec<String>> {
+    let fp1 = CommandFingerprint::from_result(first_fingerprint);
+
+    // Re-run
+    let result2 = match crate::tracer::execute_traced(run, env, sandbox, workdir) {
+        Ok(r) => r,
+        Err(_) => {
+            return Some(vec!["second run failed to execute".to_string()]);
+        }
+    };
+
+    let fp2 = CommandFingerprint::from_result(&result2);
+    let mismatches = fp1.matches(&fp2);
+    if mismatches.is_empty() { None } else { Some(mismatches) }
+}
+
+/// Format a verification result line for human output.
+pub fn format_verify_human(name: &str, mismatches: Option<&[String]>) -> String {
+    match mismatches {
+        None => {
+            format!("  {} {name} {}",
+                style::styled(style::verify::IDEMPOTENT, "\u{2713}"),
+                style::styled(style::verify::IDEMPOTENT, style::message::IDEMPOTENT))
+        }
+        Some(reasons) => {
+            format!("  {} {name} {} ({})",
+                style::styled(style::verify::NOT_IDEMPOTENT, "\u{2717}"),
+                style::styled(style::verify::NOT_IDEMPOTENT, style::message::NOT_IDEMPOTENT),
+                reasons.join(", "))
         }
     }
-    if let Some(patterns) = &spec.stderr_contains {
-        for pat in patterns {
-            if !stderr.contains(pat.as_str()) {
-                return Err(format!("stderr_contains: expected \"{pat}\""));
-            }
-        }
-    }
-    if let Some(pattern) = &spec.stdout_matches {
-        let re = regex::Regex::new(pattern)
-            .map_err(|e| format!("stdout_matches: invalid regex: {e}"))?;
-        if !re.is_match(stdout) {
-            return Err(format!("stdout_matches: no match for /{pattern}/"));
-        }
-    }
-    if let Some(pattern) = &spec.stderr_matches {
-        let re = regex::Regex::new(pattern)
-            .map_err(|e| format!("stderr_matches: invalid regex: {e}"))?;
-        if !re.is_match(stderr) {
-            return Err(format!("stderr_matches: no match for /{pattern}/"));
-        }
-    }
-    if let Some(expected) = &spec.json {
-        let parsed: serde_json::Value = serde_json::from_str(stdout)
-            .map_err(|e| format!("json: stdout is not valid JSON: {e}"))?;
-        for (key, expected_val) in expected {
-            match json_path(&parsed, key) {
-                Some(val) if val == expected_val => {}
-                Some(val) => return Err(format!("json.{key}: expected {expected_val}, got {val}")),
-                None => return Err(format!("json.{key}: path not found")),
-            }
-        }
-    }
-    Ok(())
 }
 
 fn json_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {

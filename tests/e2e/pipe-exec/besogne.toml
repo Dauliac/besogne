@@ -12,4 +12,4 @@ name = "tr"
 [nodes.pipe-test]
 type = "command"
 phase = "exec"
-run = { pipe = [["echo", "hello world"], ["tr", "a-z", "A-Z"]] }
+run = "echo hello world | tr a-z A-Z"

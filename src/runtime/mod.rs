@@ -290,6 +290,11 @@ fn execute_dag(
 
     let mut undeclared_binaries: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+    // Idempotency verification: on first run, re-run each command (except side_effects)
+    // to check whether outputs are deterministic.
+    let first_run = !context.verified;
+    let mut non_idempotent: Vec<String> = Vec::new();
+
     let input_by_id: HashMap<_, _> = ir
         .nodes
         .iter()
@@ -307,7 +312,7 @@ fn execute_dag(
 
             match &input.node {
                 ResolvedNativeNode::Command {
-                    name, run, env, side_effects, output, workdir, force_args, debug_args, ..
+                    name, run, env, side_effects, workdir, force_args, debug_args, ..
                 } => {
                     if last_exit_code != 0 && !side_effects {
                         continue;
@@ -346,6 +351,22 @@ fn execute_dag(
                     let cmd_stderr = String::from_utf8_lossy(&result.stderr).to_string();
                     renderer.on_command_output(name, &stdout, &cmd_stderr);
                     renderer.on_command_end(name, &result);
+
+                    // Idempotency verification: re-run if first run + not side_effects + succeeded
+                    if first_run && !side_effects && result.exit_code == 0 {
+                        eprintln!("    {}", output::style::styled(
+                            output::style::verify::VERIFYING,
+                            output::style::message::VERIFY_RUN2,
+                        ));
+                        let mismatches = verify::verify_command(
+                            &effective_run, &cmd_env, &ir.sandbox.env, workdir.as_deref(), &result,
+                        );
+                        eprintln!("{}", verify::format_verify_human(name, mismatches.as_deref()));
+                        if let Some(reasons) = mismatches {
+                            non_idempotent.push(name.clone());
+                            let _ = reasons; // reasons already printed
+                        }
+                    }
 
                     // Detect undeclared binaries from process tree
                     let run_basenames: std::collections::HashSet<&str> = run.iter()
@@ -389,15 +410,6 @@ fn execute_dag(
                         );
                     }
 
-                    // Validate output assertions (opt-in)
-                    if let Some(spec) = output {
-                        if let Err(e) = verify::check_output(spec, &stdout, &cmd_stderr, result.exit_code) {
-                            eprintln!("  {} {name} output: {e}", output::style::styled(output::style::status::FAILED, output::style::label::FAILED));
-                            last_exit_code = 3;
-                            continue;
-                        }
-                    }
-
                     if result.exit_code != 0 {
                         last_exit_code = result.exit_code;
                     }
@@ -435,15 +447,23 @@ fn execute_dag(
         renderer.on_undeclared_deps(&undeclared_bins, &[]);
     }
 
+    // Store idempotency verification results
+    if first_run && !debug {
+        context.verified = true;
+        context.non_idempotent = non_idempotent.clone();
+        if !non_idempotent.is_empty() {
+            eprintln!("\n  {} {}",
+                output::style::styled(output::style::verify::NOT_IDEMPOTENT, output::style::message::NOT_IDEMPOTENT),
+                output::style::dim(&non_idempotent.join(", ")));
+            eprintln!("  {}", output::style::dim("add side_effects = true to these commands if intentional"));
+        }
+    }
+
     let wall_ms = start.elapsed().as_millis() as u64;
-    // Skip all cache writes when --debug is active to avoid poisoning
-    // cache with debug-mode output that differs from normal runs.
     if !debug {
         if undeclared_bins.is_empty() {
             context.set_last_run(input_hash, last_exit_code, wall_ms);
         } else {
-            // Poison: store the run but with a special hash that will never match,
-            // so the cache can't be used for skipping until manifest is updated.
             context.set_last_run("__undeclared_deps__".to_string(), last_exit_code, wall_ms);
         }
         let _ = context.save();

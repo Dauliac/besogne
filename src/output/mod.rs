@@ -322,6 +322,16 @@ fn process_label(p: &ProcessMetrics) -> String {
     else { format!("pid:{}", p.pid) }
 }
 
+/// Detect if a child process is a subshell (forked copy of its parent).
+/// Returns " (subshell)" tag if the child has the same cmdline as its parent.
+fn subshell_tag(child: &ProcessMetrics, parent_cmdline: &str) -> String {
+    if !child.cmdline.is_empty() && !parent_cmdline.is_empty() && child.cmdline == parent_cmdline {
+        format!(" {}(subshell){RESET}", emphasis::SECONDARY)
+    } else {
+        String::new()
+    }
+}
+
 // ── Command context display ─────────────────────────────────────────
 
 fn format_command_context_human(exec: &[String], ctx: &CommandContext) {
@@ -383,6 +393,7 @@ fn print_process_node(
     let label_style = if is_root { node::COMMAND } else { style::palette::WHITE };
     eprintln!("{prefix}{label_style}{label}{RESET} [{exit_tag}]  {metrics}");
 
+    let parent_cmdline = &p.cmdline;
     let kids = children.get(&p.pid).map(|k| k.as_slice()).unwrap_or(&[]);
     for (i, &kid_idx) in kids.iter().enumerate() {
         let is_last = i == kids.len() - 1;
@@ -392,14 +403,15 @@ fn print_process_node(
         let kid_label = process_label(kp);
         let kid_metrics = format_metrics_human(&Metrics::from(kp));
         let kid_exit = fmt_exit(kp.exit_code);
-        eprintln!("{prefix}{connector}{}{kid_label}{RESET} [{kid_exit}]  {kid_metrics}", style::palette::WHITE);
+        let ss_tag = subshell_tag(kp, parent_cmdline);
+        eprintln!("{prefix}{connector}{}{kid_label}{RESET}{ss_tag} [{kid_exit}]  {kid_metrics}", style::palette::WHITE);
 
         if let Some(grandkids) = children.get(&kp.pid) {
             for (j, &gk_idx) in grandkids.iter().enumerate() {
                 let gk_last = j == grandkids.len() - 1;
                 let gk_conn = if gk_last { "\u{2514}\u{2500} " } else { "\u{251c}\u{2500} " };
                 let gk_prefix = format!("{child_prefix}{}", if gk_last { "   " } else { "\u{2502}  " });
-                print_process_node_recursive(tree, children, gk_idx, &child_prefix, gk_conn, &gk_prefix);
+                print_process_node_recursive(tree, children, gk_idx, &child_prefix, gk_conn, &gk_prefix, &kp.cmdline);
             }
         }
     }
@@ -408,31 +420,59 @@ fn print_process_node(
 fn print_process_node_recursive(
     tree: &[ProcessMetrics], children: &HashMap<u32, Vec<usize>>,
     idx: usize, parent_prefix: &str, connector: &str, my_prefix: &str,
+    parent_cmdline: &str,
 ) {
     let p = &tree[idx];
     let label = process_label(p);
     let metrics = format_metrics_human(&Metrics::from(p));
     let exit_tag = fmt_exit(p.exit_code);
-    eprintln!("{parent_prefix}{connector}{}{label}{RESET} [{exit_tag}]  {metrics}", style::palette::WHITE);
+    let ss_tag = subshell_tag(p, parent_cmdline);
+    eprintln!("{parent_prefix}{connector}{}{label}{RESET}{ss_tag} [{exit_tag}]  {metrics}", style::palette::WHITE);
 
     if let Some(kids) = children.get(&p.pid) {
         for (i, &kid_idx) in kids.iter().enumerate() {
             let is_last = i == kids.len() - 1;
             let kid_conn = if is_last { "\u{2514}\u{2500} " } else { "\u{251c}\u{2500} " };
             let kid_prefix = format!("{my_prefix}{}", if is_last { "   " } else { "\u{2502}  " });
-            print_process_node_recursive(tree, children, kid_idx, my_prefix, kid_conn, &kid_prefix);
+            print_process_node_recursive(tree, children, kid_idx, my_prefix, kid_conn, &kid_prefix, &p.cmdline);
         }
     }
 }
 
+/// Build pid→cmdline map for CI flat-list subshell detection
+fn ci_cmdline_map(tree: &[ProcessMetrics]) -> HashMap<u32, String> {
+    tree.iter().map(|p| (p.pid, p.cmdline.clone())).collect()
+}
+
+/// CI subshell tag: " [subshell]" if child has same cmdline as parent
+fn ci_subshell_tag(p: &ProcessMetrics, cmdlines: &HashMap<u32, String>) -> &'static str {
+    if !p.cmdline.is_empty() {
+        if let Some(parent_cmd) = cmdlines.get(&p.ppid) {
+            if *parent_cmd == p.cmdline {
+                return " [subshell]";
+            }
+        }
+    }
+    ""
+}
+
 fn format_process_tree_json(tree: &[ProcessMetrics]) -> serde_json::Value {
-    tree.iter().map(|p| serde_json::json!({
-        "pid": p.pid, "ppid": p.ppid, "comm": p.comm, "cmdline": p.cmdline,
-        "exit_code": p.exit_code, "wall_ms": p.wall_ms, "user_ms": p.user_ms,
-        "sys_ms": p.sys_ms, "max_rss_kb": p.max_rss_kb,
-        "read_bytes": p.read_bytes, "write_bytes": p.write_bytes,
-        "voluntary_cs": p.voluntary_cs, "involuntary_cs": p.involuntary_cs,
-    })).collect()
+    // Build pid→cmdline map for subshell detection
+    let cmdline_by_pid: HashMap<u32, &str> = tree.iter()
+        .map(|p| (p.pid, p.cmdline.as_str()))
+        .collect();
+    tree.iter().map(|p| {
+        let is_subshell = !p.cmdline.is_empty()
+            && cmdline_by_pid.get(&p.ppid).map_or(false, |parent| *parent == p.cmdline);
+        serde_json::json!({
+            "pid": p.pid, "ppid": p.ppid, "comm": p.comm, "cmdline": p.cmdline,
+            "subshell": is_subshell,
+            "exit_code": p.exit_code, "wall_ms": p.wall_ms, "user_ms": p.user_ms,
+            "sys_ms": p.sys_ms, "max_rss_kb": p.max_rss_kb,
+            "read_bytes": p.read_bytes, "write_bytes": p.write_bytes,
+            "voluntary_cs": p.voluntary_cs, "involuntary_cs": p.involuntary_cs,
+        })
+    }).collect()
 }
 
 // ── Human renderer ──────────────────────────────────────────────────
@@ -686,8 +726,10 @@ impl OutputRenderer for CiRenderer {
         else { eprintln!("  [FAIL] {name}  exit {}  {metrics}", result.exit_code); }
         if result.process_tree.len() > 1 {
             eprintln!("  process tree ({} processes):", result.process_tree.len());
+            let ci_cmdlines = ci_cmdline_map(&result.process_tree);
             for p in &result.process_tree {
-                eprintln!("    {}  {}", process_label(p), format_metrics_ci(&Metrics::from(p)));
+                let ss = ci_subshell_tag(p, &ci_cmdlines);
+                eprintln!("    {}{ss}  {}", process_label(p), format_metrics_ci(&Metrics::from(p)));
             }
         }
         eprintln!("::endgroup::");
@@ -701,8 +743,10 @@ impl OutputRenderer for CiRenderer {
         eprintln!("  [CACHE] {name}  {metrics}");
         if cached.process_tree.len() > 1 {
             eprintln!("  process tree ({} processes):", cached.process_tree.len());
+            let ci_cmdlines = ci_cmdline_map(&cached.process_tree);
             for p in &cached.process_tree {
-                eprintln!("    {}  {}", process_label(p), format_metrics_ci(&Metrics::from(p)));
+                let ss = ci_subshell_tag(p, &ci_cmdlines);
+                eprintln!("    {}{ss}  {}", process_label(p), format_metrics_ci(&Metrics::from(p)));
             }
         }
         eprintln!("::endgroup::");
@@ -827,46 +871,61 @@ pub fn render_status_tree(ir: &BesogneIR, cache: &ContextCache) {
         root.push(t);
     }
 
-    // Exec phase — DAG tree
+    // Exec phase — tier-based DAG layout (not a tree — DAGs have diamond deps)
     if !exec_nodes.is_empty() {
         let mut t = Tree::new(format!("{} {}",
             styled(phase::EXEC, phase_label::EXEC), dim(&format!("({} nodes)", exec_nodes.len()))));
 
-        let exec_ids: HashSet<&ContentId> = exec_nodes.iter().map(|n| &n.id).collect();
-        let exec_roots: Vec<&ResolvedNode> = exec_nodes.iter()
-            .filter(|n| n.parents.iter().all(|p| !exec_ids.contains(p))).copied().collect();
+        // Build the DAG and compute tiers using the same logic as the runtime
+        let node_by_id: HashMap<&ContentId, &ResolvedNode> = exec_nodes.iter()
+            .map(|n| (&n.id, *n)).collect();
 
-        let mut children_map: HashMap<&ContentId, Vec<&ResolvedNode>> = HashMap::new();
-        for n in &exec_nodes {
-            for pid in &n.parents {
-                if exec_ids.contains(pid) { children_map.entry(pid).or_default().push(n); }
+        if let Ok((graph, node_map)) = crate::ir::dag::build_exec_dag(ir) {
+            if let Ok(tiers) = crate::ir::dag::compute_tiers(&graph) {
+                for (tier_idx, tier) in tiers.iter().enumerate() {
+                    // Tier header
+                    let parallel = if tier.len() > 1 {
+                        format!(" {}", dim(&format!("({} parallel)", tier.len())))
+                    } else { String::new() };
+                    let mut tier_tree = Tree::new(format!("{}tier {tier_idx}{RESET}{parallel}",
+                        structure::TREE_HEADER));
+
+                    for &node_idx in tier {
+                        let content_id = &graph[node_idx];
+                        if let Some(n) = node_by_id.get(content_id) {
+                            let detail = if let ResolvedNativeNode::Command { name, .. } = &n.node {
+                                cache.get_command(name).map(|c| {
+                                    format!("  {} {}", fmt_exit(c.exit_code),
+                                        dim(&format!("{:.3}s", c.wall_ms as f64 / 1000.0)))
+                                }).unwrap_or_default()
+                            } else { String::new() };
+
+                            // Show parent edges for nodes with multiple parents (diamond deps)
+                            let exec_ids: HashSet<&ContentId> = exec_nodes.iter().map(|n| &n.id).collect();
+                            let parent_names: Vec<String> = n.parents.iter()
+                                .filter(|p| exec_ids.contains(p))
+                                .filter_map(|p| node_by_id.get(p))
+                                .filter_map(|p| match &p.node {
+                                    ResolvedNativeNode::Command { name, .. } => Some(name.clone()),
+                                    _ => Some(input_label(p)),
+                                })
+                                .collect();
+                            let parents_tag = if parent_names.len() > 1 {
+                                format!("  {}", dim(&format!("\u{2190} {}", parent_names.join(", "))))
+                            } else if !parent_names.is_empty() && tier_idx > 0 {
+                                format!("  {}", dim(&format!("\u{2190} {}", parent_names[0])))
+                            } else { String::new() };
+
+                            tier_tree.push(Tree::new(format!("{} {} {}{}{}",
+                                node_status_badge(&get_node_status(n, cache)),
+                                node_type_badge(n), node_short_label(n),
+                                detail, parents_tag)));
+                        }
+                    }
+                    t.push(tier_tree);
+                }
             }
         }
-
-        fn build_subtree<'a>(
-            n: &'a ResolvedNode, children: &HashMap<&ContentId, Vec<&'a ResolvedNode>>,
-            cache: &ContextCache, visited: &mut HashSet<ContentId>,
-        ) -> Tree<String> {
-            if !visited.insert(n.id.clone()) {
-                return Tree::new(format!("{}", dim(&format!("-> {}", input_label(n)))));
-            }
-            let detail = if let ResolvedNativeNode::Command { name, .. } = &n.node {
-                cache.get_command(name).map(|c| {
-                    format!("  {} {}", fmt_exit(c.exit_code), dim(&format!("{:.3}s", c.wall_ms as f64 / 1000.0)))
-                }).unwrap_or_default()
-            } else { String::new() };
-
-            let label = format!("{} {} {}{}",
-                node_status_badge(&get_node_status(n, cache)), node_type_badge(n), node_short_label(n), detail);
-            let mut tree = Tree::new(label);
-            if let Some(kids) = children.get(&n.id) {
-                for kid in kids { tree.push(build_subtree(kid, children, cache, visited)); }
-            }
-            tree
-        }
-
-        let mut visited = HashSet::new();
-        for r in &exec_roots { t.push(build_subtree(r, &children_map, cache, &mut visited)); }
         root.push(t);
     }
 

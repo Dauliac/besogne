@@ -42,7 +42,6 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
                         d.as_bool().map(|b| if b { "1".to_string() } else { "0".to_string() })
                     })
                 }),
-                expect: None,
                 secret: false,
             },
             parents: vec![],
@@ -89,7 +88,6 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
             let native = ResolvedNativeNode::Env {
                 name: env_name.clone(),
                 value: e.value.clone(),
-                expect: e.expect.clone(),
                 secret: e.secret.unwrap_or(false),
             };
             let phase = e.phase.clone().unwrap_or(Phase::Seal);
@@ -110,10 +108,7 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
 
         Node::Binary(b) => {
             let bin_name = b.name.clone().unwrap_or_else(|| key.to_string());
-            let version_constraint = b
-                .version
-                .clone()
-                .or_else(|| extract_version_constraint(&b.validate));
+            let version_constraint = b.version.clone();
             let parents = b.parents.clone().unwrap_or_default();
             let native = ResolvedNativeNode::Binary {
                 name: bin_name.clone(),
@@ -154,9 +149,7 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
                 name: key.to_string(),
                 run: run_resolved,
                 env: c.env.clone().unwrap_or_default(),
-                postconditions: c.postconditions.clone().unwrap_or_default(),
                 side_effects: c.side_effects.unwrap_or(false),
-                output: c.output.clone(),
                 workdir: cmd_workdir,
                 force_args: c.force_args.clone().unwrap_or_default(),
                 debug_args: c.debug_args.clone().unwrap_or_default(),
@@ -407,13 +400,6 @@ fn resolve_run_spec(spec: &manifest::ExecSpec) -> Vec<String> {
     match spec {
         manifest::ExecSpec::Array(args) => args.clone(),
         manifest::ExecSpec::Shell(s) => vec!["sh".into(), "-c".into(), s.clone()],
-        manifest::ExecSpec::Pipe { pipe } => {
-            let parts: Vec<String> = pipe
-                .iter()
-                .map(|cmd| cmd.join(" "))
-                .collect();
-            vec!["sh".into(), "-c".into(), parts.join(" | ")]
-        }
         manifest::ExecSpec::Script { file, args } => {
             let mut cmd = vec![file.clone()];
             if let Some(a) = args {

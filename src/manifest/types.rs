@@ -174,9 +174,6 @@ pub struct EnvInput {
     pub name: Option<String>,
 
     #[serde(default)]
-    pub expect: Option<String>,
-
-    #[serde(default)]
     pub value: Option<String>,
 
     #[serde(default)]
@@ -189,28 +186,10 @@ pub struct EnvInput {
     pub secret: Option<bool>,
 
     #[serde(default)]
-    pub values: Option<Vec<String>>,
-
-    #[serde(default)]
-    pub min: Option<serde_json::Value>,
-
-    #[serde(default)]
-    pub max: Option<serde_json::Value>,
-
-    #[serde(default)]
-    pub pattern: Option<String>,
-
-    #[serde(default)]
     pub on_missing: Option<OnMissing>,
 
     #[serde(default)]
     pub phase: Option<Phase>,
-
-    #[serde(default)]
-    pub validate: Option<HashMap<String, serde_json::Value>>,
-
-    #[serde(default)]
-    pub extract: Option<ExtractConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,11 +205,9 @@ pub struct FileInput {
     #[serde(default)]
     pub phase: Option<Phase>,
 
+    /// Parent nodes in the DAG
     #[serde(default)]
-    pub validate: Option<HashMap<String, serde_json::Value>>,
-
-    #[serde(default)]
-    pub extract: Option<ExtractConfig>,
+    pub parents: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -243,15 +220,10 @@ pub struct BinaryInput {
     pub path: Option<String>,
 
     /// Expected version or semver constraint (e.g. "22", ">=1.22").
-    /// For System binaries, setting this enables --version probing.
-    /// For Nix/Mise binaries, version is always extracted safely from path.
     #[serde(default)]
     pub version: Option<String>,
 
-    /// Parent binary inputs this binary is embedded in (e.g. Go toolchain internals).
-    /// Binaries with parents skip PATH resolution — their hash is derived from the
-    /// parent(s) hash. This handles toolchain-internal binaries like `compile`, `link`,
-    /// `vet` that live inside `$GOROOT/pkg/tool/` rather than in PATH.
+    /// Parent binary nodes this binary is embedded in (e.g. Go toolchain internals).
     #[serde(default)]
     pub parents: Option<Vec<String>>,
 
@@ -260,12 +232,6 @@ pub struct BinaryInput {
 
     #[serde(default)]
     pub sealed: Option<bool>,
-
-    #[serde(default)]
-    pub validate: Option<HashMap<String, serde_json::Value>>,
-
-    #[serde(default)]
-    pub metadata: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -284,9 +250,6 @@ pub struct ServiceInput {
 
     #[serde(default)]
     pub retry: Option<RetryConfig>,
-
-    #[serde(default)]
-    pub validate: Option<HashMap<String, serde_json::Value>>,
 
     #[serde(default)]
     pub parents: Option<Vec<String>>,
@@ -309,73 +272,27 @@ pub struct CommandInput {
     #[serde(default)]
     pub on_fail: Option<OnFail>,
 
-    #[serde(default)]
     /// Opt out of caching: always run, never skip (deploy, notify, etc.)
+    #[serde(default)]
     pub side_effects: Option<bool>,
 
-    /// Postconditions — what must be true after this command
-    #[serde(default)]
-    pub postconditions: Option<Vec<PostconditionSpec>>,
-
     /// Working directory for this command (relative to manifest dir).
-    /// If omitted, runs in the manifest directory.
     #[serde(default)]
     pub workdir: Option<String>,
 
-    /// Parent inputs in the DAG — must complete before this command runs
+    /// Parent nodes in the DAG — must complete before this command runs
     #[serde(default)]
     pub parents: Option<Vec<String>>,
 
-    #[serde(default)]
-    pub validate: Option<HashMap<String, serde_json::Value>>,
-
-    #[serde(default)]
-    pub extract: Option<ExtractConfig>,
-
-    /// Output assertions — validate command stdout/stderr/exit_code.
-    /// Opt-in: disabled by default (output is non-deterministic in general).
-    #[serde(default)]
-    pub output: Option<OutputSpec>,
-
     /// Extra args appended to `run` when --force is passed.
-    /// Useful for invalidating tool-specific caches (e.g. `go build -a`, `cargo build --force`).
     #[serde(default)]
     pub force_args: Option<Vec<String>>,
 
     /// Extra args appended to `run` when --debug is passed.
-    /// Useful for enabling verbose/debug output (e.g. `npm install --verbose`, `go test -v`).
-    /// When --debug is active, cache writes are skipped to avoid poisoning cache with debug output.
     #[serde(default)]
     pub debug_args: Option<Vec<String>>,
 }
 
-/// Specification for command output validation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OutputSpec {
-    /// Expected exit code (default: 0)
-    #[serde(default)]
-    pub exit_code: Option<i32>,
-
-    /// Assert stdout contains this string
-    #[serde(default)]
-    pub stdout_contains: Option<Vec<String>>,
-
-    /// Assert stderr contains this string
-    #[serde(default)]
-    pub stderr_contains: Option<Vec<String>>,
-
-    /// Assert stdout matches this regex
-    #[serde(default)]
-    pub stdout_matches: Option<String>,
-
-    /// Assert stderr matches this regex
-    #[serde(default)]
-    pub stderr_matches: Option<String>,
-
-    /// Parse stdout as JSON and assert it matches (json path → expected value)
-    #[serde(default)]
-    pub json: Option<HashMap<String, serde_json::Value>>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserInput {
@@ -424,9 +341,6 @@ pub struct MetricInput {
 
     #[serde(default)]
     pub phase: Option<Phase>,
-
-    #[serde(default)]
-    pub validate: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -476,11 +390,6 @@ pub enum ExecSpec {
     /// String form: "go test | grep PASS" (inline bash)
     Shell(String),
 
-    /// Pipe form: { "pipe": [["go", "test"], ["tail", "-1"]] }
-    Pipe {
-        pipe: Vec<Vec<String>>,
-    },
-
     /// Script form: { "file": "./run.sh", "args": ["--flag"] }
     Script {
         file: String,
@@ -489,26 +398,6 @@ pub enum ExecSpec {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtractConfig {
-    pub format: String,
-    pub fields: HashMap<String, String>,
-}
-
-/// Postcondition spec — what must be true after a command runs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PostconditionSpec {
-    #[serde(rename = "type")]
-    pub postcondition_type: String,
-
-    pub path: String,
-
-    #[serde(default)]
-    pub expect: Option<String>,
-
-    #[serde(default)]
-    pub required: Option<bool>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetryConfig {

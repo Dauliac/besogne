@@ -46,6 +46,10 @@ path = "level2.sh"
 type = "file"
 path = "level3.sh"
 
+[nodes.forker]
+type = "file"
+path = "forker.sh"
+
 [nodes.setup]
 type = "command"
 phase = "exec"
@@ -57,43 +61,8 @@ phase = "exec"
 run = { file = "./level1.sh" }
 parents = ["setup"]
 
-[[nodes.run-scripts.postconditions]]
-type = "file"
-path = "results/level1.txt"
-required = true
-
-[[nodes.run-scripts.postconditions]]
-type = "file"
-path = "results/level2.txt"
-required = true
-
-[[nodes.run-scripts.postconditions]]
-type = "file"
-path = "results/level3.txt"
-required = true
-
-[[nodes.run-scripts.postconditions]]
-type = "file"
-path = "results/forks.txt"
-required = true
-
-[[nodes.run-scripts.postconditions]]
-type = "file"
-path = "results/background.txt"
-required = true
-
-[[nodes.run-scripts.postconditions]]
-type = "file"
-path = "results/pipe.txt"
-required = true
-
-[[nodes.run-scripts.postconditions]]
-type = "file"
-path = "results/heredoc.txt"
-required = true
-
 [nodes.verify]
 type = "command"
 phase = "exec"
-run = ["sh", "-c", "cat results/level1.txt results/level2.txt results/level3.txt results/forks.txt results/background.txt results/pipe.txt results/heredoc.txt"]
+run = ["sh", "-c", "cat results/level1.txt results/level2.txt results/level3.txt results/forks.txt results/background.txt results/pipe.txt results/heredoc.txt results/forked.txt"]
 parents = ["run-scripts"]

@@ -152,8 +152,6 @@ pub enum ResolvedNativeNode {
         #[serde(default)]
         value: Option<String>,
         #[serde(default)]
-        expect: Option<String>,
-        #[serde(default)]
         secret: bool,
     },
     File {
@@ -197,26 +195,15 @@ pub enum ResolvedNativeNode {
     },
     Command {
         name: String,
-        /// The action to perform (was: exec)
         run: Vec<String>,
         #[serde(default)]
         env: HashMap<String, String>,
-        /// Postconditions — what must be true after this command
-        #[serde(default)]
-        postconditions: Vec<manifest::PostconditionSpec>,
-        /// Opt out of caching: always run, never skip
         #[serde(default)]
         side_effects: bool,
-        /// Output assertions (opt-in)
-        #[serde(default)]
-        output: Option<manifest::OutputSpec>,
-        /// Per-command working directory (absolute). If None, uses metadata.workdir.
         #[serde(default)]
         workdir: Option<String>,
-        /// Extra args appended to `run` when --force is passed (tool cache invalidation).
         #[serde(default)]
         force_args: Vec<String>,
-        /// Extra args appended to `run` when --debug is passed (verbose/debug output).
         #[serde(default)]
         debug_args: Vec<String>,
     },

@@ -268,16 +268,14 @@ fn e2e_cache_skip() {
     let c = compile_in(dir.path());
     assert!(c.status.success(), "compile: {}", stderr(&c));
 
-    // First run — should execute
+    // First run — executes + idempotency verification (runs command twice)
     let r1 = run_in(dir.path());
     let err1 = stderr(&r1);
     assert!(r1.status.success(), "run 1 failed: {err1}");
     let marker = dir.path().join("marker.txt");
     assert!(marker.exists(), "marker.txt not created. stderr: {err1}");
-    assert_eq!(
-        std::fs::read_to_string(&marker).unwrap().lines().count(),
-        1, "run 1: should execute once"
-    );
+    let count1 = std::fs::read_to_string(&marker).unwrap().lines().count();
+    assert_eq!(count1, 2, "run 1: should execute twice (verification)");
 
     // Second run — should skip (cache populated)
     let r2 = run_in(dir.path());
@@ -289,7 +287,7 @@ fn e2e_cache_skip() {
     );
     assert_eq!(
         std::fs::read_to_string(dir.path().join("marker.txt")).unwrap().lines().count(),
-        1, "run 2: marker should still be 1 line (no new run)"
+        count1, "run 2: marker should not grow (cached)"
     );
 }
 
@@ -301,19 +299,20 @@ fn e2e_cache_invalidate() {
     let c = compile_in(dir.path());
     assert!(c.status.success());
 
+    // First run: exec + verification double-run = 2 lines
     let r1 = run_in(dir.path());
     assert!(r1.status.success());
 
     // Change the input file
     std::fs::write(dir.path().join("input.txt"), "v2-changed\n").unwrap();
 
+    // Second run: exec only (already verified) = +1 line
     let r2 = run_in(dir.path());
     assert!(r2.status.success());
     assert!(!stderr(&r2).contains("skip"), "should NOT skip after file change: {}", stderr(&r2));
-    // Run 1 + run 2 (after input change) = 2 total
     assert_eq!(
         std::fs::read_to_string(dir.path().join("marker.txt")).unwrap().lines().count(),
-        2, "should have run twice (once per run)"
+        3, "run1(2 verify) + run2(1 exec) = 3"
     );
 }
 
@@ -349,14 +348,16 @@ fn e2e_command_chain() {
 
     let order = std::fs::read_to_string(dir.path().join("order.txt")).unwrap();
     let lines: Vec<&str> = order.lines().collect();
-    assert_eq!(lines.len(), 4, "expected 4 steps: {order}");
+    // 4 commands x 2 (verification re-run) = 8 lines on first run
+    assert_eq!(lines.len(), 8, "expected 8 steps (4 commands x 2 verify): {order}");
+    // First execution: step-1, 2a/2b, step-3
     assert_eq!(lines[0], "step-1");
-    assert_eq!(lines[3], "step-3");
-    // 2a/2b can be either order (parallel tier)
-    assert!(
-        lines[1..3].contains(&"step-2a") && lines[1..3].contains(&"step-2b"),
-        "step-2a/2b in middle: {order}"
-    );
+    // Dedup to check all steps were present
+    let unique: std::collections::HashSet<&&str> = lines.iter().collect();
+    assert!(unique.contains(&"step-1"), "missing step-1: {order}");
+    assert!(unique.contains(&"step-2a"), "missing step-2a: {order}");
+    assert!(unique.contains(&"step-2b"), "missing step-2b: {order}");
+    assert!(unique.contains(&"step-3"), "missing step-3: {order}");
 }
 
 // ─── command-failure ────────────────────────────────────────────

@@ -25,6 +25,12 @@ pub struct ContextCache {
     /// Per-command cached output from the last successful run
     #[serde(default)]
     pub commands: HashMap<String, CachedCommand>,
+    /// Whether idempotency verification has been performed on this besogne
+    #[serde(default)]
+    pub verified: bool,
+    /// Command names found non-idempotent during verification
+    #[serde(default)]
+    pub non_idempotent: Vec<String>,
 }
 
 /// Cached output of a single command execution

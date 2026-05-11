@@ -17,12 +17,6 @@ phase = "exec"
 run = ["npm", "install", "--package-lock-only"]
 debug_args = ["--verbose"]
 
-[[nodes.gen-lockfile.postconditions]]
-type = "file"
-path = "package-lock.json"
-expect = "exists"
-required = true
-
 [nodes.install]
 type = "command"
 phase = "exec"
@@ -30,9 +24,3 @@ run = ["npm", "ci"]
 parents = ["gen-lockfile"]
 force_args = ["--force"]
 debug_args = ["--verbose"]
-
-[[nodes.install.postconditions]]
-type = "file"
-path = "node_modules"
-expect = "directory"
-required = true

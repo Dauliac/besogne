@@ -27,9 +27,6 @@ phase = "exec"
 run = ["go", "mod", "download"]
 parents = ["mod-tidy"]
 
-[nodes.mod-download.output]
-exit_code = 0
-
 [nodes.test]
 type = "command"
 phase = "exec"
@@ -37,7 +34,3 @@ run = ["go", "test", "-v", "./..."]
 parents = ["mod-download"]
 force_args = ["-count=1"]
 debug_args = ["-v"]
-
-[nodes.test.output]
-exit_code = 0
-stdout_contains = ["PASS"]
