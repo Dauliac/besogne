@@ -240,4 +240,11 @@ pub enum ResolvedNativeNode {
         #[serde(default)]
         sealed_env: Option<HashMap<String, String>>,
     },
+    Std {
+        stream: String,
+        #[serde(default)]
+        contains: Vec<String>,
+        #[serde(default)]
+        expect: Option<String>,
+    },
 }

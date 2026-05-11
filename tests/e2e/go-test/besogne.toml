@@ -27,10 +27,28 @@ phase = "exec"
 run = ["go", "mod", "download"]
 parents = ["mod-tidy"]
 
+[nodes.mod-download-exit]
+type = "std"
+stream = "exit_code"
+expect = "0"
+parents = ["mod-download"]
+
 [nodes.test]
 type = "command"
 phase = "exec"
 run = ["go", "test", "-v", "./..."]
-parents = ["mod-download"]
+parents = ["mod-download-exit"]
 force_args = ["-count=1"]
 debug_args = ["-v"]
+
+[nodes.test-stdout]
+type = "std"
+stream = "stdout"
+contains = ["PASS"]
+parents = ["test"]
+
+[nodes.test-exit]
+type = "std"
+stream = "exit_code"
+expect = "0"
+parents = ["test"]

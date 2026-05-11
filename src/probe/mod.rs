@@ -102,8 +102,8 @@ pub fn probe_input(input: &ResolvedNativeNode) -> ProbeResult {
         }
         .probe(),
 
-        ResolvedNativeNode::Command { .. } => {
-            // Commands are not probed — they're executed by the runtime DAG
+        ResolvedNativeNode::Std { .. } | ResolvedNativeNode::Command { .. } => {
+            // Commands and std nodes are validated by the runtime, not probed
             ProbeResult {
                 success: true,
                 hash: String::new(),
@@ -407,7 +407,6 @@ mod tests {
             ResolvedNativeNode::Env {
                 name: "HOME".into(),
                 value: None,
-                expect: None,
                 secret: false,
             },
             ResolvedNativeNode::File {

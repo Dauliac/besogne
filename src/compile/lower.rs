@@ -216,6 +216,16 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
             (native, phase, id)
         }
 
+        Node::Std(s) => {
+            let native = ResolvedNativeNode::Std {
+                stream: s.stream.clone(),
+                contains: s.contains.clone().unwrap_or_default(),
+                expect: s.expect.clone(),
+            };
+            let id = ContentId::from_content("std", key, key.as_bytes());
+            (native, Phase::Exec, id)
+        }
+
         Node::Plugin(_) => {
             return Err("plugins should be expanded before lowering".into());
         }
@@ -427,7 +437,10 @@ fn resolve_ordering(
                     Some((name.clone(), i.id.clone()))
                 }
                 ResolvedNativeNode::Source { .. } => {
-                    // Source nodes are referenceable as parents from any phase
+                    let key = i.id.0.split(':').nth(1).unwrap_or("").to_string();
+                    Some((key, i.id.clone()))
+                }
+                ResolvedNativeNode::Std { .. } if i.phase == Phase::Exec => {
                     let key = i.id.0.split(':').nth(1).unwrap_or("").to_string();
                     Some((key, i.id.clone()))
                 }
@@ -455,6 +468,16 @@ fn resolve_ordering(
                     parents_by_name.insert(key.clone(), parents.clone());
                 }
             }
+            manifest::Node::Std(s) => {
+                if let Some(parents) = &s.parents {
+                    parents_by_name.insert(key.clone(), parents.clone());
+                }
+            }
+            manifest::Node::File(f) => {
+                if let Some(parents) = &f.parents {
+                    parents_by_name.insert(key.clone(), parents.clone());
+                }
+            }
             _ => {}
         }
     }
@@ -468,8 +491,7 @@ fn resolve_ordering(
             let cmd_name = match &input.node {
                 ResolvedNativeNode::Command { name, .. } => Some(name.as_str()),
                 ResolvedNativeNode::Service { name: Some(name), .. } => Some(name.as_str()),
-                ResolvedNativeNode::Source { .. } => {
-                    // Extract key from content ID "source:<key>:<hash>"
+                ResolvedNativeNode::Source { .. } | ResolvedNativeNode::Std { .. } => {
                     Some(input.id.0.split(':').nth(1).unwrap_or(""))
                 }
                 _ => None,

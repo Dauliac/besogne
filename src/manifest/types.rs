@@ -132,10 +132,10 @@ pub enum Node {
     Metric(MetricInput),
     Plugin(PluginInput),
     Source(SourceInput),
+    Std(StdInput),
 }
 
 impl Node {
-    /// Get the phase for this input (build/pre/exec)
     pub fn phase(&self) -> Phase {
         match self {
             Node::Env(e) => e.phase.clone().unwrap_or(Phase::Seal),
@@ -149,6 +149,7 @@ impl Node {
             Node::Metric(m) => m.phase.clone().unwrap_or(Phase::Seal),
             Node::Plugin(_) => Phase::Seal,
             Node::Source(s) => s.phase.clone().unwrap_or(Phase::Seal),
+            Node::Std(_) => Phase::Exec,
         }
     }
 }
@@ -376,6 +377,26 @@ pub struct SourceInput {
     /// Parent nodes in the DAG
     #[serde(default)]
     pub parents: Option<Vec<String>>,
+}
+
+/// Std node — probe on command I/O (stdout, stderr, exit_code).
+/// Always exec phase. Parent must be a command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StdInput {
+    /// Which stream: "stdout", "stderr", "exit_code"
+    pub stream: String,
+
+    /// Parent nodes (the command whose output to probe)
+    #[serde(default)]
+    pub parents: Option<Vec<String>>,
+
+    /// Assert content contains these strings (for stdout/stderr)
+    #[serde(default)]
+    pub contains: Option<Vec<String>>,
+
+    /// Assert exact match (for exit_code: "0")
+    #[serde(default)]
+    pub expect: Option<String>,
 }
 
 // --- Shared types ---

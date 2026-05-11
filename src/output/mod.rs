@@ -69,6 +69,7 @@ fn input_label(input: &ResolvedNode) -> String {
         ResolvedNativeNode::Command { name, .. } => format!("command:{name}"),
         ResolvedNativeNode::Source { format, path, .. } =>
             format!("source:{}", path.as_deref().unwrap_or(format)),
+        ResolvedNativeNode::Std { stream, .. } => format!("std:{stream}"),
     }
 }
 
@@ -136,6 +137,12 @@ fn probe_detail(input: &ResolvedNode, result: &ProbeResult) -> String {
             let label = path.as_deref().unwrap_or(format);
             let count = result.variables.len();
             if count > 0 { format!("{label} ({count} vars)") } else { label.to_string() }
+        }
+        ResolvedNativeNode::Std { stream, expect, contains, .. } => {
+            let mut parts = vec![stream.clone()];
+            if let Some(exp) = expect { parts.push(format!("= {exp}")); }
+            if !contains.is_empty() { parts.push(format!("contains {:?}", contains)); }
+            parts.join(" ")
         }
     }
 }
@@ -789,6 +796,7 @@ fn node_type_badge(n: &ResolvedNode) -> String {
         ResolvedNativeNode::Dns { .. }      => (node::DNS, badge::DNS),
         ResolvedNativeNode::Metric { .. }   => (node::METRIC, badge::METRIC),
         ResolvedNativeNode::Source { .. }   => (node::SOURCE, badge::SOURCE),
+        ResolvedNativeNode::Std { .. }     => (node::STD, badge::STD),
     };
     styled(token, text)
 }
@@ -828,6 +836,12 @@ fn node_short_label(n: &ResolvedNode) -> String {
         ResolvedNativeNode::Metric { metric, .. } => metric.clone(),
         ResolvedNativeNode::Source { format, path, .. } =>
             path.as_deref().unwrap_or(format).to_string(),
+        ResolvedNativeNode::Std { stream, expect, contains, .. } => {
+            let mut desc = stream.clone();
+            if let Some(exp) = expect { desc.push_str(&format!(" {}", dim(&format!("= {exp}")))); }
+            if !contains.is_empty() { desc.push_str(&format!(" {}", dim(&format!("contains {:?}", contains)))); }
+            desc
+        }
     }
 }
 

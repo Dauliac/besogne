@@ -60,6 +60,7 @@ pub mod node {
     pub const DNS: &str = GREEN;
     pub const METRIC: &str = YELLOW;
     pub const SOURCE: &str = CYAN;
+    pub const STD: &str = GREEN;
 }
 
 /// Metric categories (emojis + colors)
@@ -142,6 +143,7 @@ pub mod badge {
     pub const DNS: &str = " dns ";
     pub const METRIC: &str = " met ";
     pub const SOURCE: &str = " src ";
+    pub const STD: &str = " std ";
 }
 
 /// Phase names

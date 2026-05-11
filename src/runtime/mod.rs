@@ -431,6 +431,58 @@ fn execute_dag(
                     }
                 }
 
+                ResolvedNativeNode::Std { stream, contains, expect, .. } => {
+                    // Find parent command's cached output
+                    let parent_cmd_name = input.parents.iter().find_map(|pid| {
+                        input_by_id.get(pid).and_then(|p| {
+                            if let ResolvedNativeNode::Command { name, .. } = &p.node {
+                                Some(name.clone())
+                            } else { None }
+                        })
+                    });
+
+                    let (content, label) = if let Some(cmd_name) = &parent_cmd_name {
+                        if let Some(cached) = context.get_command(cmd_name) {
+                            match stream.as_str() {
+                                "stdout" => (cached.stdout.clone(), format!("std:stdout of {cmd_name}")),
+                                "stderr" => (cached.stderr.clone(), format!("std:stderr of {cmd_name}")),
+                                "exit_code" => (cached.exit_code.to_string(), format!("std:exit_code of {cmd_name}")),
+                                _ => (String::new(), format!("std:{stream} of {cmd_name}")),
+                            }
+                        } else {
+                            (String::new(), format!("std:{stream} (parent not cached)"))
+                        }
+                    } else {
+                        (String::new(), format!("std:{stream} (no parent command)"))
+                    };
+
+                    let mut valid = true;
+                    if let Some(expected) = expect {
+                        if content.trim() != expected.as_str() {
+                            eprintln!("  {} {label}: expected {expected}, got {}",
+                                output::style::styled(output::style::status::FAILED, output::style::label::FAILED),
+                                content.trim());
+                            valid = false;
+                        }
+                    }
+                    for pattern in contains {
+                        if !content.contains(pattern.as_str()) {
+                            eprintln!("  {} {label}: expected to contain \"{pattern}\"",
+                                output::style::styled(output::style::status::FAILED, output::style::label::FAILED));
+                            valid = false;
+                        }
+                    }
+
+                    if valid {
+                        let hash = blake3::hash(content.as_bytes()).to_hex().to_string();
+                        context.set_probe(input.id.0.clone(), hash, HashMap::new());
+                        eprintln!("  {} {label}",
+                            output::style::styled(output::style::status::FRESH, output::style::label::FRESH));
+                    } else {
+                        last_exit_code = 3;
+                    }
+                }
+
                 _ => {
                     let result = probe::probe_input(&input.node);
                     if !result.success {
