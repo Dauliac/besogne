@@ -2,23 +2,23 @@
 # Level 1: orchestrator — calls level2, spawns a background job, writes results
 set -e
 
-echo "level1: start (pid=$$)"
+echo "level1: start project=$PROJECT_NAME (pid=$$)"
 
 # Spawn a background process that writes after a short delay
-(sleep 0.1 && echo "background: done (pid=$$)" >> results/background.txt) &
+(sleep $SLEEP_DELAY && echo "background: done project=$PROJECT_NAME (pid=$$)" >> $OUTPUT_PREFIX/background.txt) &
 BG_PID=$!
 
 # Call level 2
 sh ./level2.sh
 
 # Write own output
-echo "level1: wrote" >> results/level1.txt
+echo "level1: project=$PROJECT_NAME wrote" >> $OUTPUT_PREFIX/level1.txt
 
 # Wait for background job
 wait $BG_PID
 echo "level1: background finished"
 
 # Fork a subshell pipeline
-echo "hello-from-pipe" | tr 'a-z' 'A-Z' | tee results/pipe.txt > /dev/null
+echo "hello-from-$PROJECT_NAME" | tr 'a-z' 'A-Z' | tee $OUTPUT_PREFIX/pipe.txt > /dev/null
 
 echo "level1: done"

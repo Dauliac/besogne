@@ -1,38 +1,29 @@
 name = "nested-scripts"
-description = "Nested shell scripts: 3 levels deep, forks, sleep, pipes, traps"
+description = "Nested shell scripts with env-driven configuration"
 
-[inputs.sh]
-type = "binary"
+[plugins]
+coreutils = "builtin"
 
-[inputs.head]
-type = "binary"
+[inputs.shell]
+type = "plugin"
+plugin = "coreutils/shell"
 
-[inputs.od]
-type = "binary"
+# Environment variables used by the scripts
+[inputs.PROJECT_NAME]
+type = "env"
+value = "besogne-nested"
 
-[inputs.tr]
-type = "binary"
+[inputs.OUTPUT_PREFIX]
+type = "env"
+value = "results"
 
-[inputs.tee]
-type = "binary"
+[inputs.FORK_COUNT]
+type = "env"
+value = "3"
 
-[inputs.cat]
-type = "binary"
-
-[inputs.date]
-type = "binary"
-
-[inputs.sleep]
-type = "binary"
-
-[inputs.mkdir]
-type = "binary"
-
-[inputs.rm]
-type = "binary"
-
-[inputs.seq]
-type = "binary"
+[inputs.SLEEP_DELAY]
+type = "env"
+value = "0.02"
 
 [inputs.level1]
 type = "file"
@@ -49,7 +40,7 @@ path = "level3.sh"
 [inputs.setup]
 type = "command"
 phase = "exec"
-run = ["sh", "-c", "rm -rf results && mkdir -p results"]
+run = ["sh", "-c", "rm -rf $OUTPUT_PREFIX && mkdir -p $OUTPUT_PREFIX"]
 
 [inputs.run-scripts]
 type = "command"
@@ -95,5 +86,9 @@ required = true
 [inputs.verify]
 type = "command"
 phase = "exec"
-run = ["sh", "-c", "cat results/level1.txt results/level2.txt results/level3.txt results/forks.txt results/background.txt results/pipe.txt results/heredoc.txt"]
+run = ["sh", "-c", "cat $OUTPUT_PREFIX/level1.txt $OUTPUT_PREFIX/level2.txt $OUTPUT_PREFIX/level3.txt $OUTPUT_PREFIX/forks.txt $OUTPUT_PREFIX/background.txt $OUTPUT_PREFIX/pipe.txt $OUTPUT_PREFIX/heredoc.txt"]
 after = ["run-scripts"]
+
+[inputs.verify.output]
+exit_code = 0
+stdout_contains = ["project=besogne-nested", "fork_count=3"]
