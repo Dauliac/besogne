@@ -1,0 +1,8 @@
+{
+  "name": "local/greet",
+  "description": "Shared greeting component",
+  "nodes": {
+    "hello": { "type": "command", "phase": "exec", "run": ["echo", "hello from shared component"] },
+    "world": { "type": "command", "phase": "exec", "run": ["echo", "world from shared component"], "parents": ["hello"] }
+  }
+}
