@@ -87,6 +87,24 @@ pub fn discover_manifests() -> Vec<std::path::PathBuf> {
         }
     }
 
+    // 4. Check besogne/ directory for terminal manifests
+    let besogne_dir = cwd.join("besogne");
+    if besogne_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&besogne_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if matches!(ext, "toml" | "json" | "yaml" | "yml" | "ncl")
+                        && path.is_file()
+                        && !found.contains(&path)
+                    {
+                        found.push(path);
+                    }
+                }
+            }
+        }
+    }
+
     found.sort();
     found.dedup();
     found

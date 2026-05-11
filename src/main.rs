@@ -55,6 +55,13 @@ enum Commands {
         input: Vec<PathBuf>,
     },
 
+    /// List discovered manifests and their descriptions
+    List {
+        /// Show verbose details (components, node counts)
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
     /// Build and run in one shot. Use `besogne run -- --help` to see all flags.
     /// All arguments are forwarded to the produced binary (e.g., `besogne run -- -l json`).
     Run {
@@ -399,8 +406,63 @@ fn main() -> ExitCode {
             if failed { ExitCode::from(2) } else { ExitCode::SUCCESS }
         }
 
+        Some(Commands::List { verbose }) => {
+            let discovered = manifest::discover_manifests();
+            if discovered.is_empty() {
+                eprintln!("besogne: no manifests found");
+                return ExitCode::from(1);
+            }
+
+            let cwd = std::env::current_dir().unwrap_or_default();
+            for manifest_path in &discovered {
+                let display_path = manifest_path
+                    .strip_prefix(&cwd)
+                    .unwrap_or(manifest_path)
+                    .display();
+
+                match manifest::load_manifest(manifest_path) {
+                    Ok(m) => {
+                        let name = manifest_path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("?");
+                        let name = name.strip_suffix(".besogne").unwrap_or(name);
+
+                        if verbose {
+                            eprintln!("  {display_path}");
+                            eprintln!("    {}", m.description);
+                            let component_count = m.nodes.values()
+                                .filter(|n| matches!(n, manifest::Node::Component(_)))
+                                .count();
+                            let command_count = m.nodes.values()
+                                .filter(|n| matches!(n, manifest::Node::Command(_)))
+                                .count();
+                            let total = m.nodes.len();
+                            eprintln!("    nodes: {total} ({command_count} commands, {component_count} components)");
+                            eprintln!();
+                        } else {
+                            eprintln!("  {name:<16}{}", m.description);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("  {display_path}  (error: {e})");
+                    }
+                }
+            }
+
+            let besogne_count = discovered.iter()
+                .filter(|p| p.parent().and_then(|d| d.file_name())
+                    .map(|n| n == "besogne").unwrap_or(false))
+                .count();
+            if besogne_count > 0 {
+                eprintln!("\n  {besogne_count} tasks in besogne/");
+            }
+
+            ExitCode::SUCCESS
+        }
+
         None => {
-            eprintln!("besogne: no command specified. Use 'besogne build', 'besogne run', or 'besogne check'.");
+            eprintln!("besogne: no command specified. Use 'besogne build', 'besogne run', 'besogne list', or 'besogne check'.");
             eprintln!("         Or this binary has no embedded manifest.");
             ExitCode::from(1)
         }
