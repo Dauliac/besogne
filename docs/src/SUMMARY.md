@@ -12,7 +12,8 @@
 
 - [Use with Nix](./how-to/nix.md)
 - [Add seals](./how-to/seals.md)
-- [Use plugins](./how-to/plugins.md)
+- [Use components](./how-to/components.md)
+- [Project organization](./how-to/project-organization.md)
 - [Cache and skip](./how-to/caching.md)
 - [Sandbox execution](./how-to/sandbox.md)
 - [Use flags](./how-to/flags.md)
@@ -23,7 +24,7 @@
 - [Manifest schema](./reference/manifest.md)
 - [Native input types](./reference/input-types.md)
 - [CLI](./reference/cli.md)
-- [Plugins](./reference/plugins.md)
+- [Components](./reference/components.md)
 - [Output modes](./reference/output-modes.md)
 - [Metrics and tracing](./reference/metrics.md)
 
@@ -31,5 +32,6 @@
 
 - [Design: contracts for scripts](./explanation/design.md)
 - [Architecture](./explanation/architecture.md)
+- [Composition model](./explanation/composition.md)
 - [How caching works](./explanation/caching.md)
 - [Comparison with other tools](./explanation/comparison.md)
