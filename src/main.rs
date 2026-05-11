@@ -91,38 +91,48 @@ fn resolve_manifests(explicit: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     Ok(discovered)
 }
 
-/// Resolve a single input for `run`.
-fn resolve_single_input(explicit: &Option<PathBuf>) -> Result<PathBuf, String> {
+/// Resolve a single manifest for `run`. Supports task name selection from args.
+/// When multiple manifests found, checks if `args[0]` matches a task name (stem of a manifest).
+/// Returns (manifest_path, remaining_args).
+fn resolve_single_input_quiet<'a>(
+    explicit: &Option<PathBuf>,
+    args: &'a [String],
+) -> Result<(PathBuf, &'a [String]), String> {
     if let Some(p) = explicit {
-        return Ok(p.clone());
+        return Ok((p.clone(), args));
     }
     let discovered = manifest::discover_manifests();
     match discovered.len() {
         0 => Err("no manifest found. Provide --input or create a besogne.{json,yaml,yml,toml} file.".into()),
-        1 => {
-            eprintln!("besogne: discovered {}", discovered[0].display());
-            Ok(discovered[0].clone())
-        }
-        n => Err(format!(
-            "found {n} manifests — ambiguous for `run`. Use -i to pick one:\n  {}",
-            discovered.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("\n  ")
-        )),
-    }
-}
+        1 => Ok((discovered[0].clone(), args)),
+        _ => {
+            // Try to match args[0] as a task name
+            if let Some(task_name) = args.first() {
+                // Don't match flags (starting with -)
+                if !task_name.starts_with('-') {
+                    for path in &discovered {
+                        let stem = path.file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("");
+                        let name = stem.strip_suffix(".besogne").unwrap_or(stem);
+                        if name == task_name {
+                            return Ok((path.clone(), &args[1..]));
+                        }
+                    }
+                }
+            }
 
-/// Quiet variant — no discovery logs (for `run` mode where besogne binary handles output)
-fn resolve_single_input_quiet(explicit: &Option<PathBuf>) -> Result<PathBuf, String> {
-    if let Some(p) = explicit {
-        return Ok(p.clone());
-    }
-    let discovered = manifest::discover_manifests();
-    match discovered.len() {
-        0 => Err("no manifest found. Provide --input or create a besogne.{json,yaml,yml,toml} file.".into()),
-        1 => Ok(discovered[0].clone()),
-        n => Err(format!(
-            "found {n} manifests — ambiguous for `run`. Use -i to pick one:\n  {}",
-            discovered.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("\n  ")
-        )),
+            let names: Vec<String> = discovered.iter()
+                .filter_map(|p| {
+                    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                    Some(stem.strip_suffix(".besogne").unwrap_or(stem).to_string())
+                })
+                .collect();
+            Err(format!(
+                "multiple manifests found — specify which task to run:\n  besogne run <task> [-- args]\n\navailable tasks:\n  {}",
+                names.join("\n  ")
+            ))
+        }
     }
 }
 
@@ -154,11 +164,14 @@ fn handle_run_help(raw_args: &[String]) -> ExitCode {
         }
     }
 
-    let manifest_path = match resolve_single_input_quiet(&input_path) {
-        Ok(p) => p,
+    let remaining_args: Vec<String> = raw_args.iter().skip(2)
+        .filter(|a| *a != "-i" && *a != "--input" && *a != "--help" && *a != "-h")
+        .cloned().collect();
+    let manifest_path = match resolve_single_input_quiet(&input_path, &remaining_args) {
+        Ok((p, _)) => p,
         Err(e) => {
             eprintln!("besogne run — build + run in one shot\n");
-            eprintln!("Usage: besogne run [-i <manifest>] [FLAGS]\n");
+            eprintln!("Usage: besogne run [<task>] [-i <manifest>] [-- FLAGS]\n");
             eprintln!("Run options:");
             eprintln!("  -i, --input <PATH>  Manifest file (auto-discovers if omitted)\n");
             eprintln!("Cannot show full help: {e}");
@@ -229,8 +242,10 @@ fn main() -> ExitCode {
                 let name = stem.strip_suffix(".besogne").unwrap_or(stem);
 
                 let out = output.clone().unwrap_or_else(|| {
-                    // Default: .besogne/<name> symlink
-                    cwd.join(".besogne").join(name)
+                    // Default: .besogne/<name>
+                    let dir = cwd.join(".besogne");
+                    let _ = std::fs::create_dir_all(&dir);
+                    dir.join(name)
                 });
 
                 match compile::compile(manifest_path, &out) {
@@ -270,15 +285,16 @@ fn main() -> ExitCode {
             // to show the produced binary's help (which includes all flags)
             let wants_help = args.iter().any(|a| a == "--help" || a == "-h");
 
-            let manifest_path = match resolve_single_input_quiet(&input) {
-                Ok(p) => p,
+            // Resolve manifest: -i flag, or task name from args[0], or single auto-discovery
+            let (manifest_path, forwarded_args) = match resolve_single_input_quiet(&input, &args) {
+                Ok((p, remaining)) => (p, remaining.to_vec()),
                 Err(e) => {
                     if wants_help {
                         eprintln!("besogne run: build + run a manifest in one shot");
                         eprintln!("  All flags after 'run' are forwarded to the produced binary.\n");
                         eprintln!("{}", output::style::error_diag(&e.to_string()));
                         eprintln!("  Cannot show full help without a manifest to build.\n");
-                        eprintln!("Usage: besogne run [-i <manifest>] [-- <flags>]");
+                        eprintln!("Usage: besogne run [<task>] [-i <manifest>] [-- <flags>]");
                     } else {
                         eprintln!("{}", output::style::error_diag(&e.to_string()));
                     }
@@ -287,10 +303,10 @@ fn main() -> ExitCode {
             };
 
             // Detect -f/--force in forwarded args to force rebuild
-            let force_rebuild = args.iter().any(|a| a == "-f" || a == "--force");
+            let force_rebuild = forwarded_args.iter().any(|a| a == "-f" || a == "--force");
 
             // Detect JSON output mode from forwarded args
-            let json_mode = args.windows(2).any(|w| {
+            let json_mode = forwarded_args.windows(2).any(|w| {
                 (w[0] == "-l" || w[0] == "--log-format") && w[1] == "json"
             });
 
@@ -357,7 +373,7 @@ fn main() -> ExitCode {
             }
 
             // exec replaces this process — the besogne binary takes over
-            let err = exec_binary(&bin_path, &args);
+            let err = exec_binary(&bin_path, &forwarded_args);
             eprintln!("{}", output::style::error_diag(&format!("cannot exec {}: {err}", bin_path.display())));
             ExitCode::from(126)
         }

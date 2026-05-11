@@ -620,3 +620,183 @@ fn e2e_source_json() {
     assert!(err.contains("CGO=0"), "source env vars should be injected: {err}");
 }
 
+// ─── multi-project ──────────────────────────────────────────────
+
+/// Helper: run `besogne list` in a workdir
+fn besogne_list_in(workdir: &Path) -> std::process::Output {
+    let components_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("components");
+    Command::new(cargo_bin())
+        .args(["list"])
+        .current_dir(workdir)
+        .env("XDG_CACHE_HOME", workdir.join(".cache"))
+        .env("BESOGNE_COMPONENTS_DIR", components_dir)
+        .output()
+        .unwrap()
+}
+
+/// Helper: run `besogne build` (no args — auto-discover) in a workdir
+fn besogne_build_all_in(workdir: &Path) -> std::process::Output {
+    let components_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("components");
+    Command::new(cargo_bin())
+        .args(["build"])
+        .current_dir(workdir)
+        .env("XDG_CACHE_HOME", workdir.join(".cache"))
+        .env("BESOGNE_COMPONENTS_DIR", components_dir)
+        .output()
+        .unwrap()
+}
+
+/// Helper: compile a specific manifest from besogne/ dir
+fn compile_manifest_in(workdir: &Path, manifest: &str, output_name: &str) -> std::process::Output {
+    let output_bin = workdir.join(output_name);
+    let components_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("components");
+    Command::new(cargo_bin())
+        .args(["build", "-i", manifest, "-o", output_bin.to_str().unwrap()])
+        .current_dir(workdir)
+        .env("XDG_CACHE_HOME", workdir.join(".cache"))
+        .env("BESOGNE_COMPONENTS_DIR", components_dir)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn e2e_multi_project_list() {
+    let dir = setup_case("multi-project");
+
+    let output = besogne_list_in(dir.path());
+    let err = stderr(&output);
+    assert!(output.status.success(), "list failed: {err}");
+
+    // Should discover both manifests in besogne/
+    assert!(err.contains("test"), "should list 'test': {err}");
+    assert!(err.contains("build"), "should list 'build': {err}");
+    assert!(err.contains("Run project tests"), "should show test description: {err}");
+    assert!(err.contains("Build the project"), "should show build description: {err}");
+}
+
+#[test]
+fn e2e_multi_project_build_test_manifest() {
+    let dir = setup_case("multi-project");
+
+    // Build just the test manifest
+    let c = compile_manifest_in(dir.path(), "besogne/test.toml", "test-bin");
+    assert!(c.status.success(), "compile test: {}", stderr(&c));
+
+    // Run it
+    let r = Command::new(dir.path().join("test-bin"))
+        .current_dir(dir.path())
+        .env("XDG_CACHE_HOME", dir.path().join(".cache"))
+        .output()
+        .unwrap();
+    let err = stderr(&r);
+    assert!(r.status.success(), "run test: {err}");
+
+    // Should see output from shared component + own command
+    assert!(err.contains("hello from shared component"), "shared component hello: {err}");
+    assert!(err.contains("world from shared component"), "shared component world: {err}");
+    assert!(err.contains("tests passed"), "own command: {err}");
+}
+
+#[test]
+fn e2e_multi_project_build_build_manifest() {
+    let dir = setup_case("multi-project");
+
+    // Build the build manifest
+    let c = compile_manifest_in(dir.path(), "besogne/build.toml", "build-bin");
+    assert!(c.status.success(), "compile build: {}", stderr(&c));
+
+    // Run it
+    let r = Command::new(dir.path().join("build-bin"))
+        .current_dir(dir.path())
+        .env("XDG_CACHE_HOME", dir.path().join(".cache"))
+        .output()
+        .unwrap();
+    let err = stderr(&r);
+    assert!(r.status.success(), "run build: {err}");
+
+    assert!(err.contains("compiling project"), "compile step: {err}");
+    assert!(err.contains("linking artifacts"), "link step: {err}");
+}
+
+#[test]
+fn e2e_multi_project_build_all() {
+    let dir = setup_case("multi-project");
+
+    // Build all manifests via auto-discovery
+    let c = besogne_build_all_in(dir.path());
+    let err = stderr(&c);
+    assert!(c.status.success(), "build all: {err}");
+
+    // Should report both manifests built
+    assert!(err.contains("test") && err.contains("build"),
+        "should build both manifests: {err}");
+
+    // .besogne/ symlinks should be created
+    let besogne_dir = dir.path().join(".besogne");
+    assert!(besogne_dir.exists(), ".besogne/ dir should be created");
+
+    let test_link = besogne_dir.join("test");
+    let build_link = besogne_dir.join("build");
+    assert!(test_link.exists(), ".besogne/test symlink should exist");
+    assert!(build_link.exists(), ".besogne/build symlink should exist");
+
+    // Symlinks should point to store (be actual symlinks on unix)
+    #[cfg(unix)]
+    {
+        assert!(test_link.symlink_metadata().unwrap().file_type().is_symlink(),
+            ".besogne/test should be a symlink");
+        assert!(build_link.symlink_metadata().unwrap().file_type().is_symlink(),
+            ".besogne/build should be a symlink");
+    }
+
+    // Both binaries should be executable
+    let r_test = Command::new(&test_link)
+        .current_dir(dir.path())
+        .env("XDG_CACHE_HOME", dir.path().join(".cache"))
+        .output()
+        .unwrap();
+    assert!(r_test.status.success(), "run .besogne/test: {}", stderr(&r_test));
+    assert!(stderr(&r_test).contains("tests passed"), "test output: {}", stderr(&r_test));
+
+    let r_build = Command::new(&build_link)
+        .current_dir(dir.path())
+        .env("XDG_CACHE_HOME", dir.path().join(".cache"))
+        .output()
+        .unwrap();
+    assert!(r_build.status.success(), "run .besogne/build: {}", stderr(&r_build));
+    assert!(stderr(&r_build).contains("linking artifacts"), "build output: {}", stderr(&r_build));
+}
+
+#[test]
+fn e2e_multi_project_run_by_task_name() {
+    let dir = setup_case("multi-project");
+
+    // `besogne run build` should select besogne/build.toml
+    let components_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("components");
+    let output = Command::new(cargo_bin())
+        .args(["run", "build"])
+        .current_dir(dir.path())
+        .env("XDG_CACHE_HOME", dir.path().join(".cache"))
+        .env("BESOGNE_COMPONENTS_DIR", &components_dir)
+        .output()
+        .unwrap();
+
+    let err = stderr(&output);
+    assert!(output.status.success(), "run build: {err}");
+    assert!(err.contains("compiling project"), "should run build task: {err}");
+    assert!(err.contains("linking artifacts"), "should run build task: {err}");
+
+    // `besogne run test` should select besogne/test.toml
+    let output = Command::new(cargo_bin())
+        .args(["run", "test"])
+        .current_dir(dir.path())
+        .env("XDG_CACHE_HOME", dir.path().join(".cache"))
+        .env("BESOGNE_COMPONENTS_DIR", &components_dir)
+        .output()
+        .unwrap();
+
+    let err = stderr(&output);
+    assert!(output.status.success(), "run test: {err}");
+    assert!(err.contains("tests passed"), "should run test task: {err}");
+}
+
