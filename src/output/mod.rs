@@ -287,8 +287,7 @@ fn format_metrics_json(m: &Metrics) -> serde_json::Value {
 /// `/nix/store/abc123...-nodejs-20.11.0/bin/node` → `/nix/store/abc123.../node`
 /// Other long paths get tail-cropped.
 fn crop_path(path: &str, max_len: usize) -> String {
-    if path.len() <= max_len { return path.to_string(); }
-    // Nix store: /nix/store/<hash>-<name>/...
+    // Nix store paths are always shortened (hash is noise)
     if path.starts_with("/nix/store/") {
         let after_store = &path["/nix/store/".len()..];
         let hash_end = after_store.find('-').unwrap_or(8).min(8);
@@ -296,7 +295,8 @@ fn crop_path(path: &str, max_len: usize) -> String {
         let basename = path.rsplit('/').next().unwrap_or(path);
         return format!("/nix/store/{hash_prefix}.../{basename}");
     }
-    // Generic: keep last component + enough prefix
+    // Non-nix paths: only crop if too long
+    if path.len() <= max_len { return path.to_string(); }
     let basename = path.rsplit('/').next().unwrap_or(path);
     if basename.len() + 6 >= max_len {
         return format!(".../{basename}");
@@ -716,15 +716,14 @@ impl OutputRenderer for HumanRenderer {
     }
 
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64) {
-        let has_cached = self.cached_probes > 0 || self.cached_commands > 0;
-        if !self.verbose && has_cached && exit_code == 0 {
+        // "nothing to do" only when commands were actually skipped (cached),
+        // not just because probes used cache
+        if !self.verbose && self.cached_commands > 0 && exit_code == 0 {
             let mut parts = Vec::new();
             if self.cached_probes > 0 {
                 parts.push(format!("{} inputs", self.cached_probes));
             }
-            if self.cached_commands > 0 {
-                parts.push(format!("{} commands", self.cached_commands));
-            }
+            parts.push(format!("{} commands", self.cached_commands));
             eprintln!(
                 "\n\x1b[32mnothing to do\x1b[0m \x1b[2m({} cached, use -v for details)\x1b[0m  {:.3}s",
                 parts.join(" + "),
