@@ -1,0 +1,11 @@
+{
+  "name": "uv/deps",
+  "description": "UV dependency management: probes pyproject.toml/uv.lock, runs uv sync",
+  "nodes": {
+    "python/toolchain": { "type": "plugin" },
+    "uv": { "type": "binary" },
+    "pyproject": { "type": "file", "path": "pyproject.toml" },
+    "lock": { "type": "file", "path": "uv.lock" },
+    "sync": { "type": "command", "run": ["uv", "sync"], "parents": ["uv", "pyproject", "lock"] }
+  }
+}

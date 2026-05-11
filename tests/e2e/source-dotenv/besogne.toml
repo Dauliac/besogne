@@ -1,0 +1,15 @@
+name = "source-dotenv"
+description = "Load env vars from .env file via source type"
+
+[nodes."coreutils/shell"]
+type = "plugin"
+
+[nodes.dotenv]
+type = "source"
+format = "dotenv"
+path = ".env"
+
+[nodes.check]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo DB=$DATABASE_URL NAME=$APP_NAME"]

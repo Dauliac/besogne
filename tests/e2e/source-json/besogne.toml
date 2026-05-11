@@ -1,0 +1,15 @@
+name = "source-json"
+description = "Load env vars from JSON file via source type"
+
+[nodes."coreutils/shell"]
+type = "plugin"
+
+[nodes.env-file]
+type = "source"
+format = "json"
+path = "env.json"
+
+[nodes.check]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo GOPATH=$GOPATH CGO=$CGO_ENABLED"]

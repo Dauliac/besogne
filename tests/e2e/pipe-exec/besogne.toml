@@ -1,15 +1,16 @@
 name = "pipe-exec"
 description = "Test pipe exec form — echo | tr"
 
-[nodes.echo-bin]
-type = "binary"
-name = "echo"
-
-[nodes.tr-bin]
-type = "binary"
-name = "tr"
+[nodes."coreutils/shell"]
+type = "plugin"
 
 [nodes.pipe-test]
 type = "command"
 phase = "exec"
 run = "echo hello world | tr a-z A-Z"
+
+[nodes.pipe-stdout]
+type = "std"
+stream = "stdout"
+contains = ["HELLO WORLD"]
+parents = ["pipe-test"]

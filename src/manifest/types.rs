@@ -346,14 +346,10 @@ pub struct MetricInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginInput {
-    pub plugin: String,
-
+    /// Per-node overrides: node_name → partial node object to merge.
+    /// A plugin IS a manifest — overrides let you customize its nodes.
     #[serde(default)]
     pub overrides: Option<HashMap<String, serde_json::Value>>,
-
-    /// All remaining fields are plugin params
-    #[serde(flatten)]
-    pub params: HashMap<String, serde_json::Value>,
 }
 
 /// Source input — reads a map of env vars from a file or std parent.

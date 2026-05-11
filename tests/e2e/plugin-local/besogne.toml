@@ -4,8 +4,11 @@ description = "Test local JSON plugin expansion"
 [plugins]
 test = "./plugins"
 
-[nodes.greeting]
+[nodes."test/greet"]
 type = "plugin"
-plugin = "test/greet"
-message = "hello from plugin"
-loud = true
+
+[nodes."test/greet".overrides.greet]
+run = ["echo", "hello from plugin"]
+
+[nodes."test/greet".overrides.greet-loud]
+run = ["sh", "-c", "echo 'hello from plugin' | tr a-z A-Z"]
