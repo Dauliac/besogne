@@ -1,22 +1,37 @@
 name = "npm-install"
 description = "Install npm dependencies"
 
-[inputs.node]
+[nodes.node]
 type = "binary"
 
-[inputs.npm]
+[nodes.npm]
 type = "binary"
 
-[inputs.package-json]
+[nodes.package-json]
 type = "file"
 path = "package.json"
 
-[inputs.install]
+[nodes.gen-lockfile]
 type = "command"
 phase = "exec"
-run = ["npm", "install"]
+run = ["npm", "install", "--package-lock-only"]
+debug_args = ["--verbose"]
 
-[[inputs.install.postconditions]]
+[[nodes.gen-lockfile.postconditions]]
+type = "file"
+path = "package-lock.json"
+expect = "exists"
+required = true
+
+[nodes.install]
+type = "command"
+phase = "exec"
+run = ["npm", "ci"]
+parents = ["gen-lockfile"]
+force_args = ["--force"]
+debug_args = ["--verbose"]
+
+[[nodes.install.postconditions]]
 type = "file"
 path = "node_modules"
 expect = "directory"

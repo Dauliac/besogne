@@ -1,5 +1,5 @@
 use crate::ir::types::*;
-use crate::manifest::{self, Input, Phase, Flag, FlagKind};
+use crate::manifest::{self, Node, Phase, Flag, FlagKind};
 use std::collections::{HashMap, HashSet};
 
 /// Lower a parsed manifest into the intermediate representation
@@ -27,14 +27,14 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
     let besogne_name_upper = manifest.name.to_uppercase().replace('-', "_");
     let flags = lower_and_validate_flags(&manifest.flags, &besogne_name_upper)?;
 
-    let mut resolved_inputs = Vec::new();
+    let mut resolved_nodes = Vec::new();
 
     // Generate synthetic env inputs for each flag
     for flag in &flags {
-        let env_input = ResolvedInput {
+        let env_input = ResolvedNode {
             id: ContentId::from_content("env", &flag.env_var, flag.env_var.as_bytes()),
-            phase: Phase::Pre,
-            input: ResolvedNativeInput::Env {
+            phase: Phase::Seal,
+            node: ResolvedNativeNode::Env {
                 name: flag.env_var.clone(),
                 value: flag.default.as_ref().and_then(|d| {
                     d.as_str().map(|s| s.to_string()).or_else(|| {
@@ -48,12 +48,12 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
             from_plugin: Some("flag".to_string()),
             sealed: None,
         };
-        resolved_inputs.push(env_input);
+        resolved_nodes.push(env_input);
     }
 
-    for (key, input) in &manifest.inputs {
+    for (key, input) in &manifest.nodes {
         match input {
-            Input::Plugin(p) => {
+            Node::Plugin(p) => {
                 return Err(format!(
                     "input '{key}': plugin '{}' not expanded before lowering (bug in compile pipeline)",
                     p.plugin
@@ -61,60 +61,60 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
             }
             _ => {
                 let resolved = lower_input(key, input, &metadata.workdir)?;
-                resolved_inputs.push(resolved);
+                resolved_nodes.push(resolved);
             }
         }
     }
 
     // Resolve exec-phase ordering constraints
-    resolve_ordering(&mut resolved_inputs, &manifest.inputs)?;
+    resolve_ordering(&mut resolved_nodes, &manifest.nodes)?;
 
     // Validate script-as-command patterns: files used as command first args
-    validate_script_commands(&resolved_inputs, &metadata.workdir)?;
+    validate_script_commands(&resolved_nodes, &metadata.workdir)?;
 
     Ok(BesogneIR {
         metadata,
         sandbox,
         flags,
-        inputs: resolved_inputs,
+        nodes: resolved_nodes,
     })
 }
 
 /// Lower a manifest input to IR. The `key` is the map key (= the input's name).
-fn lower_input(key: &str, input: &Input, base_workdir: &str) -> Result<ResolvedInput, String> {
+fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNode, String> {
     let (native, phase, id) = match input {
-        Input::Env(e) => {
+        Node::Env(e) => {
             let env_name = e.name.clone().unwrap_or_else(|| key.to_string());
-            let native = ResolvedNativeInput::Env {
+            let native = ResolvedNativeNode::Env {
                 name: env_name.clone(),
                 value: e.value.clone(),
                 expect: e.expect.clone(),
                 secret: e.secret.unwrap_or(false),
             };
-            let phase = e.phase.clone().unwrap_or(Phase::Pre);
+            let phase = e.phase.clone().unwrap_or(Phase::Seal);
             let id = ContentId::from_content("env", &env_name, env_name.as_bytes());
             (native, phase, id)
         }
 
-        Input::File(f) => {
-            let native = ResolvedNativeInput::File {
+        Node::File(f) => {
+            let native = ResolvedNativeNode::File {
                 path: f.path.clone(),
                 expect: f.expect.clone(),
                 permissions: f.permissions.clone(),
             };
-            let phase = f.phase.clone().unwrap_or(Phase::Pre);
+            let phase = f.phase.clone().unwrap_or(Phase::Seal);
             let id = ContentId::from_content("file", &f.path, f.path.as_bytes());
             (native, phase, id)
         }
 
-        Input::Binary(b) => {
+        Node::Binary(b) => {
             let bin_name = b.name.clone().unwrap_or_else(|| key.to_string());
             let version_constraint = b
                 .version
                 .clone()
                 .or_else(|| extract_version_constraint(&b.validate));
             let parents = b.parents.clone().unwrap_or_default();
-            let native = ResolvedNativeInput::Binary {
+            let native = ResolvedNativeNode::Binary {
                 name: bin_name.clone(),
                 path: b.path.clone(),
                 version_constraint,
@@ -129,27 +129,27 @@ fn lower_input(key: &str, input: &Input, base_workdir: &str) -> Result<ResolvedI
             (native, phase, id)
         }
 
-        Input::Service(s) => {
+        Node::Service(s) => {
             let identifier = s.tcp.as_deref()
                 .or(s.http.as_deref())
                 .unwrap_or(key);
-            let native = ResolvedNativeInput::Service {
+            let native = ResolvedNativeNode::Service {
                 name: Some(key.to_string()),
                 tcp: s.tcp.clone(),
                 http: s.http.clone(),
             };
-            let phase = s.phase.clone().unwrap_or(Phase::Pre);
+            let phase = s.phase.clone().unwrap_or(Phase::Seal);
             let id = ContentId::from_content("service", identifier, identifier.as_bytes());
             (native, phase, id)
         }
 
-        Input::Command(c) => {
+        Node::Command(c) => {
             let run_resolved = resolve_run_spec(&c.run);
             let cmd_workdir = c.workdir.as_ref().map(|w| {
                 let p = std::path::Path::new(base_workdir).join(w);
                 p.to_string_lossy().to_string()
             });
-            let native = ResolvedNativeInput::Command {
+            let native = ResolvedNativeNode::Command {
                 name: key.to_string(),
                 run: run_resolved,
                 env: c.env.clone().unwrap_or_default(),
@@ -158,29 +158,30 @@ fn lower_input(key: &str, input: &Input, base_workdir: &str) -> Result<ResolvedI
                 output: c.output.clone(),
                 workdir: cmd_workdir,
                 force_args: c.force_args.clone().unwrap_or_default(),
+                debug_args: c.debug_args.clone().unwrap_or_default(),
             };
             let phase = c.phase.clone().unwrap_or(Phase::Exec);
             let id = ContentId::from_content("command", key, key.as_bytes());
             (native, phase, id)
         }
 
-        Input::User(u) => {
+        Node::User(u) => {
             let identifier = u.in_group.as_deref().unwrap_or("current");
-            let native = ResolvedNativeInput::User {
+            let native = ResolvedNativeNode::User {
                 in_group: u.in_group.clone(),
             };
-            let phase = u.phase.clone().unwrap_or(Phase::Pre);
+            let phase = u.phase.clone().unwrap_or(Phase::Seal);
             let id = ContentId::from_content("user", identifier, identifier.as_bytes());
             (native, phase, id)
         }
 
-        Input::Platform(p) => {
+        Node::Platform(p) => {
             let identifier = format!(
                 "{}-{}",
                 p.os.as_deref().unwrap_or("any"),
                 p.arch.as_deref().unwrap_or("any")
             );
-            let native = ResolvedNativeInput::Platform {
+            let native = ResolvedNativeNode::Platform {
                 os: p.os.clone(),
                 arch: p.arch.clone(),
             };
@@ -189,35 +190,35 @@ fn lower_input(key: &str, input: &Input, base_workdir: &str) -> Result<ResolvedI
             (native, phase, id)
         }
 
-        Input::Dns(d) => {
-            let native = ResolvedNativeInput::Dns {
+        Node::Dns(d) => {
+            let native = ResolvedNativeNode::Dns {
                 host: d.host.clone(),
                 expect: d.expect.clone(),
             };
-            let phase = d.phase.clone().unwrap_or(Phase::Pre);
+            let phase = d.phase.clone().unwrap_or(Phase::Seal);
             let id = ContentId::from_content("dns", &d.host, d.host.as_bytes());
             (native, phase, id)
         }
 
-        Input::Metric(m) => {
-            let native = ResolvedNativeInput::Metric {
+        Node::Metric(m) => {
+            let native = ResolvedNativeNode::Metric {
                 metric: m.metric.clone(),
                 path: m.path.clone(),
             };
-            let phase = m.phase.clone().unwrap_or(Phase::Pre);
+            let phase = m.phase.clone().unwrap_or(Phase::Seal);
             let id = ContentId::from_content("metric", &m.metric, m.metric.as_bytes());
             (native, phase, id)
         }
 
-        Input::Plugin(_) => {
+        Node::Plugin(_) => {
             return Err("plugins should be expanded before lowering".into());
         }
     };
 
-    Ok(ResolvedInput {
+    Ok(ResolvedNode {
         id,
         phase,
-        input: native,
+        node: native,
         parents: vec![],
         from_plugin: None,
         sealed: None,
@@ -235,14 +236,14 @@ fn lower_input(key: &str, input: &Input, base_workdir: &str) -> Result<ResolvedI
 /// This catches the common mistake of declaring a script as `type = "file"` when
 /// it's actually executed as a command.
 fn validate_script_commands(
-    inputs: &[ResolvedInput],
+    nodes: &[ResolvedNode],
     workdir: &str,
 ) -> Result<(), String> {
     // Collect file paths (relative → absolute)
-    let file_paths: HashMap<String, String> = inputs
+    let file_paths: HashMap<String, String> = nodes
         .iter()
         .filter_map(|i| {
-            if let ResolvedNativeInput::File { path, .. } = &i.input {
+            if let ResolvedNativeNode::File { path, .. } = &i.node {
                 Some((path.clone(), path.clone()))
             } else {
                 None
@@ -251,10 +252,10 @@ fn validate_script_commands(
         .collect();
 
     // Collect declared binary names
-    let binary_names: HashSet<String> = inputs
+    let binary_names: HashSet<String> = nodes
         .iter()
         .filter_map(|i| {
-            if let ResolvedNativeInput::Binary { name, .. } = &i.input {
+            if let ResolvedNativeNode::Binary { name, .. } = &i.node {
                 Some(name.clone())
             } else {
                 None
@@ -266,8 +267,8 @@ fn validate_script_commands(
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
 
-    for input in inputs {
-        if let ResolvedNativeInput::Command { name, run, .. } = &input.input {
+    for node in nodes {
+        if let ResolvedNativeNode::Command { name, run, .. } = &node.node {
             if run.is_empty() {
                 continue;
             }
@@ -328,7 +329,7 @@ fn validate_script_commands(
                                     errors.push(format!(
                                         "command '{name}': script '{file_path}' has shebang '#!{shebang}' \
                                          but interpreter '{interp}' is not declared as a binary input\n  \
-                                         hint: add [inputs.{interp}] with type = \"binary\" to your manifest"
+                                         hint: add [nodes.{interp}] with type = \"binary\" to your manifest"
                                     ));
                                 }
                             }
@@ -392,17 +393,17 @@ fn resolve_run_spec(spec: &manifest::ExecSpec) -> Vec<String> {
 
 /// Resolve `parents:` ordering constraints for exec-phase inputs
 fn resolve_ordering(
-    inputs: &mut Vec<ResolvedInput>,
-    manifest_inputs: &HashMap<String, manifest::Input>,
+    nodes: &mut Vec<ResolvedNode>,
+    manifest_nodes: &HashMap<String, manifest::Node>,
 ) -> Result<(), String> {
     // Build name→id map for exec-phase inputs
-    let name_to_id: HashMap<String, ContentId> = inputs
+    let name_to_id: HashMap<String, ContentId> = nodes
         .iter()
         .filter(|i| i.phase == Phase::Exec)
         .filter_map(|i| {
-            if let ResolvedNativeInput::Command { name, .. } = &i.input {
+            if let ResolvedNativeNode::Command { name, .. } = &i.node {
                 Some((name.clone(), i.id.clone()))
-            } else if let ResolvedNativeInput::Service { name: Some(name), .. } = &i.input {
+            } else if let ResolvedNativeNode::Service { name: Some(name), .. } = &i.node {
                 Some((name.clone(), i.id.clone()))
             } else {
                 None
@@ -412,14 +413,14 @@ fn resolve_ordering(
 
     // Collect `parents` constraints from manifest (key = input name)
     let mut parents_by_name: HashMap<String, Vec<String>> = HashMap::new();
-    for (key, mi) in manifest_inputs {
+    for (key, mi) in manifest_nodes {
         match mi {
-            manifest::Input::Command(c) => {
+            manifest::Node::Command(c) => {
                 if let Some(parents) = &c.parents {
                     parents_by_name.insert(key.clone(), parents.clone());
                 }
             }
-            manifest::Input::Service(s) => {
+            manifest::Node::Service(s) => {
                 if let Some(parents) = &s.parents {
                     parents_by_name.insert(key.clone(), parents.clone());
                 }
@@ -429,14 +430,14 @@ fn resolve_ordering(
     }
 
     // Resolve string refs → ContentIds
-    let resolutions: Vec<(usize, Vec<ContentId>)> = inputs
+    let resolutions: Vec<(usize, Vec<ContentId>)> = nodes
         .iter()
         .enumerate()
         .filter(|(_, i)| i.phase == Phase::Exec)
         .filter_map(|(idx, input)| {
-            let cmd_name = match &input.input {
-                ResolvedNativeInput::Command { name, .. } => Some(name),
-                ResolvedNativeInput::Service { name: Some(name), .. } => Some(name),
+            let cmd_name = match &input.node {
+                ResolvedNativeNode::Command { name, .. } => Some(name),
+                ResolvedNativeNode::Service { name: Some(name), .. } => Some(name),
                 _ => None,
             }?;
 
@@ -460,7 +461,7 @@ fn resolve_ordering(
         .collect::<Result<Vec<_>, _>>()?;
 
     for (idx, parent_ids) in resolutions {
-        inputs[idx].parents = parent_ids;
+        nodes[idx].parents = parent_ids;
     }
 
     Ok(())

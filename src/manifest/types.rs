@@ -20,7 +20,7 @@ pub struct Manifest {
     pub plugins: HashMap<String, String>,
 
     #[serde(default)]
-    pub inputs: HashMap<String, Input>,
+    pub nodes: HashMap<String, Node>,
 }
 
 /// A user-defined flag for the produced besogne binary
@@ -120,7 +120,7 @@ pub enum NetworkSandbox {
 /// A single input entry — flat array, discriminated by `type`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum Input {
+pub enum Node {
     Env(EnvInput),
     File(FileInput),
     Binary(BinaryInput),
@@ -133,20 +133,20 @@ pub enum Input {
     Plugin(PluginInput),
 }
 
-impl Input {
+impl Node {
     /// Get the phase for this input (build/pre/exec)
     pub fn phase(&self) -> Phase {
         match self {
-            Input::Env(e) => e.phase.clone().unwrap_or(Phase::Pre),
-            Input::File(f) => f.phase.clone().unwrap_or(Phase::Pre),
-            Input::Binary(b) => b.phase.clone().unwrap_or(Phase::Build),
-            Input::Service(s) => s.phase.clone().unwrap_or(Phase::Pre),
-            Input::Command(c) => c.phase.clone().unwrap_or(Phase::Exec),
-            Input::User(u) => u.phase.clone().unwrap_or(Phase::Pre),
-            Input::Platform(p) => p.phase.clone().unwrap_or(Phase::Build),
-            Input::Dns(d) => d.phase.clone().unwrap_or(Phase::Pre),
-            Input::Metric(m) => m.phase.clone().unwrap_or(Phase::Pre),
-            Input::Plugin(_) => Phase::Pre,
+            Node::Env(e) => e.phase.clone().unwrap_or(Phase::Seal),
+            Node::File(f) => f.phase.clone().unwrap_or(Phase::Seal),
+            Node::Binary(b) => b.phase.clone().unwrap_or(Phase::Build),
+            Node::Service(s) => s.phase.clone().unwrap_or(Phase::Seal),
+            Node::Command(c) => c.phase.clone().unwrap_or(Phase::Exec),
+            Node::User(u) => u.phase.clone().unwrap_or(Phase::Seal),
+            Node::Platform(p) => p.phase.clone().unwrap_or(Phase::Build),
+            Node::Dns(d) => d.phase.clone().unwrap_or(Phase::Seal),
+            Node::Metric(m) => m.phase.clone().unwrap_or(Phase::Seal),
+            Node::Plugin(_) => Phase::Seal,
         }
     }
 }
@@ -158,7 +158,7 @@ pub enum Phase {
     /// Sealed at build time — verified during `besogne build`, embedded in binary
     Build,
     /// Precondition — checked at startup before execution
-    Pre,
+    Seal,
     /// Execution — part of the command DAG
     Exec,
 }
@@ -339,6 +339,12 @@ pub struct CommandInput {
     /// Useful for invalidating tool-specific caches (e.g. `go build -a`, `cargo build --force`).
     #[serde(default)]
     pub force_args: Option<Vec<String>>,
+
+    /// Extra args appended to `run` when --debug is passed.
+    /// Useful for enabling verbose/debug output (e.g. `npm install --verbose`, `go test -v`).
+    /// When --debug is active, cache writes are skipped to avoid poisoning cache with debug output.
+    #[serde(default)]
+    pub debug_args: Option<Vec<String>>,
 }
 
 /// Specification for command output validation

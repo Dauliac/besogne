@@ -11,7 +11,7 @@ A besogne manifest is a TOML, YAML, or JSON file. Supported filenames: `besogne.
 | `side_effects` | bool | no | Opt out of caching (default: false) |
 | `sandbox` | string/object | no | Sandbox preset or custom config |
 | `flags` | array | no | CLI flags for the produced binary |
-| `inputs` | map | no | Named map of all preconditions and execution steps |
+| `inputs` | map | no | Named map of all seals and execution steps |
 
 ## Inputs (named map)
 
@@ -65,7 +65,7 @@ Each input has a `phase` (when it's evaluated):
 | Phase | When | Default for |
 |---|---|---|
 | `build` | `besogne build` | binary, platform |
-| `pre` | Startup (parallel) | env, file, service, user, dns, metric |
+| `seal` | Startup (parallel) | env, file, service, user, dns, metric |
 | `exec` | DAG execution | command |
 
 ### Command inputs
@@ -143,7 +143,7 @@ required = true
 | `side_effects` | `false` (everything cached by default) |
 | `sandbox` | none (inherit everything) |
 | `phase` for binary | `build` |
-| `phase` for env/file/service | `pre` |
+| `phase` for env/file/service | `seal` |
 | `phase` for command | `exec` |
 | `on_missing` | `fail` |
 | `side_effects` | `false` (cached by default) |

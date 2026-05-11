@@ -1,6 +1,6 @@
 # Wrap npm install
 
-This tutorial creates a besogne that wraps `npm install` with precondition checking and memoization. If `package.json` and `package-lock.json` haven't changed, the install is skipped entirely.
+This tutorial creates a besogne that wraps `npm install` with seal checking and memoization. If `package.json` and `package-lock.json` haven't changed, the install is skipped entirely.
 
 ## The manifest
 
@@ -38,7 +38,7 @@ required = true
 ```
 
 What this declares:
-- **Preconditions**: `node` (>= 18) and `npm` in PATH, `package.json` and lock file exist
+- **Seals**: `node` (>= 18) and `npm` in PATH, `package.json` and lock file exist
 - **Execution**: run `npm install`
 - **Postcondition**: `node_modules/` must exist after
 - **Memoization**: cached by default — skip if nothing changed

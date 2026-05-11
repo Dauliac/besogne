@@ -1,84 +1,99 @@
 name = "nested-scripts"
-description = "Nested shell scripts with env-driven configuration"
+description = "Nested shell scripts: 3 levels deep, forks, sleep, pipes, traps"
 
-[plugins]
-coreutils = "builtin"
+[nodes.sh]
+type = "binary"
 
-[inputs.shell]
-type = "plugin"
-plugin = "coreutils/shell"
+[nodes.head]
+type = "binary"
 
-# Environment variables used by the scripts
-[inputs.PROJECT_NAME]
-type = "env"
-value = "besogne-nested"
+[nodes.od]
+type = "binary"
 
-[inputs.OUTPUT_PREFIX]
-type = "env"
-value = "results"
+[nodes.tr]
+type = "binary"
 
-[inputs.FORK_COUNT]
-type = "env"
-value = "3"
+[nodes.tee]
+type = "binary"
 
-[inputs.SLEEP_DELAY]
-type = "env"
-value = "0.02"
+[nodes.cat]
+type = "binary"
 
-[inputs.level1]
+[nodes.date]
+type = "binary"
+
+[nodes.sleep]
+type = "binary"
+
+[nodes.mkdir]
+type = "binary"
+
+[nodes.rm]
+type = "binary"
+
+[nodes.seq]
+type = "binary"
+
+[nodes.level1]
 type = "file"
 path = "level1.sh"
 
-[inputs.level2]
+[nodes.level2]
 type = "file"
 path = "level2.sh"
 
-[inputs.level3]
+[nodes.level3]
 type = "file"
 path = "level3.sh"
 
-[inputs.setup]
+[nodes.setup]
 type = "command"
 phase = "exec"
-run = ["sh", "-c", "rm -rf $OUTPUT_PREFIX && mkdir -p $OUTPUT_PREFIX"]
+run = ["sh", "-c", "rm -rf results && mkdir -p results"]
 
-[inputs.run-scripts]
+[nodes.run-scripts]
 type = "command"
 phase = "exec"
 run = { file = "./level1.sh" }
-parents = ["setup"]
+after = ["setup"]
 
-[[inputs.run-scripts.postconditions]]
+[[nodes.run-scripts.ensure]]
 type = "file"
 path = "results/level1.txt"
 required = true
 
-[[inputs.run-scripts.postconditions]]
+[[nodes.run-scripts.ensure]]
 type = "file"
 path = "results/level2.txt"
 required = true
 
-[[inputs.run-scripts.postconditions]]
+[[nodes.run-scripts.ensure]]
 type = "file"
 path = "results/level3.txt"
 required = true
 
-[[inputs.run-scripts.postconditions]]
+[[nodes.run-scripts.ensure]]
 type = "file"
 path = "results/forks.txt"
 required = true
 
-[[inputs.run-scripts.postconditions]]
+[[nodes.run-scripts.ensure]]
 type = "file"
 path = "results/background.txt"
 required = true
 
-[[inputs.run-scripts.postconditions]]
+[[nodes.run-scripts.ensure]]
 type = "file"
 path = "results/pipe.txt"
 required = true
 
-[[inputs.run-scripts.postconditions]]
+[[nodes.run-scripts.ensure]]
 type = "file"
 path = "results/heredoc.txt"
 required = true
+
+[nodes.verify]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "cat results/level1.txt results/level2.txt results/level3.txt results/forks.txt results/background.txt results/pipe.txt results/heredoc.txt"]
+after = ["run-scripts"]

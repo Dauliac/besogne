@@ -25,7 +25,7 @@ run = ["echo", "hello from besogne"]
 ```
 
 This declares:
-- A precondition: the `USER` env var must be set (key = env var name)
+- A seal: the `USER` env var must be set (key = env var name)
 - An execution step named `greet`: run `echo hello from besogne`
 
 ## Step 2: Build and run
@@ -53,7 +53,7 @@ hello — My first besogne
 ```
 
 The binary:
-1. Checked that `USER` env var exists (precondition)
+1. Checked that `USER` env var exists (seal)
 2. Ran `echo` (execution)
 3. Reported timing (tracing)
 
@@ -74,7 +74,7 @@ hello — My first besogne
 ✗ FAILED exit 2  0.001s
 ```
 
-The command never ran. besogne failed fast at the precondition check.
+The command never ran. besogne failed fast at the seal check.
 
 ## Next steps
 

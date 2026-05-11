@@ -1,65 +1,72 @@
 name = "go-testcontainers"
 description = "Run Go tests with testcontainers (Docker)"
 
-[inputs.go]
+[nodes.go]
 type = "binary"
 
-[inputs.docker]
+[nodes.docker]
 type = "binary"
 
 # Go toolchain internals (spawned by `go test`, not in PATH)
-[inputs.compile]
+[nodes.compile]
 type = "binary"
 parents = ["go"]
 
-[inputs.link]
+[nodes.link]
 type = "binary"
 parents = ["go"]
 
-[inputs.vet]
+[nodes.vet]
 type = "binary"
 parents = ["go"]
 
-[inputs.cgo]
+[nodes.cgo]
 type = "binary"
 parents = ["go"]
 
 # C compiler used by cgo for testcontainers native deps
-[inputs.gcc]
+[nodes.gcc]
 type = "binary"
 
-[inputs.cc1]
+[nodes.cc1]
 type = "binary"
 parents = ["gcc"]
 
 # go test produces a test binary named after the module
-[inputs."testcontainers."]
+[nodes."testcontainers."]
 type = "binary"
 parents = ["go"]
 
-[inputs.go-mod]
+[nodes.go-mod]
 type = "file"
 path = "go.mod"
 
-[inputs.test-go]
+[nodes.test-go]
 type = "file"
 path = "container_test.go"
 
-[inputs.mod-download]
+[nodes.mod-tidy]
+type = "command"
+phase = "exec"
+run = ["go", "mod", "tidy"]
+
+[nodes.mod-download]
 type = "command"
 phase = "exec"
 run = ["go", "mod", "download"]
+parents = ["mod-tidy"]
 
-[inputs.mod-download.output]
+[nodes.mod-download.output]
 exit_code = 0
 
-[inputs.test]
+[nodes.test]
 type = "command"
 phase = "exec"
-run = ["go", "test", "-v", "-count=1", "./..."]
+run = ["go", "test", "-v", "./..."]
 parents = ["mod-download"]
-side_effects = true
+force_args = ["-count=1"]
+debug_args = ["-v"]
 
-[inputs.test.output]
+[nodes.test.output]
 exit_code = 0
 stdout_contains = ["PASS"]

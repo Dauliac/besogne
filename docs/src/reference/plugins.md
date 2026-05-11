@@ -57,7 +57,7 @@ Produced inputs can have different phases:
 
 ```nickel
 produces = fun params => [
-  { type = "env", name = "KUBECONFIG", phase = "pre" },
+  { type = "env", name = "KUBECONFIG", phase = `seal` },
   { type = "file", path = params.path, phase = "exec" },
   { type = "command", name = "cluster-info", phase = "exec",
     after = ["kubeconfig-file"] },

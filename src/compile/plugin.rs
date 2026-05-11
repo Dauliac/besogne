@@ -1,5 +1,5 @@
 use crate::compile::nickel;
-use crate::manifest::{Input, Manifest};
+use crate::manifest::{Node, Manifest};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -32,12 +32,12 @@ fn default_string() -> String {
 pub fn expand_plugins(
     manifest: &Manifest,
     manifest_path: &Path,
-) -> Result<HashMap<String, Input>, String> {
+) -> Result<HashMap<String, Node>, String> {
     let mut expanded = HashMap::new();
 
-    for (key, input) in &manifest.inputs {
+    for (key, input) in &manifest.nodes {
         match input {
-            Input::Plugin(plugin_input) => {
+            Node::Plugin(plugin_input) => {
                 let (namespace, _plugin_name) = parse_plugin_ref(&plugin_input.plugin)?;
 
                 let source = manifest.plugins.get(&namespace).ok_or_else(|| {
@@ -92,7 +92,7 @@ fn expand_plugin_input(
     overrides: &Option<HashMap<String, serde_json::Value>>,
     manifest_path: &Path,
     input_key: &str,
-) -> Result<Vec<(String, Input)>, String> {
+) -> Result<Vec<(String, Node)>, String> {
     let plugin_path = resolve_plugin_path(source, plugin_ref, manifest_path)?;
 
     let ext = plugin_path
@@ -122,7 +122,7 @@ fn expand_plugin_input(
         .map(|(idx, v)| derive_sub_key(v, idx))
         .collect();
 
-    // Second pass: rewrite `parents` arrays to use full keys, parse into native Inputs
+    // Second pass: rewrite `parents` arrays to use full keys, parse into native Nodes
     let mut result = Vec::new();
     for (idx, mut value) in produced_json.into_iter().enumerate() {
         // Apply overrides
@@ -147,7 +147,7 @@ fn expand_plugin_input(
 
         let sub_key = sub_keys[idx].clone();
 
-        let input: Input = serde_json::from_value(value.clone()).map_err(|e| {
+        let input: Node = serde_json::from_value(value.clone()).map_err(|e| {
             format!(
                 "plugin '{input_key}' produces[{idx}]: cannot parse as native input: {e}\n  value: {}",
                 serde_json::to_string_pretty(&value).unwrap_or_default()
@@ -171,14 +171,25 @@ fn resolve_plugin_path(source: &str, plugin_ref: &str, manifest_path: &Path) -> 
             let plugins_dir = std::env::var("BESOGNE_PLUGINS_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| {
-                    // Try relative to manifest, then relative to cwd
+                    // Try relative to manifest first
                     let manifest_dir = manifest_path.parent().unwrap_or(Path::new("."));
                     let candidate = manifest_dir.join("plugins");
                     if candidate.is_dir() {
-                        candidate
-                    } else {
-                        PathBuf::from("plugins")
+                        return candidate;
                     }
+                    // Try relative to the besogne binary (handles running from subdirs)
+                    if let Ok(exe) = std::env::current_exe() {
+                        if let Some(exe_dir) = exe.parent() {
+                            // Binary in target/debug/ → project root is ../../
+                            for ancestor in exe_dir.ancestors().skip(1) {
+                                let candidate = ancestor.join("plugins");
+                                if candidate.is_dir() {
+                                    return candidate;
+                                }
+                            }
+                        }
+                    }
+                    PathBuf::from("plugins")
                 });
 
             // Try .ncl first, then .json

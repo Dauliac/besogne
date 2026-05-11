@@ -1,7 +1,7 @@
 name = "minimal"
 description = "Smallest valid besogne"
 
-[inputs.hello]
+[nodes.hello]
 type = "command"
 phase = "exec"
 run = ["echo", "hello from besogne"]

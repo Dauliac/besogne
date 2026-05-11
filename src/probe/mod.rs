@@ -7,7 +7,7 @@ pub mod platform;
 pub mod service;
 pub mod user;
 
-use crate::ir::ResolvedNativeInput;
+use crate::ir::ResolvedNativeNode;
 use std::collections::HashMap;
 
 /// Result of probing an input
@@ -25,9 +25,9 @@ pub trait Probe {
 }
 
 /// Dispatch to the right probe implementation
-pub fn probe_input(input: &ResolvedNativeInput) -> ProbeResult {
+pub fn probe_input(input: &ResolvedNativeNode) -> ProbeResult {
     match input {
-        ResolvedNativeInput::Env {
+        ResolvedNativeNode::Env {
             name,
             value,
             secret,
@@ -39,9 +39,9 @@ pub fn probe_input(input: &ResolvedNativeInput) -> ProbeResult {
         }
         .probe(),
 
-        ResolvedNativeInput::File { path, .. } => file::FileProbe { path }.probe(),
+        ResolvedNativeNode::File { path, .. } => file::FileProbe { path }.probe(),
 
-        ResolvedNativeInput::Binary {
+        ResolvedNativeNode::Binary {
             name,
             path,
             source,
@@ -59,36 +59,36 @@ pub fn probe_input(input: &ResolvedNativeInput) -> ProbeResult {
         }
         .probe(),
 
-        ResolvedNativeInput::Service { tcp, http, .. } => service::ServiceProbe {
+        ResolvedNativeNode::Service { tcp, http, .. } => service::ServiceProbe {
             tcp: tcp.as_deref(),
             http: http.as_deref(),
         }
         .probe(),
 
-        ResolvedNativeInput::User { in_group, .. } => user::UserProbe {
+        ResolvedNativeNode::User { in_group, .. } => user::UserProbe {
             in_group: in_group.as_deref(),
         }
         .probe(),
 
-        ResolvedNativeInput::Platform { os, arch, .. } => platform::PlatformProbe {
+        ResolvedNativeNode::Platform { os, arch, .. } => platform::PlatformProbe {
             expected_os: os.as_deref(),
             expected_arch: arch.as_deref(),
         }
         .probe(),
 
-        ResolvedNativeInput::Dns { host, expect, .. } => dns::DnsProbe {
+        ResolvedNativeNode::Dns { host, expect, .. } => dns::DnsProbe {
             host,
             expect: expect.as_deref(),
         }
         .probe(),
 
-        ResolvedNativeInput::Metric { metric, path, .. } => metric::MetricProbe {
+        ResolvedNativeNode::Metric { metric, path, .. } => metric::MetricProbe {
             metric,
             path: path.as_deref(),
         }
         .probe(),
 
-        ResolvedNativeInput::Command { .. } => {
+        ResolvedNativeNode::Command { .. } => {
             // Commands are not probed — they're executed by the runtime DAG
             ProbeResult {
                 success: true,
@@ -389,19 +389,19 @@ mod tests {
     #[test]
     fn test_probe_dispatch_all_types() {
         // Verify dispatch works for every variant without panicking
-        let inputs = vec![
-            ResolvedNativeInput::Env {
+        let test_nodes = vec![
+            ResolvedNativeNode::Env {
                 name: "HOME".into(),
                 value: None,
                 expect: None,
                 secret: false,
             },
-            ResolvedNativeInput::File {
+            ResolvedNativeNode::File {
                 path: "/tmp".into(),
                 expect: None,
                 permissions: None,
             },
-            ResolvedNativeInput::Binary {
+            ResolvedNativeNode::Binary {
                 name: "sh".into(),
                 path: Some("/bin/sh".into()),
                 version_constraint: None,
@@ -411,22 +411,22 @@ mod tests {
                 resolved_version: None,
                 binary_hash: None,
             },
-            ResolvedNativeInput::User {
+            ResolvedNativeNode::User {
                 in_group: None,
             },
-            ResolvedNativeInput::Platform {
+            ResolvedNativeNode::Platform {
                 os: None,
                 arch: None,
             },
-            ResolvedNativeInput::Dns {
+            ResolvedNativeNode::Dns {
                 host: "localhost".into(),
                 expect: None,
             },
-            ResolvedNativeInput::Metric {
+            ResolvedNativeNode::Metric {
                 metric: "cpu.count".into(),
                 path: None,
             },
-            ResolvedNativeInput::Command {
+            ResolvedNativeNode::Command {
                 name: "test".into(),
                 run: vec!["echo".into()],
                 env: HashMap::new(),
@@ -435,11 +435,12 @@ mod tests {
                 output: None,
                 workdir: None,
                 force_args: vec![],
+                debug_args: vec![],
             },
         ];
 
-        for input in &inputs {
-            let result = probe_input(input);
+        for node in &test_nodes {
+            let result = probe_input(node);
             // Just verify no panics — some may fail depending on system
             let _ = result;
         }

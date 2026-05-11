@@ -4,43 +4,43 @@ description = "Build pipeline using a shell script with env vars and outputs"
 [plugins]
 coreutils = "builtin"
 
-[inputs.shell]
+[nodes.shell]
 type = "plugin"
 plugin = "coreutils/shell"
 
-[inputs.build-script]
+[nodes.build-script]
 type = "file"
 path = "build.sh"
 
-[inputs.source-file]
+[nodes.source-file]
 type = "file"
 path = "src/app.txt"
 
-[inputs.PROJECT_NAME]
+[nodes.PROJECT_NAME]
 type = "env"
 value = "myapp"
 
-[inputs.PROJECT_VERSION]
+[nodes.PROJECT_VERSION]
 type = "env"
 value = "1.0.0"
 
-[inputs.setup]
+[nodes.setup]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "mkdir -p dist"]
 
-[inputs.build]
+[nodes.build]
 type = "command"
 phase = "exec"
 run = { file = "./build.sh" }
 parents = ["setup"]
 
-[[inputs.build.postconditions]]
+[[nodes.build.postconditions]]
 type = "file"
 path = "dist/result.json"
 required = true
 
-[[inputs.build.postconditions]]
+[[nodes.build.postconditions]]
 type = "file"
 path = "dist/build.log"
 required = true

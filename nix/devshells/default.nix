@@ -17,6 +17,7 @@
           # e2e test dependencies
           nodejs
           go
+          podman
         ];
 
         buildInputs = with pkgs; [

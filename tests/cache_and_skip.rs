@@ -22,7 +22,7 @@ fn test_skip_on_second_run() {
 name = "skip-test"
 description = "Test skip logic"
 
-[inputs.write-marker]
+[nodes.write-marker]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo ran >> {}"]
@@ -69,7 +69,7 @@ fn test_no_skip_when_cache_disabled() {
 name = "no-skip-test"
 description = "No skip with side effects"
 
-[inputs.write-marker]
+[nodes.write-marker]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo ran >> {}"]
@@ -112,7 +112,7 @@ fn test_rusage_metrics_populated() {
 name = "rusage-test"
 description = "Test rusage metrics"
 
-[inputs.busy]
+[nodes.busy]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "for i in $(seq 1 10000); do echo $i > /dev/null; done"]
@@ -152,28 +152,28 @@ fn test_parallel_warmup_all_probed() {
 name = "parallel-warmup"
 description = "Test all warmup probes run"
 
-[inputs.HOME]
+[nodes.HOME]
 type = "env"
 
-[inputs.file-a]
+[nodes.file-a]
 type = "file"
 path = "{}"
 
-[inputs.file-b]
+[nodes.file-b]
 type = "file"
 path = "{}"
 
-[inputs.platform]
+[nodes.platform]
 type = "platform"
 
-[inputs.user]
+[nodes.user]
 type = "user"
 
-[inputs.cpu-count]
+[nodes.cpu-count]
 type = "metric"
 metric = "cpu.count"
 
-[inputs.ok]
+[nodes.ok]
 type = "command"
 phase = "exec"
 run = ["echo", "all-warmup-passed"]
@@ -220,10 +220,10 @@ name = "strict-test"
 description = "Test strict env isolation"
 sandbox = "strict"
 
-[inputs.sh]
+[nodes.sh]
 type = "binary"
 
-[inputs.check-env]
+[nodes.check-env]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo HOME=$HOME"]

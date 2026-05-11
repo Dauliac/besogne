@@ -1,38 +1,38 @@
 name = "npm-ci-pipeline"
 description = "Full npm CI: install, lint, test, build"
 
-[inputs.node]
+[nodes.node]
 type = "binary"
 
-[inputs.npm]
+[nodes.npm]
 type = "binary"
 
-[inputs.CI]
+[nodes.CI]
 type = "env"
 value = "true"
 
-[inputs.package-json]
+[nodes.package-json]
 type = "file"
 path = "package.json"
 
-[inputs.install]
+[nodes.install]
 type = "command"
 phase = "exec"
 run = ["npm", "install"]
 
-[inputs.lint]
+[nodes.lint]
 type = "command"
 phase = "exec"
 run = ["npm", "run", "lint"]
 parents = ["install"]
 
-[inputs.test]
+[nodes.test]
 type = "command"
 phase = "exec"
 run = ["npm", "test"]
 parents = ["install"]
 
-[inputs.build]
+[nodes.build]
 type = "command"
 phase = "exec"
 run = ["npm", "run", "build"]

@@ -1,24 +1,24 @@
 name = "command-chain"
 description = "DAG execution: step-1 then step-2a/2b in parallel then step-3"
 
-[inputs.step-1]
+[nodes.step-1]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo step-1 >> order.txt"]
 
-[inputs.step-2a]
+[nodes.step-2a]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo step-2a >> order.txt"]
 parents = ["step-1"]
 
-[inputs.step-2b]
+[nodes.step-2b]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo step-2b >> order.txt"]
 parents = ["step-1"]
 
-[inputs.step-3]
+[nodes.step-3]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo step-3 >> order.txt"]

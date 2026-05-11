@@ -2,18 +2,18 @@
 
 **Declarative contracts for shell commands.**
 
-besogne takes a manifest describing what a shell command needs (preconditions), what it does (execution), and what it produces (postconditions) — then compiles it into a self-contained binary that validates, sandboxes, traces, and memoizes the execution.
+besogne takes a manifest describing what a shell command needs (seals), what it does (execution), and what it produces (postconditions) — then compiles it into a self-contained binary that validates, sandboxes, traces, and memoizes the execution.
 
 ```
-{preconditions valid}  execute commands  {postconditions valid}
+{seals valid}  execute commands  {postconditions valid}
 ```
 
-If preconditions haven't changed since the last successful run and postconditions are still valid, the entire besogne is skipped.
+If seals haven't changed since the last successful run and postconditions are still valid, the entire besogne is skipped.
 
 ## Key ideas
 
 - **Everything is a named input.** Env vars, files, binaries, services, DNS, platform, user identity, system metrics — all declared, typed, and validated before execution.
-- **Three phases.** `build` (seal at compile time), `pre` (check preconditions at startup), `exec` (run commands in a DAG).
+- **Three phases.** `build` (seal at compile time), `seal` (check seals at startup), `exec` (run commands in a DAG).
 - **Sandbox by default.** Control which env vars, files, and network endpoints your commands can access.
 - **Content-addressed.** Every input is identified by its content hash. Same inputs = same result = skip.
 - **Plugins in Nickel.** Extend besogne with reusable input definitions (AWS auth, k8s cluster, git checks, etc.).

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::ir::{BesogneIR, ResolvedInput, ResolvedNativeInput};
+use crate::ir::{BesogneIR, ResolvedNode, ResolvedNativeNode};
 use crate::probe::ProbeResult;
 use crate::runtime::cache::CachedCommand;
 use crate::runtime::cli::LogFormat;
@@ -32,7 +32,7 @@ pub struct CommandContext<'a> {
 pub trait OutputRenderer {
     fn on_start(&mut self, ir: &BesogneIR);
     fn on_phase_start(&mut self, phase: &str, count: usize);
-    fn on_probe_result(&mut self, input: &ResolvedInput, result: &ProbeResult, status: ProbeStatus);
+    fn on_probe_result(&mut self, input: &ResolvedNode, result: &ProbeResult, status: ProbeStatus);
     fn on_phase_end(&mut self, phase: &str);
     fn on_command_start(&mut self, name: &str, exec: &[String], ctx: &CommandContext);
     fn on_command_output(&mut self, name: &str, stdout: &str, stderr: &str);
@@ -52,29 +52,29 @@ pub fn renderer_for_format(format: &LogFormat, verbose: bool) -> Box<dyn OutputR
     }
 }
 
-fn input_label(input: &ResolvedInput) -> String {
-    match &input.input {
-        ResolvedNativeInput::Env { name, .. } => format!("env:{name}"),
-        ResolvedNativeInput::File { path, .. } => format!("file:{path}"),
-        ResolvedNativeInput::Binary { name, .. } => format!("binary:{name}"),
-        ResolvedNativeInput::Service { tcp, http, .. } => {
+fn input_label(input: &ResolvedNode) -> String {
+    match &input.node {
+        ResolvedNativeNode::Env { name, .. } => format!("env:{name}"),
+        ResolvedNativeNode::File { path, .. } => format!("file:{path}"),
+        ResolvedNativeNode::Binary { name, .. } => format!("binary:{name}"),
+        ResolvedNativeNode::Service { tcp, http, .. } => {
             format!("service:{}", tcp.as_deref().or(http.as_deref()).unwrap_or("?"))
         }
-        ResolvedNativeInput::User { in_group, .. } => {
+        ResolvedNativeNode::User { in_group, .. } => {
             format!("user:{}", in_group.as_deref().unwrap_or("current"))
         }
-        ResolvedNativeInput::Platform { os, arch, .. } => {
+        ResolvedNativeNode::Platform { os, arch, .. } => {
             format!("platform:{}-{}", os.as_deref().unwrap_or("?"), arch.as_deref().unwrap_or("?"))
         }
-        ResolvedNativeInput::Dns { host, .. } => format!("dns:{host}"),
-        ResolvedNativeInput::Metric { metric, .. } => format!("metric:{metric}"),
-        ResolvedNativeInput::Command { name, .. } => format!("command:{name}"),
+        ResolvedNativeNode::Dns { host, .. } => format!("dns:{host}"),
+        ResolvedNativeNode::Metric { metric, .. } => format!("metric:{metric}"),
+        ResolvedNativeNode::Command { name, .. } => format!("command:{name}"),
     }
 }
 
-fn probe_detail(input: &ResolvedInput, result: &ProbeResult) -> String {
-    match &input.input {
-        ResolvedNativeInput::Binary {
+fn probe_detail(input: &ResolvedNode, result: &ProbeResult) -> String {
+    match &input.node {
+        ResolvedNativeNode::Binary {
             name, resolved_version, resolved_path, source, ..
         } => {
             let ver = resolved_version.as_deref().unwrap_or("");
@@ -94,7 +94,7 @@ fn probe_detail(input: &ResolvedInput, result: &ProbeResult) -> String {
             parts.join(" ")
         }
 
-        ResolvedNativeInput::Env { name, secret, .. } => {
+        ResolvedNativeNode::Env { name, secret, .. } => {
             if *secret {
                 format!("{name}=***")
             } else if let Some(val) = result.variables.get(name.as_str()) {
@@ -105,17 +105,17 @@ fn probe_detail(input: &ResolvedInput, result: &ProbeResult) -> String {
             }
         }
 
-        ResolvedNativeInput::File { path, expect, .. } => {
+        ResolvedNativeNode::File { path, expect, .. } => {
             if let Some(exp) = expect { format!("{path} ({exp})") } else { path.clone() }
         }
 
-        ResolvedNativeInput::Service { name, tcp, http, .. } => {
+        ResolvedNativeNode::Service { name, tcp, http, .. } => {
             let label = name.as_deref().unwrap_or("service");
             let target = tcp.as_deref().or(http.as_deref()).unwrap_or("?");
             format!("{label} {target}")
         }
 
-        ResolvedNativeInput::User { in_group, .. } => {
+        ResolvedNativeNode::User { in_group, .. } => {
             if let Some(user) = result.variables.get("USER_NAME") {
                 match in_group {
                     Some(g) => format!("{user} in:{g}"),
@@ -126,23 +126,23 @@ fn probe_detail(input: &ResolvedInput, result: &ProbeResult) -> String {
             }
         }
 
-        ResolvedNativeInput::Platform { .. } => {
+        ResolvedNativeNode::Platform { .. } => {
             let os = result.variables.get("PLATFORM_OS").map(|s| s.as_str()).unwrap_or("?");
             let arch = result.variables.get("PLATFORM_ARCH").map(|s| s.as_str()).unwrap_or("?");
             format!("{os}/{arch}")
         }
 
-        ResolvedNativeInput::Dns { host, .. } => {
+        ResolvedNativeNode::Dns { host, .. } => {
             let key = format!("DNS_{}", host.to_uppercase().replace(['.', '-'], "_"));
             if let Some(ip) = result.variables.get(&key) { format!("{host} → {ip}") } else { host.clone() }
         }
 
-        ResolvedNativeInput::Metric { metric, .. } => {
+        ResolvedNativeNode::Metric { metric, .. } => {
             let key = format!("METRIC_{}", metric.to_uppercase().replace('.', "_"));
             if let Some(val) = result.variables.get(&key) { format!("{metric}={val}") } else { metric.clone() }
         }
 
-        ResolvedNativeInput::Command { name, .. } => name.clone(),
+        ResolvedNativeNode::Command { name, .. } => name.clone(),
     }
 }
 
@@ -211,6 +211,22 @@ impl From<&CachedCommand> for Metrics {
     }
 }
 
+impl From<&ProcessMetrics> for Metrics {
+    fn from(p: &ProcessMetrics) -> Self {
+        Self {
+            wall_ms: p.wall_ms,
+            user_ms: p.user_ms,
+            sys_ms: p.sys_ms,
+            max_rss_kb: p.max_rss_kb,
+            disk_read_bytes: p.read_bytes,
+            disk_write_bytes: p.write_bytes,
+            net_read_bytes: 0,
+            net_write_bytes: 0,
+            processes_spawned: 0,
+        }
+    }
+}
+
 fn format_metrics_human(m: &Metrics) -> String {
     let time = format!("\x1b[36m⏱ time:{:.3}s\x1b[0m", m.wall_ms as f64 / 1000.0);
     let cpu = if m.user_ms > 0 || m.sys_ms > 0 {
@@ -233,7 +249,9 @@ fn format_metrics_human(m: &Metrics) -> String {
     let net = if m.net_read_bytes > 0 || m.net_write_bytes > 0 {
         format!("  \x1b[32m🌐 ⬇ download:{} ⬆ upload:{}\x1b[0m", format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes))
     } else { String::new() };
-    let procs = format!("  \x1b[31m🔀 processes:{}\x1b[0m", m.processes_spawned + 1);
+    let procs = if m.processes_spawned > 0 {
+        format!("  \x1b[31m🔀 processes:{}\x1b[0m", m.processes_spawned + 1)
+    } else { String::new() };
     format!("{time}{cpu}{mem}{disk}{net}{procs}")
 }
 
@@ -259,7 +277,9 @@ fn format_metrics_ci(m: &Metrics) -> String {
     let net = if m.net_read_bytes > 0 || m.net_write_bytes > 0 {
         format!("  🌐 ⬇ download:{} ⬆ upload:{}", format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes))
     } else { String::new() };
-    let procs = format!("  processes:{}", m.processes_spawned + 1);
+    let procs = if m.processes_spawned > 0 {
+        format!("  processes:{}", m.processes_spawned + 1)
+    } else { String::new() };
     format!("{time}{cpu}{mem}{disk}{net}{procs}")
 }
 
@@ -355,54 +375,7 @@ fn format_command_context_human(exec: &[String], ctx: &CommandContext) {
     }
 }
 
-/// Format container metadata tag for human output
-fn format_container_tag_human(container: &crate::tracer::ContainerMetadata) -> String {
-    let mut tag = format!(
-        "\x1b[1;35m🐳 {}\x1b[0m \x1b[2m{}\x1b[0m",
-        container.image,
-        &container.container_id,
-    );
-    if !container.container_name.is_empty() {
-        tag.push_str(&format!(" \x1b[2m({})\x1b[0m", container.container_name));
-    }
-    if !container.ports.is_empty() {
-        tag.push_str(&format!(" \x1b[36m{}\x1b[0m", container.ports.join(", ")));
-    }
-    if !container.status.is_empty() {
-        tag.push_str(&format!(" \x1b[2m[{}]\x1b[0m", container.status));
-    }
-    tag
-}
 
-fn format_process_metrics_human(p: &ProcessMetrics) -> String {
-    let mut parts = Vec::new();
-    parts.push(format!("\x1b[36m{:.3}s\x1b[0m", p.wall_ms as f64 / 1000.0));
-    if p.user_ms > 0 || p.sys_ms > 0 {
-        let cores = if p.wall_ms > 0 {
-            (p.user_ms + p.sys_ms) as f64 / p.wall_ms as f64
-        } else { 0.0 };
-        parts.push(format!(
-            "\x1b[33mcpu:{:.2}s usr + {:.2}s sys ({:.1}c)\x1b[0m",
-            p.user_ms as f64 / 1000.0,
-            p.sys_ms as f64 / 1000.0,
-            cores,
-        ));
-    }
-    if p.max_rss_kb > 0 {
-        parts.push(format!("\x1b[35mrss:{}\x1b[0m", format_bytes(p.max_rss_kb * 1024)));
-    }
-    if p.read_bytes > 0 || p.write_bytes > 0 {
-        parts.push(format!(
-            "\x1b[34mio:r{} w{}\x1b[0m",
-            format_bytes(p.read_bytes),
-            format_bytes(p.write_bytes),
-        ));
-    }
-    if let Some(ref container) = p.container {
-        parts.push(format_container_tag_human(container));
-    }
-    parts.join("  ")
-}
 
 /// Format process tree for human output — colored, indented per nesting level.
 fn format_process_tree_human(tree: &[ProcessMetrics]) {
@@ -419,42 +392,6 @@ fn format_process_tree_human(tree: &[ProcessMetrics]) {
         }
     }
     print_tree_node(tree, &children, 0, "    ", true);
-}
-
-/// Show a summary footer for Docker containers from a CommandResult.
-fn format_containers_human_from_result(result: &CommandResult) {
-    format_containers_human(&result.containers);
-}
-
-/// Show a summary footer for Docker containers.
-fn format_containers_human(containers: &[crate::tracer::ContainerMetadata]) {
-    if containers.is_empty() { return; }
-    eprintln!(
-        "    \x1b[2;35m┌ containers\x1b[0m \x1b[35m({} detected)\x1b[0m",
-        containers.len(),
-    );
-    for (i, c) in containers.iter().enumerate() {
-        let connector = if i == containers.len() - 1 { "└─" } else { "├─" };
-        let name = if c.container_name.is_empty() {
-            String::new()
-        } else {
-            format!(" \x1b[1;37m{}\x1b[0m", c.container_name)
-        };
-        let ports = if c.ports.is_empty() {
-            String::new()
-        } else {
-            format!("  \x1b[36m{}\x1b[0m", c.ports.join(", "))
-        };
-        let status = if c.status.is_empty() {
-            String::new()
-        } else {
-            format!("  \x1b[2m{}\x1b[0m", c.status)
-        };
-        eprintln!(
-            "    {connector} \x1b[35m{}\x1b[0m \x1b[2m{}\x1b[0m{name}{ports}{status}",
-            &c.container_id, c.image,
-        );
-    }
 }
 
 /// Label for a process tree node: prefer cmdline (full path), fall back to comm, then pid.
@@ -493,7 +430,7 @@ fn print_tree_node(
 ) {
     let p = &tree[idx];
     let label = process_label(p);
-    let metrics = format_process_metrics_human(p);
+    let metrics = format_metrics_human(&Metrics::from(p));
     let exit_tag = if p.exit_code == 0 {
         "\x1b[32m0\x1b[0m".to_string()
     } else {
@@ -518,7 +455,7 @@ fn print_tree_node(
             format!("{prefix}│  ")
         };
         let child_label = process_label(&tree[kid_idx]);
-        let child_metrics = format_process_metrics_human(&tree[kid_idx]);
+        let child_metrics = format_metrics_human(&Metrics::from(&tree[kid_idx]));
         let child_exit = if tree[kid_idx].exit_code == 0 {
             "\x1b[32m0\x1b[0m".to_string()
         } else {
@@ -552,7 +489,7 @@ fn print_tree_node_recursive(
 ) {
     let p = &tree[idx];
     let label = process_label(p);
-    let metrics = format_process_metrics_human(p);
+    let metrics = format_metrics_human(&Metrics::from(p));
     let exit_tag = if p.exit_code == 0 {
         "\x1b[32m0\x1b[0m".to_string()
     } else {
@@ -592,15 +529,6 @@ fn format_process_tree_json(tree: &[ProcessMetrics]) -> serde_json::Value {
             "voluntary_cs": p.voluntary_cs,
             "involuntary_cs": p.involuntary_cs,
         });
-        if let Some(ref container) = p.container {
-            obj.as_object_mut().unwrap().insert("container".to_string(), serde_json::json!({
-                "container_id": container.container_id,
-                "image": container.image,
-                "name": container.container_name,
-                "status": container.status,
-                "ports": container.ports,
-            }));
-        }
         obj
     }).collect()
 }
@@ -611,11 +539,13 @@ pub struct HumanRenderer {
     verbose: bool,
     cached_probes: usize,
     cached_commands: usize,
+    /// Timestamp of the most recent cached command (for "nothing to do" message)
+    last_cached_at: Option<String>,
 }
 
 impl HumanRenderer {
     pub fn new(verbose: bool) -> Self {
-        Self { verbose, cached_probes: 0, cached_commands: 0 }
+        Self { verbose, cached_probes: 0, cached_commands: 0, last_cached_at: None }
     }
 }
 
@@ -629,7 +559,7 @@ impl OutputRenderer for HumanRenderer {
 
     fn on_phase_start(&mut self, _phase: &str, _count: usize) {}
 
-    fn on_probe_result(&mut self, input: &ResolvedInput, result: &ProbeResult, status: ProbeStatus) {
+    fn on_probe_result(&mut self, input: &ResolvedNode, result: &ProbeResult, status: ProbeStatus) {
         // In non-verbose mode, silently count cached probes
         if !self.verbose && status == ProbeStatus::Cached {
             self.cached_probes += 1;
@@ -673,10 +603,13 @@ impl OutputRenderer for HumanRenderer {
         }
         // Always show process tree on fresh execution
         format_process_tree_human(&result.process_tree);
-        format_containers_human_from_result(result);
     }
 
     fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand, ctx: &CommandContext) {
+        // Track the most recent cached timestamp for "nothing to do" message
+        if self.last_cached_at.is_none() || self.last_cached_at.as_deref() < Some(&cached.ran_at) {
+            self.last_cached_at = Some(cached.ran_at.clone());
+        }
         if !self.verbose {
             self.cached_commands += 1;
             return;
@@ -700,7 +633,6 @@ impl OutputRenderer for HumanRenderer {
         let metrics = format_metrics_human(&Metrics::from(cached));
         eprintln!("  \x1b[33mcached\x1b[0m {name}  {metrics}");
         format_process_tree_human(&cached.process_tree);
-        format_containers_human(&cached.containers);
     }
 
     fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]) {
@@ -716,18 +648,13 @@ impl OutputRenderer for HumanRenderer {
     }
 
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64) {
-        // "nothing to do" only when commands were actually skipped (cached),
-        // not just because probes used cache
+        let total_cached = self.cached_probes + self.cached_commands;
         if !self.verbose && self.cached_commands > 0 && exit_code == 0 {
-            let mut parts = Vec::new();
-            if self.cached_probes > 0 {
-                parts.push(format!("{} inputs", self.cached_probes));
-            }
-            parts.push(format!("{} commands", self.cached_commands));
+            let ago = self.last_cached_at.as_deref()
+                .map(|t| format!(", ran {}", format_relative_time(t)))
+                .unwrap_or_default();
             eprintln!(
-                "\n\x1b[32mnothing to do\x1b[0m \x1b[2m({} cached, use -v for details)\x1b[0m  {:.3}s",
-                parts.join(" + "),
-                wall_ms as f64 / 1000.0,
+                "\x1b[32mnothing to do\x1b[0m \x1b[2m({total_cached} nodes cached{ago}, use --status to show last run)\x1b[0m",
             );
         } else if exit_code == 0 {
             eprintln!("\n\x1b[32mdone\x1b[0m {:.3}s", wall_ms as f64 / 1000.0);
@@ -787,7 +714,7 @@ impl OutputRenderer for JsonRenderer {
         }));
     }
 
-    fn on_probe_result(&mut self, input: &ResolvedInput, result: &ProbeResult, status: ProbeStatus) {
+    fn on_probe_result(&mut self, input: &ResolvedNode, result: &ProbeResult, status: ProbeStatus) {
         let phase = format!("{:?}", input.phase).to_lowercase();
         self.emit(&serde_json::json!({
             "event": "probe",
@@ -901,7 +828,7 @@ impl OutputRenderer for CiRenderer {
 
     fn on_phase_start(&mut self, _phase: &str, _count: usize) {}
 
-    fn on_probe_result(&mut self, input: &ResolvedInput, result: &ProbeResult, status: ProbeStatus) {
+    fn on_probe_result(&mut self, input: &ResolvedNode, result: &ProbeResult, status: ProbeStatus) {
         let detail = probe_detail(input, result);
         let tag = match status {
             ProbeStatus::Sealed => "[SEAL]",
@@ -939,12 +866,8 @@ impl OutputRenderer for CiRenderer {
         if result.process_tree.len() > 1 {
             eprintln!("  process tree ({} processes):", result.process_tree.len());
             for p in &result.process_tree {
-                let label = if p.comm.is_empty() { format!("pid:{}", p.pid) } else { p.comm.clone() };
-                let container_tag = p.container.as_ref()
-                    .map(|c| format!(" [container:{} image:{}]", c.container_id, c.image))
-                    .unwrap_or_default();
-                eprintln!("    {} ppid:{} exit:{} {}ms rss:{}{}",
-                    label, p.ppid, p.exit_code, p.wall_ms, format_bytes(p.max_rss_kb * 1024), container_tag);
+                let label = process_label(p);
+                eprintln!("    {label}  {}", format_metrics_ci(&Metrics::from(p)));
             }
         }
         eprintln!("::endgroup::");
@@ -963,9 +886,8 @@ impl OutputRenderer for CiRenderer {
         if cached.process_tree.len() > 1 {
             eprintln!("  process tree ({} processes):", cached.process_tree.len());
             for p in &cached.process_tree {
-                let label = if p.cmdline.is_empty() { &p.comm } else { &p.cmdline };
-                eprintln!("    {} ppid={} exit={} wall={}ms rss={}",
-                    label, p.ppid, p.exit_code, p.wall_ms, format_bytes(p.max_rss_kb * 1024));
+                let label = process_label(p);
+                eprintln!("    {label}  {}", format_metrics_ci(&Metrics::from(p)));
             }
         }
         eprintln!("::endgroup::");

@@ -3,7 +3,7 @@ pub mod cli;
 pub mod config;
 mod verify;
 
-use crate::ir::{BesogneIR, ResolvedInput, ResolvedNativeInput};
+use crate::ir::{BesogneIR, ResolvedNode, ResolvedNativeNode};
 use crate::ir::dag;
 use crate::manifest::Phase;
 use crate::output;
@@ -45,19 +45,19 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     let mut context = ContextCache::load(&besogne_hash);
 
     // Partition inputs by phase
-    let build_inputs: Vec<&ResolvedInput> = ir.inputs.iter().filter(|i| i.phase == Phase::Build).collect();
-    let pre_inputs: Vec<&ResolvedInput> = ir.inputs.iter().filter(|i| i.phase == Phase::Pre).collect();
+    let build_nodes: Vec<&ResolvedNode> = ir.nodes.iter().filter(|i| i.phase == Phase::Build).collect();
+    let pre_nodes: Vec<&ResolvedNode> = ir.nodes.iter().filter(|i| i.phase == Phase::Seal).collect();
 
-    // 2. Pre-phase — check preconditions
-    let warmup_cached = !args.force && pre_inputs.iter().all(|input| {
+    // 2. Pre-phase — check seals
+    let warmup_cached = !args.force && pre_nodes.iter().all(|input| {
         if context.get_probe(&input.id.0).is_none() {
             return false;
         }
         // For file inputs, verify the file hasn't changed since caching
         // by re-hashing (cheap for small files, catches content changes)
-        match &input.input {
-            ResolvedNativeInput::File { path, .. } => {
-                let fresh = probe::probe_input(&input.input);
+        match &input.node {
+            ResolvedNativeNode::File { path, .. } => {
+                let fresh = probe::probe_input(&input.node);
                 if let Some(cached) = context.get_probe(&input.id.0) {
                     fresh.success && fresh.hash == cached.hash
                 } else {
@@ -74,9 +74,9 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     } else {
         output::ProbeStatus::Sealed
     };
-    if !build_inputs.is_empty() {
-        renderer.on_phase_start("build", build_inputs.len());
-        for input in &build_inputs {
+    if !build_nodes.is_empty() {
+        renderer.on_phase_start("build", build_nodes.len());
+        for input in &build_nodes {
             let result = if let Some(snapshot) = &input.sealed {
                 probe::ProbeResult {
                     success: true,
@@ -98,10 +98,10 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     }
 
     if warmup_cached {
-        renderer.on_phase_start("pre", pre_inputs.len());
+        renderer.on_phase_start("seal", pre_nodes.len());
         let mut all_vars = flag_vars;
         let mut hash_parts = Vec::new();
-        for input in &pre_inputs {
+        for input in &pre_nodes {
             if let Some(cached) = context.get_probe(&input.id.0) {
                 let result = probe::ProbeResult {
                     success: true,
@@ -114,25 +114,25 @@ pub fn run(ir: BesogneIR) -> ExitCode {
                 hash_parts.push(cached.hash.clone());
             }
         }
-        renderer.on_phase_end("pre");
+        renderer.on_phase_end("seal");
 
         hash_parts.sort();
         let input_hash = blake3::hash(hash_parts.join(":").as_bytes())
             .to_hex()
             .to_string();
 
-        if !has_side_effects(&ir) && context.can_skip(&input_hash) {
+        if args.status || (!has_side_effects(&ir) && context.can_skip(&input_hash)) {
             replay_cached_commands(&ir, &context, &mut *renderer, &all_vars);
             let wall_ms = start.elapsed().as_millis() as u64;
             renderer.on_summary(0, wall_ms);
             return ExitCode::SUCCESS;
         }
 
-        return execute_dag(&ir, all_vars, input_hash, &mut *renderer, &mut context, start, args.force);
+        return execute_dag(&ir, all_vars, input_hash, &mut *renderer, &mut context, start, args.force, args.debug);
     }
 
-    // Full warmup: probe all preconditions in parallel
-    renderer.on_phase_start("pre", pre_inputs.len());
+    // Full warmup: probe all seals in parallel
+    renderer.on_phase_start("seal", pre_nodes.len());
 
     let all_variables = Mutex::new(flag_vars);
     let pre_hashes = Mutex::new(Vec::<String>::new());
@@ -140,7 +140,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     let probe_results = Mutex::new(Vec::new());
 
     crossbeam::scope(|s| {
-        let handles: Vec<_> = pre_inputs
+        let handles: Vec<_> = pre_nodes
             .iter()
             .map(|input| {
                 let all_vars = &all_variables;
@@ -149,7 +149,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
                 let results = &probe_results;
 
                 s.spawn(move |_| {
-                    let result = probe::probe_input(&input.input);
+                    let result = probe::probe_input(&input.node);
                     results.lock().unwrap().push(((*input).clone(), result.clone()));
                     if result.success {
                         all_vars.lock().unwrap().extend(result.variables.clone());
@@ -169,7 +169,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     for (input, result) in &results {
         renderer.on_probe_result(input, result, output::ProbeStatus::Fresh);
     }
-    renderer.on_phase_end("pre");
+    renderer.on_phase_end("seal");
 
     if *pre_failed.lock().unwrap() {
         let wall_ms = start.elapsed().as_millis() as u64;
@@ -199,7 +199,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         }
     }
 
-    execute_dag(&ir, all_variables, input_hash, &mut *renderer, &mut context, start, args.force)
+    execute_dag(&ir, all_variables, input_hash, &mut *renderer, &mut context, start, args.force, args.debug)
 }
 
 /// Execute the exec-phase DAG
@@ -211,6 +211,7 @@ fn execute_dag(
     context: &mut ContextCache,
     start: Instant,
     force: bool,
+    debug: bool,
 ) -> ExitCode {
     let (graph, _) = match dag::build_exec_dag(ir) {
         Ok(d) => d,
@@ -231,9 +232,9 @@ fn execute_dag(
     let mut last_exit_code = 0;
 
     // Build binary name → resolved path map from build-phase inputs
-    let binary_paths: HashMap<String, String> = ir.inputs.iter()
-        .filter_map(|i| match &i.input {
-            ResolvedNativeInput::Binary { name, resolved_path: Some(path), .. } => {
+    let binary_paths: HashMap<String, String> = ir.nodes.iter()
+        .filter_map(|i| match &i.node {
+            ResolvedNativeNode::Binary { name, resolved_path: Some(path), .. } => {
                 Some((name.clone(), path.clone()))
             }
             _ => None,
@@ -241,9 +242,9 @@ fn execute_dag(
         .collect();
 
     // Build binary name → version map
-    let binary_versions: HashMap<String, String> = ir.inputs.iter()
-        .filter_map(|i| match &i.input {
-            ResolvedNativeInput::Binary { name, resolved_version: Some(ver), .. } => {
+    let binary_versions: HashMap<String, String> = ir.nodes.iter()
+        .filter_map(|i| match &i.node {
+            ResolvedNativeNode::Binary { name, resolved_version: Some(ver), .. } => {
                 Some((name.clone(), ver.clone()))
             }
             _ => None,
@@ -251,25 +252,25 @@ fn execute_dag(
         .collect();
 
     // Build set of secret env var names
-    let secret_vars: std::collections::HashSet<String> = ir.inputs.iter()
-        .filter_map(|i| match &i.input {
-            ResolvedNativeInput::Env { name, secret: true, .. } => Some(name.clone()),
+    let secret_vars: std::collections::HashSet<String> = ir.nodes.iter()
+        .filter_map(|i| match &i.node {
+            ResolvedNativeNode::Env { name, secret: true, .. } => Some(name.clone()),
             _ => None,
         })
         .collect();
 
     // Collect all declared binary names for undeclared dep detection
-    let declared_binaries: std::collections::HashSet<String> = ir.inputs.iter()
-        .filter_map(|i| match &i.input {
-            ResolvedNativeInput::Binary { name, .. } => Some(name.clone()),
+    let declared_binaries: std::collections::HashSet<String> = ir.nodes.iter()
+        .filter_map(|i| match &i.node {
+            ResolvedNativeNode::Binary { name, .. } => Some(name.clone()),
             _ => None,
         })
         .collect();
 
     // Collect all declared env var names
-    let declared_env: std::collections::HashSet<String> = ir.inputs.iter()
-        .filter_map(|i| match &i.input {
-            ResolvedNativeInput::Env { name, .. } => Some(name.clone()),
+    let declared_env: std::collections::HashSet<String> = ir.nodes.iter()
+        .filter_map(|i| match &i.node {
+            ResolvedNativeNode::Env { name, .. } => Some(name.clone()),
             _ => None,
         })
         .collect();
@@ -277,7 +278,7 @@ fn execute_dag(
     let mut undeclared_binaries: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     let input_by_id: HashMap<_, _> = ir
-        .inputs
+        .nodes
         .iter()
         .filter(|i| i.phase == Phase::Exec)
         .map(|i| (i.id.clone(), i))
@@ -291,9 +292,9 @@ fn execute_dag(
                 None => continue,
             };
 
-            match &input.input {
-                ResolvedNativeInput::Command {
-                    name, run, env, side_effects, output, workdir, force_args, ..
+            match &input.node {
+                ResolvedNativeNode::Command {
+                    name, run, env, side_effects, output, workdir, force_args, debug_args, ..
                 } => {
                     if last_exit_code != 0 && !side_effects {
                         continue;
@@ -302,14 +303,14 @@ fn execute_dag(
                     let mut cmd_env = all_variables.clone();
                     cmd_env.extend(env.clone());
 
-                    // Append force_args when --force is active
-                    let effective_run = if force && !force_args.is_empty() {
-                        let mut r = run.clone();
-                        r.extend(force_args.clone());
-                        r
-                    } else {
-                        run.clone()
-                    };
+                    // Append force_args/debug_args when --force/--debug is active
+                    let mut effective_run = run.clone();
+                    if force && !force_args.is_empty() {
+                        effective_run.extend(force_args.clone());
+                    }
+                    if debug && !debug_args.is_empty() {
+                        effective_run.extend(debug_args.clone());
+                    }
 
                     let ctx = output::CommandContext {
                         binary_paths: &binary_paths,
@@ -348,27 +349,30 @@ fn execute_dag(
                         undeclared_binaries.insert(comm.clone());
                     }
 
-                    // Cache command output for replay on future skips
-                    context.set_command(
-                        name.clone(),
-                        cache::CachedCommand {
-                            stdout: stdout.clone(),
-                            stderr: cmd_stderr.clone(),
-                            exit_code: result.exit_code,
-                            wall_ms: result.wall_ms,
-                            user_ms: result.user_ms,
-                            sys_ms: result.sys_ms,
-                            max_rss_kb: result.max_rss_kb,
-                            disk_read_bytes: result.disk_read_bytes,
-                            disk_write_bytes: result.disk_write_bytes,
-                            net_read_bytes: result.net_read_bytes,
-                            net_write_bytes: result.net_write_bytes,
-                            processes_spawned: result.processes_spawned,
-                            process_tree: result.process_tree.clone(),
-                            containers: result.containers.clone(),
-                            ran_at: chrono::Utc::now().to_rfc3339(),
-                        },
-                    );
+                    // Cache command output for replay on future skips.
+                    // Skip cache writes when --debug is active to avoid poisoning
+                    // cache with debug output (which changes stdout/stderr).
+                    if !debug {
+                        context.set_command(
+                            name.clone(),
+                            cache::CachedCommand {
+                                stdout: stdout.clone(),
+                                stderr: cmd_stderr.clone(),
+                                exit_code: result.exit_code,
+                                wall_ms: result.wall_ms,
+                                user_ms: result.user_ms,
+                                sys_ms: result.sys_ms,
+                                max_rss_kb: result.max_rss_kb,
+                                disk_read_bytes: result.disk_read_bytes,
+                                disk_write_bytes: result.disk_write_bytes,
+                                net_read_bytes: result.net_read_bytes,
+                                net_write_bytes: result.net_write_bytes,
+                                processes_spawned: result.processes_spawned,
+                                process_tree: result.process_tree.clone(),
+                                ran_at: chrono::Utc::now().to_rfc3339(),
+                            },
+                        );
+                    }
 
                     // Validate output assertions (opt-in)
                     if let Some(spec) = output {
@@ -384,12 +388,12 @@ fn execute_dag(
                     }
                 }
 
-                ResolvedNativeInput::Service { name, tcp, http, .. } => {
+                ResolvedNativeNode::Service { name, tcp, http, .. } => {
                     let label = name.as_deref().unwrap_or("service");
                     let target = tcp.as_deref().or(http.as_deref()).unwrap_or("?");
                     eprintln!("  waiting for {label} ({target})...");
 
-                    let result = probe::probe_input(&input.input);
+                    let result = probe::probe_input(&input.node);
                     if !result.success {
                         eprintln!(
                             "  \x1b[31m✗\x1b[0m {label}: {}",
@@ -400,7 +404,7 @@ fn execute_dag(
                 }
 
                 _ => {
-                    let result = probe::probe_input(&input.input);
+                    let result = probe::probe_input(&input.node);
                     if !result.success {
                         last_exit_code = 2;
                     }
@@ -416,14 +420,18 @@ fn execute_dag(
     }
 
     let wall_ms = start.elapsed().as_millis() as u64;
-    if undeclared_bins.is_empty() {
-        context.set_last_run(input_hash, last_exit_code, wall_ms);
-    } else {
-        // Poison: store the run but with a special hash that will never match,
-        // so the cache can't be used for skipping until manifest is updated.
-        context.set_last_run("__undeclared_deps__".to_string(), last_exit_code, wall_ms);
+    // Skip all cache writes when --debug is active to avoid poisoning
+    // cache with debug-mode output that differs from normal runs.
+    if !debug {
+        if undeclared_bins.is_empty() {
+            context.set_last_run(input_hash, last_exit_code, wall_ms);
+        } else {
+            // Poison: store the run but with a special hash that will never match,
+            // so the cache can't be used for skipping until manifest is updated.
+            context.set_last_run("__undeclared_deps__".to_string(), last_exit_code, wall_ms);
+        }
+        let _ = context.save();
     }
-    let _ = context.save();
     renderer.on_summary(last_exit_code, wall_ms);
     ExitCode::from(last_exit_code as u8)
 }
@@ -441,28 +449,28 @@ fn handle_dump(ir: &BesogneIR, mode: &DumpMode) -> ExitCode {
             println!("Compiler: {}", cache::compiler_self_hash());
             println!();
 
-            let build_inputs: Vec<_> = ir.inputs.iter().filter(|i| i.phase == Phase::Build).collect();
-            let pre_inputs: Vec<_> = ir.inputs.iter().filter(|i| i.phase == Phase::Pre).collect();
-            let exec_inputs: Vec<_> = ir.inputs.iter().filter(|i| i.phase == Phase::Exec).collect();
+            let build_nodes: Vec<_> = ir.nodes.iter().filter(|i| i.phase == Phase::Build).collect();
+            let pre_nodes: Vec<_> = ir.nodes.iter().filter(|i| i.phase == Phase::Seal).collect();
+            let exec_nodes: Vec<_> = ir.nodes.iter().filter(|i| i.phase == Phase::Exec).collect();
 
-            if !build_inputs.is_empty() {
-                println!("Sealed (build phase) ({}):", build_inputs.len());
-                for i in &build_inputs { println!("  {}", i.id); }
+            if !build_nodes.is_empty() {
+                println!("Sealed (build phase) ({}):", build_nodes.len());
+                for i in &build_nodes { println!("  {}", i.id); }
                 println!();
             }
-            if !pre_inputs.is_empty() {
-                println!("Preconditions (pre phase) ({}):", pre_inputs.len());
-                for i in &pre_inputs { println!("  {}", i.id); }
+            if !pre_nodes.is_empty() {
+                println!("Preconditions (seal phase) ({}):", pre_nodes.len());
+                for i in &pre_nodes { println!("  {}", i.id); }
                 println!();
             }
-            if !exec_inputs.is_empty() {
-                println!("Execution (exec phase) ({}):", exec_inputs.len());
-                for i in &exec_inputs { println!("  {}", i.id); }
+            if !exec_nodes.is_empty() {
+                println!("Execution (exec phase) ({}):", exec_nodes.len());
+                for i in &exec_nodes { println!("  {}", i.id); }
                 println!();
             }
 
-            let se_count = ir.inputs.iter().filter(|i| matches!(&i.input,
-                ResolvedNativeInput::Command { side_effects: true, .. }
+            let se_count = ir.nodes.iter().filter(|i| matches!(&i.node,
+                ResolvedNativeNode::Command { side_effects: true, .. }
             )).count();
             if se_count > 0 {
                 println!("Side effects: {se_count} command(s) always run");
@@ -480,34 +488,34 @@ fn replay_cached_commands(
     all_variables: &HashMap<String, String>,
 ) {
     // Build context maps (same as execute_dag)
-    let binary_paths: HashMap<String, String> = ir.inputs.iter()
-        .filter_map(|i| match &i.input {
-            ResolvedNativeInput::Binary { name, resolved_path: Some(path), .. } => {
+    let binary_paths: HashMap<String, String> = ir.nodes.iter()
+        .filter_map(|i| match &i.node {
+            ResolvedNativeNode::Binary { name, resolved_path: Some(path), .. } => {
                 Some((name.clone(), path.clone()))
             }
             _ => None,
         })
         .collect();
-    let binary_versions: HashMap<String, String> = ir.inputs.iter()
-        .filter_map(|i| match &i.input {
-            ResolvedNativeInput::Binary { name, resolved_version: Some(ver), .. } => {
+    let binary_versions: HashMap<String, String> = ir.nodes.iter()
+        .filter_map(|i| match &i.node {
+            ResolvedNativeNode::Binary { name, resolved_version: Some(ver), .. } => {
                 Some((name.clone(), ver.clone()))
             }
             _ => None,
         })
         .collect();
-    let secret_vars: std::collections::HashSet<String> = ir.inputs.iter()
-        .filter_map(|i| match &i.input {
-            ResolvedNativeInput::Env { name, secret: true, .. } => Some(name.clone()),
+    let secret_vars: std::collections::HashSet<String> = ir.nodes.iter()
+        .filter_map(|i| match &i.node {
+            ResolvedNativeNode::Env { name, secret: true, .. } => Some(name.clone()),
             _ => None,
         })
         .collect();
 
-    for input in &ir.inputs {
+    for input in &ir.nodes {
         if input.phase != Phase::Exec {
             continue;
         }
-        if let ResolvedNativeInput::Command { name, run, env, .. } = &input.input {
+        if let ResolvedNativeNode::Command { name, run, env, .. } = &input.node {
             if let Some(cached) = context.get_command(name) {
                 let mut cmd_env = all_variables.clone();
                 cmd_env.extend(env.clone());
@@ -525,8 +533,8 @@ fn replay_cached_commands(
 
 /// Returns true if any exec-phase command has side_effects = true
 fn has_side_effects(ir: &BesogneIR) -> bool {
-    ir.inputs.iter().any(|i| matches!(&i.input,
-        ResolvedNativeInput::Command { side_effects: true, .. }
+    ir.nodes.iter().any(|i| matches!(&i.node,
+        ResolvedNativeNode::Command { side_effects: true, .. }
     ))
 }
 

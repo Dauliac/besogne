@@ -3,7 +3,7 @@ mod lower;
 pub mod nickel;
 pub mod plugin;
 
-use crate::ir::types::{BesogneIR, ResolvedNativeInput, SealedSnapshot};
+use crate::ir::types::{BesogneIR, ResolvedNativeNode, SealedSnapshot};
 use crate::manifest;
 use crate::probe::binary;
 use std::path::{Path, PathBuf};
@@ -15,9 +15,9 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
     let mut manifest = manifest::load_manifest(manifest_path)?;
 
     // 1b. Expand plugins → native inputs
-    if manifest.inputs.values().any(|i| matches!(i, manifest::Input::Plugin(_))) {
+    if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Plugin(_))) {
         let expanded = plugin::expand_plugins(&manifest, manifest_path)?;
-        manifest.inputs = expanded;
+        manifest.nodes = expanded;
     }
 
     // 2. Lower manifest to IR (resolve types, compute hashes)
@@ -62,8 +62,8 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
 /// Compile without progress messages (for `besogne run` where the binary handles output)
 pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
     let mut manifest = manifest::load_manifest(manifest_path)?;
-    if manifest.inputs.values().any(|i| matches!(i, manifest::Input::Plugin(_))) {
-        manifest.inputs = plugin::expand_plugins(&manifest, manifest_path)?;
+    if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Plugin(_))) {
+        manifest.nodes = plugin::expand_plugins(&manifest, manifest_path)?;
     }
     let mut ir = lower::lower_manifest(&manifest, manifest_path)?;
     resolve_build_binaries_quiet(&mut ir)?;
@@ -100,8 +100,8 @@ pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), Str
 /// Used for `--help` display where we only need metadata and flags.
 pub fn check_to_ir(manifest_path: &Path) -> Result<crate::ir::BesogneIR, String> {
     let mut manifest = manifest::load_manifest(manifest_path)?;
-    if manifest.inputs.values().any(|i| matches!(i, manifest::Input::Plugin(_))) {
-        manifest.inputs = plugin::expand_plugins(&manifest, manifest_path)?;
+    if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Plugin(_))) {
+        manifest.nodes = plugin::expand_plugins(&manifest, manifest_path)?;
     }
     lower::lower_manifest(&manifest, manifest_path)
 }
@@ -109,8 +109,8 @@ pub fn check_to_ir(manifest_path: &Path) -> Result<crate::ir::BesogneIR, String>
 /// Validate a manifest without compiling
 pub fn check(manifest_path: &Path) -> Result<(), String> {
     let mut manifest = manifest::load_manifest(manifest_path)?;
-    if manifest.inputs.values().any(|i| matches!(i, manifest::Input::Plugin(_))) {
-        manifest.inputs = plugin::expand_plugins(&manifest, manifest_path)?;
+    if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Plugin(_))) {
+        manifest.nodes = plugin::expand_plugins(&manifest, manifest_path)?;
     }
     let mut ir = lower::lower_manifest(&manifest, manifest_path)?;
     resolve_build_binaries(&mut ir)?;
@@ -131,8 +131,8 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
     let mut errors = Vec::new();
 
     // First pass: resolve all binaries WITHOUT parents (normal PATH resolution)
-    for input in ir.inputs.iter_mut() {
-        if let ResolvedNativeInput::Binary {
+    for input in ir.nodes.iter_mut() {
+        if let ResolvedNativeNode::Binary {
             name,
             path,
             version_constraint,
@@ -141,7 +141,7 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
             resolved_path,
             resolved_version,
             binary_hash,
-        } = &mut input.input
+        } = &mut input.node
         {
             if !parents.is_empty() {
                 continue; // handled in second pass
@@ -196,9 +196,9 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
                     };
                     errors.push(format!(
                         "\x1b[1;31merror\x1b[0m: binary \x1b[1m'{name}'\x1b[0m not found{parents_info}\n\
-                         \x1b[1;34m  -->\x1b[0m manifest [inputs.{name}]\n\
+                         \x1b[1;34m  -->\x1b[0m manifest [nodes.{name}]\n\
                          \x1b[1;34m   |\x1b[0m\n\
-                         \x1b[1;34m   |\x1b[0m  [inputs.{name}]\n\
+                         \x1b[1;34m   |\x1b[0m  [nodes.{name}]\n\
                          \x1b[1;34m   |\x1b[0m  type = \"binary\"\n\
                          \x1b[1;34m   |\x1b[0m\n\
                          \x1b[1;34m   =\x1b[0m {e}\n\
@@ -214,9 +214,9 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
     }
 
     // Collect resolved hashes by binary name (for parent lookups)
-    let resolved_hashes: std::collections::HashMap<String, String> = ir.inputs.iter()
+    let resolved_hashes: std::collections::HashMap<String, String> = ir.nodes.iter()
         .filter_map(|i| {
-            if let ResolvedNativeInput::Binary { name, binary_hash: Some(h), parents, .. } = &i.input {
+            if let ResolvedNativeNode::Binary { name, binary_hash: Some(h), parents, .. } = &i.node {
                 if parents.is_empty() {
                     return Some((name.clone(), h.clone()));
                 }
@@ -226,13 +226,13 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
         .collect();
 
     // Second pass: resolve binaries WITH parents (derive hash from parent hashes)
-    for input in ir.inputs.iter_mut() {
-        if let ResolvedNativeInput::Binary {
+    for input in ir.nodes.iter_mut() {
+        if let ResolvedNativeNode::Binary {
             name,
             parents,
             binary_hash,
             ..
-        } = &mut input.input
+        } = &mut input.node
         {
             if parents.is_empty() {
                 continue; // already resolved
@@ -251,7 +251,7 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
                     None => {
                         errors.push(format!(
                             "\x1b[1;31merror\x1b[0m: binary \x1b[1m'{name}'\x1b[0m parent not found\n\
-                             \x1b[1;34m  -->\x1b[0m manifest [inputs.{name}]\n\
+                             \x1b[1;34m  -->\x1b[0m manifest [nodes.{name}]\n\
                              \x1b[1;34m   |\x1b[0m\n\
                              \x1b[1;34m   |\x1b[0m  parents = [\"{parent_name}\"]\n\
                              \x1b[1;34m   |\x1b[0m\n\

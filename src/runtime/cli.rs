@@ -28,7 +28,9 @@ pub struct RuntimeArgs {
     pub run_mode: RunMode,
     pub dump: Option<DumpMode>,
     pub force: bool,
+    pub debug: bool,
     pub verbose: bool,
+    pub status: bool,
     pub subcommand: Option<String>,
     /// All resolved flag values keyed by env_var name
     pub flag_env: HashMap<String, String>,
@@ -68,10 +70,22 @@ fn global_args(besogne_name_upper: &str) -> Vec<Arg> {
             .help("Show all details including cached probes, env values, and process trees")
             .action(ArgAction::SetTrue)
             .help_heading(h),
+        Arg::new("status")
+            .long("status")
+            .short('s')
+            .help("Show cached status with full details (logs, metrics, process trees) without re-running")
+            .action(ArgAction::SetTrue)
+            .help_heading(h),
         Arg::new("force")
             .long("force")
             .short('f')
-            .help("Force re-probe all preconditions (ignore cached warmup)")
+            .help("Force re-probe all seals and append force_args to commands")
+            .action(ArgAction::SetTrue)
+            .help_heading(h),
+        Arg::new("debug")
+            .long("debug")
+            .short('d')
+            .help("Append debug_args to commands and skip cache writes")
             .action(ArgAction::SetTrue)
             .help_heading(h),
         Arg::new("dump")
@@ -343,14 +357,18 @@ pub fn parse_runtime_args(ir: &BesogneIR) -> RuntimeArgs {
     }
 
     let force = active_matches.get_flag("force");
-    let verbose = active_matches.get_flag("verbose");
+    let debug = active_matches.get_flag("debug");
+    let status = active_matches.get_flag("status");
+    let verbose = active_matches.get_flag("verbose") || status;
 
     RuntimeArgs {
         log_format,
         run_mode,
         dump,
         force,
+        debug,
         verbose,
+        status,
         subcommand: subcommand_name,
         flag_env,
     }
@@ -433,16 +451,16 @@ fn print_markdown_doc(ir: &BesogneIR) {
     // Inputs by phase
     let phases = [
         ("Build (sealed)", Phase::Build),
-        ("Pre (preconditions)", Phase::Pre),
+        ("Pre (seals)", Phase::Seal),
         ("Exec (commands)", Phase::Exec),
     ];
     use crate::manifest::Phase;
     for (label, phase) in &phases {
-        let inputs: Vec<_> = ir.inputs.iter().filter(|i| &i.phase == phase).collect();
-        if !inputs.is_empty() {
+        let phase_nodes: Vec<_> = ir.nodes.iter().filter(|i| &i.phase == phase).collect();
+        if !phase_nodes.is_empty() {
             println!("## {label}");
             println!();
-            for i in &inputs {
+            for i in &phase_nodes {
                 println!("- `{}`", i.id);
             }
             println!();

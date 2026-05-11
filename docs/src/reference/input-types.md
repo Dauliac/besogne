@@ -1,111 +1,233 @@
-# Native input types
+# Native node types
 
-All 9 native types are implemented in pure Rust with syscalls — no external dependencies.
+All 10 native types are implemented in pure Rust with syscalls — no external dependencies.
+
+Nodes are either **probes** (hashable, no execution) or **actions** (execute commands). The `parents:` field connects them into a DAG. Edge meaning is derived from node types.
 
 ## env
 
 Read or set an environment variable.
 
-```json
-{ "type": "env", "name": "HOME" }
-{ "type": "env", "name": "CACHE", "value": "/tmp/cache" }
-{ "type": "env", "name": "TOKEN", "secret": true }
+```toml
+[nodes.home]
+type = "env"
+name = "HOME"
+
+[nodes.token]
+type = "env"
+name = "TOKEN"
+secret = true
+
+[nodes.cache-dir]
+type = "env"
+name = "CACHE"
+value = "/tmp/cache"
 ```
 
 | Field | Description |
 |---|---|
-| `name` | Env var name |
+| `name` | Env var name (defaults to map key) |
 | `value` | Set this value (don't read from shell) |
 | `from_env` | If true + value set: use value as default, shell overrides |
 | `secret` | Mask value in output |
-| `expect` | Type: `string`, `integer`, `boolean`, `url`, `path`, `store-path`, `enum`, `regex` |
-| `values` | Enum values (when `expect: "enum"`) |
-| `on_missing` | `fail` (default) or `skip` (skip entire besogne) |
 
 ## file
 
-Check file/directory/socket existence.
+Check file/directory/socket existence. Content-hashed for caching.
 
-```json
-{ "type": "file", "path": "go.mod" }
-{ "type": "file", "path": "/var/run/docker.sock", "expect": "socket" }
+```toml
+[nodes.go-mod]
+type = "file"
+path = "go.mod"
+
+[nodes.docker-sock]
+type = "file"
+path = "/var/run/docker.sock"
+expect = "socket"
 ```
 
-| Field | Description |
-|---|---|
-| `path` | File path (relative = linked in tmpdir) |
-| `expect` | `file`, `directory`, `socket` |
-| `permissions` | Expected permissions (e.g., `"0600"`) |
+As a **postcondition** (child of a command):
+
+```toml
+[nodes.node-modules]
+type = "file"
+path = "node_modules"
+expect = "directory"
+parents = ["install"]       # postcondition of install command
+```
 
 ## binary
 
 Resolve a binary via PATH, probe version, hash content.
 
-```json
-{ "type": "binary", "name": "go" }
-{ "type": "binary", "name": "go", "validate": { "version": { "type": "semver", "range": ">=1.22" } } }
-```
+```toml
+[nodes.go]
+type = "binary"
 
-Auto-generates variables: `$GO`, `$GO_VERSION`, `$GO_DIR`.
+[nodes.compile]
+type = "binary"
+parents = ["go"]            # toolchain internal, hash derived from parent
+```
 
 ## service
 
 Check TCP/HTTP reachability.
 
-```json
-{ "type": "service", "tcp": "localhost:5432" }
-{ "type": "service", "http": "http://localhost:8080/health" }
+```toml
+[nodes.postgres]
+type = "service"
+tcp = "localhost:5432"
+
+[nodes.api]
+type = "service"
+http = "http://localhost:8080/health"
 ```
 
 ## command
 
-Execute a command. Default phase: `exec`.
+Execute a command. The only **action** node type.
 
-```json
-{ "type": "command", "name": "test", "phase": "exec",
-  "run": ["go", "test", "./..."],
-  "after": ["build"],
-  "ensure": [{ "type": "file", "path": "cover.out" }] }
+```toml
+[nodes.test]
+type = "command"
+run = ["go", "test", "./..."]
+parents = ["mod-download-exit", "test-go"]
+force_args = ["-count=1"]
+debug_args = ["-v"]
 ```
+
+| Field | Description |
+|---|---|
+| `run` | Command to execute (array, string, pipe, or script) |
+| `parents` | DAG parents (must complete before this runs) |
+| `stdin` | Single `std` node name to pipe as stdin |
+| `env` | Extra env vars for this command |
+| `workdir` | Working directory (relative to manifest dir) |
+| `side_effects` | If true, always run, never cache |
+| `force_args` | Extra args appended when `--force` is passed |
+| `debug_args` | Extra args appended when `--debug` is passed |
+
+## std
+
+Probe on command I/O — stdout, stderr, exit code, or stdin. Replaces `output:`, `postconditions:`, and `pipe:`.
+
+```toml
+# Exit code check
+[nodes.test-exit]
+type = "std"
+stream = "exit_code"
+parents = ["test"]
+
+[nodes.test-exit.content.int]
+expect = 0
+
+# Stdout validation
+[nodes.test-stdout]
+type = "std"
+stream = "stdout"
+parents = ["test"]
+
+[nodes.test-stdout.content.text]
+contains = ["PASS"]
+
+# Structured output with extraction
+[nodes.test-json]
+type = "std"
+stream = "stdout"
+parents = ["test"]
+
+[nodes.test-json.content.jsonline]
+schema = "./schemas/go-test.schema.json"
+
+[nodes.test-json.content.jsonline.extract]
+status = ".Action"
+elapsed = ".Elapsed"
+
+# Piping: connect stdout to next command's stdin
+[nodes.generate-out]
+type = "std"
+stream = "stdout"
+parents = ["generate"]
+
+[nodes.format]
+type = "command"
+run = ["jq", ".data"]
+stdin = "generate-out"          # exactly one stdin source
+parents = ["generate-out"]
+```
+
+| Field | Description |
+|---|---|
+| `stream` | `stdout`, `stderr`, `exit_code`, or `stdin` |
+| `parents` | The command this probes (for stdout/stderr/exit_code) |
+
+A command can have at most ONE `stdin` source — multiple is a compile error.
 
 ## user
 
-Check user identity and group membership. Uses `getuid()`, `getgroups()`.
+Check user identity and group membership.
 
-```json
-{ "type": "user" }
-{ "type": "user", "in_group": "docker" }
+```toml
+[nodes.docker-user]
+type = "user"
+in_group = "docker"
 ```
-
-Auto-generates: `$USER_NAME`, `$USER_UID`, `$USER_GID`.
 
 ## platform
 
-Check OS and architecture. Uses `uname()`.
+Check OS and architecture.
 
-```json
-{ "type": "platform", "os": "linux", "arch": "x86_64" }
+```toml
+[nodes.linux-only]
+type = "platform"
+os = "linux"
+arch = "x86_64"
 ```
-
-Auto-generates: `$PLATFORM_OS`, `$PLATFORM_ARCH`, `$PLATFORM_KERNEL`.
 
 ## dns
 
-Resolve a hostname. Uses `getaddrinfo()`.
+Resolve a hostname.
 
-```json
-{ "type": "dns", "host": "registry.internal.io" }
+```toml
+[nodes.registry]
+type = "dns"
+host = "registry.internal.io"
 ```
 
 ## metric
 
-Read system metrics. Uses `/proc` on Linux, `statvfs()` for disk.
+Read system metrics from `/proc` or `statvfs()`.
 
-```json
-{ "type": "metric", "metric": "cpu.count" }
-{ "type": "metric", "metric": "memory.available_mb",
-  "validate": { "value": { "type": "float", "min": 512 } } }
-{ "type": "metric", "metric": "disk.available_gb", "path": "/" }
+```toml
+[nodes.memory]
+type = "metric"
+metric = "memory.available_mb"
+
+[nodes.memory.content.float]
+min = 512
 ```
 
-Available metrics: `cpu.count`, `cpu.load_1m/5m/15m`, `memory.total_mb`, `memory.available_mb`, `memory.used_mb`, `disk.total_gb`, `disk.available_gb`, `disk.used_gb`, `swap.total_mb`, `swap.used_mb`.
+## Content validation (all types)
+
+Any node can have typed content validation via `content.<format>`:
+
+```toml
+[nodes.config.content.json]
+schema = "./config.schema.json"
+has_fields = ["database"]
+
+[nodes.config.content.json.extract]
+db_host = ".database.host"
+```
+
+See [content types](./content-types.md) for the full format reference.
+
+## plugin
+
+Expands into native inputs at build time. Not a runtime node.
+
+```toml
+[nodes.coreutils]
+type = "plugin"
+plugin = "coreutils/shell"
+```

@@ -34,7 +34,7 @@ pub struct BesogneIR {
     pub sandbox: SandboxResolved,
     #[serde(default)]
     pub flags: Vec<ResolvedFlag>,
-    pub inputs: Vec<ResolvedInput>,
+    pub nodes: Vec<ResolvedNode>,
 }
 
 /// A resolved user-defined flag
@@ -99,10 +99,10 @@ pub enum NetworkSandboxResolved {
 
 /// A resolved input — content-hashed, ready for evaluation
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResolvedInput {
+pub struct ResolvedNode {
     pub id: ContentId,
     pub phase: manifest::Phase,
-    pub input: ResolvedNativeInput,
+    pub node: ResolvedNativeNode,
 
     /// Parent inputs in the DAG — must complete before this input runs
     #[serde(default)]
@@ -146,7 +146,7 @@ pub enum BinarySourceResolved {
 /// Native input types in the IR — resolved and ready
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum ResolvedNativeInput {
+pub enum ResolvedNativeNode {
     Env {
         name: String,
         #[serde(default)]
@@ -216,6 +216,9 @@ pub enum ResolvedNativeInput {
         /// Extra args appended to `run` when --force is passed (tool cache invalidation).
         #[serde(default)]
         force_args: Vec<String>,
+        /// Extra args appended to `run` when --debug is passed (verbose/debug output).
+        #[serde(default)]
+        debug_args: Vec<String>,
     },
     User {
         #[serde(default)]

@@ -1,6 +1,6 @@
-# Add preconditions
+# Add seals
 
-Preconditions are inputs that must be valid before any command runs. If any fails, the besogne aborts immediately.
+Seals are inputs that must be valid before any command runs. If any fails, the besogne aborts immediately.
 
 ## Require an env var
 
@@ -104,8 +104,8 @@ host = "registry.internal.io"
 ```toml
 [inputs.git-clean]
 type = "command"
-phase = "pre"
+phase = `seal`
 run = ["git", "diff", "--quiet", "HEAD"]
 ```
 
-Note: commands default to `phase = "exec"`. Use `phase = "pre"` to make them preconditions.
+Note: commands default to `phase = "exec"`. Use `phase = `seal`` to make them seals.

@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "besogne", version, about = "Declarative contracts for shell commands — preconditions, sandboxing, memoization")]
+#[command(name = "besogne", version, about = "Declarative contracts for shell commands — seals, sandboxing, memoization")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -69,7 +69,7 @@ enum Commands {
 }
 
 /// Resolve inputs: use explicit paths or auto-discover.
-fn resolve_inputs(explicit: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
+fn resolve_manifests(explicit: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     if !explicit.is_empty() {
         return Ok(explicit.to_vec());
     }
@@ -202,18 +202,18 @@ fn main() -> ExitCode {
 
     match cli.command {
         Some(Commands::Build { input, output }) => {
-            let inputs = match resolve_inputs(&input) {
+            let manifests = match resolve_manifests(&input) {
                 Ok(i) => i,
                 Err(e) => { eprintln!("error: {e}"); return ExitCode::from(2); }
             };
 
-            if inputs.len() > 1 && output.is_some() {
-                eprintln!("error: --output cannot be used with multiple inputs");
+            if manifests.len() > 1 && output.is_some() {
+                eprintln!("error: --output cannot be used with multiple manifests");
                 return ExitCode::from(2);
             }
 
             let mut failed = false;
-            for manifest_path in &inputs {
+            for manifest_path in &manifests {
                 let out = output.clone().unwrap_or_else(|| {
                     // Derive output name from manifest: foo.besogne.json → foo
                     let stem = manifest_path.file_stem()
@@ -378,13 +378,13 @@ fn main() -> ExitCode {
         }
 
         Some(Commands::Check { input }) => {
-            let inputs = match resolve_inputs(&input) {
+            let manifests = match resolve_manifests(&input) {
                 Ok(i) => i,
                 Err(e) => { eprintln!("error: {e}"); return ExitCode::from(2); }
             };
 
             let mut failed = false;
-            for manifest_path in &inputs {
+            for manifest_path in &manifests {
                 match compile::check(manifest_path) {
                     Ok(()) => {
                         eprintln!("besogne: {} is valid", manifest_path.display());

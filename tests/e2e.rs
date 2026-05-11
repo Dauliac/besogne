@@ -456,13 +456,13 @@ fn e2e_adopt_npm_generates_manifest() {
     let manifest = std::fs::read_to_string(&manifest_path).unwrap();
 
     // Check binary inputs
-    assert!(manifest.contains("[inputs.echo]") || manifest.contains("type = \"binary\""),
-        "should declare binary inputs: {manifest}");
+    assert!(manifest.contains("[nodes.echo]") || manifest.contains("type = \"binary\""),
+        "should declare binary nodes: {manifest}");
 
     // Check command inputs with correct ordering
-    assert!(manifest.contains("[inputs.build]"), "should have build command: {manifest}");
-    assert!(manifest.contains("[inputs.test]"), "should have test command: {manifest}");
-    assert!(manifest.contains("[inputs.deploy]"), "should have deploy command: {manifest}");
+    assert!(manifest.contains("[nodes.build]"), "should have build command: {manifest}");
+    assert!(manifest.contains("[nodes.test]"), "should have test command: {manifest}");
+    assert!(manifest.contains("[nodes.deploy]"), "should have deploy command: {manifest}");
 
     // Check side_effects on deploy (curl detected)
     assert!(manifest.contains("side_effects = true"), "deploy should have side_effects: {manifest}");
@@ -507,6 +507,47 @@ fn e2e_adopt_npm_dry_run() {
     let content = std::fs::read_to_string(&pkg_path).unwrap();
     let pkg: serde_json::Value = serde_json::from_str(&content).unwrap();
     assert_eq!(pkg["scripts"]["build"], "echo compile", "dry run should not modify package.json");
+}
+
+// ─── compile-error-missing-binary ────────────────────────────────
+
+#[test]
+fn e2e_compile_error_missing_binary() {
+    let dir = setup_case("compile-error-missing-binary");
+    let c = compile_in(dir.path());
+
+    // Should FAIL to compile
+    assert!(!c.status.success(), "should fail to compile");
+
+    let err = stderr(&c);
+
+    // Should mention both missing binaries
+    assert!(
+        err.contains("nonexistent-tool"),
+        "error should mention 'nonexistent-tool': {err}"
+    );
+    assert!(
+        err.contains("this-binary-absolutely-does-not-exist-xyz-123"),
+        "error should mention the other binary: {err}"
+    );
+
+    // Should have Rust-style error formatting
+    assert!(
+        err.contains("-->") || err.contains("error"),
+        "should have structured error format: {err}"
+    );
+
+    // Should have hints
+    assert!(
+        err.contains("hint") || err.contains("PATH"),
+        "should have actionable hint: {err}"
+    );
+
+    // Binary should NOT be created
+    assert!(
+        !dir.path().join("besogne-out").exists(),
+        "binary should not be created on compile error"
+    );
 }
 
 // ─── nested-scripts ─────────────────────────────────────────────

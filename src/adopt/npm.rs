@@ -46,7 +46,7 @@ pub fn resolve_lifecycle_ordering(scripts: &mut [ParsedScript]) {
     for script in scripts.iter() {
         let name = &script.name;
 
-        if let Some(base) = name.strip_prefix("pre") {
+        if let Some(base) = name.strip_prefix("seal") {
             if names.contains(&base.to_string()) {
                 deps_to_add.push((base.to_string(), name.to_string()));
             }

@@ -1,0 +1,6 @@
+[tasks.build]
+description = "Should fail with clear error about missing binaries"
+run = "besogne build -o ./task; echo exit=$?"
+
+[tasks.clean]
+run = "rm -f ./task"

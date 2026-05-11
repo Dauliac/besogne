@@ -11,7 +11,7 @@
 # How-to guides
 
 - [Use with Nix](./how-to/nix.md)
-- [Add preconditions](./how-to/preconditions.md)
+- [Add seals](./how-to/seals.md)
 - [Use plugins](./how-to/plugins.md)
 - [Cache and skip](./how-to/caching.md)
 - [Sandbox execution](./how-to/sandbox.md)

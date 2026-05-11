@@ -1,35 +1,43 @@
 name = "go-test"
 description = "Run Go tests"
 
-[inputs.go]
+[nodes.go]
 type = "binary"
 
-[inputs.go-mod]
+[nodes.go-mod]
 type = "file"
 path = "go.mod"
 
-[inputs.main-go]
+[nodes.main-go]
 type = "file"
 path = "main.go"
 
-[inputs.test-go]
+[nodes.test-go]
 type = "file"
 path = "main_test.go"
 
-[inputs.mod-download]
+[nodes.mod-tidy]
+type = "command"
+phase = "exec"
+run = ["go", "mod", "tidy"]
+
+[nodes.mod-download]
 type = "command"
 phase = "exec"
 run = ["go", "mod", "download"]
+parents = ["mod-tidy"]
 
-[inputs.mod-download.output]
+[nodes.mod-download.output]
 exit_code = 0
 
-[inputs.test]
+[nodes.test]
 type = "command"
 phase = "exec"
 run = ["go", "test", "-v", "./..."]
 parents = ["mod-download"]
+force_args = ["-count=1"]
+debug_args = ["-v"]
 
-[inputs.test.output]
+[nodes.test.output]
 exit_code = 0
 stdout_contains = ["PASS"]

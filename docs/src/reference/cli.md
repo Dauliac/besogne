@@ -19,7 +19,7 @@ The produced binary has its own CLI, auto-generated from the manifest:
 ./my-task                          # Run (pre + exec phases)
 ./my-task -l json                  # JSON output (NDJSON)
 ./my-task -l ci                    # CI output (GitHub Actions annotations)
-./my-task --force                  # Force re-probe all preconditions
+./my-task --force                  # Force re-probe all seals
 ./my-task --verify                 # Idempotency verification
 ./my-task --dump                   # Show human-friendly summary and exit
 ./my-task --dump-internal          # Dump raw IR as JSON and exit
@@ -91,7 +91,7 @@ If a command produces different output:
 |---|---|
 | 0 | Success (or skipped) |
 | 1-125 | Command exit code (pass-through) |
-| 2 | Precondition violation |
+| 2 | Seal violation |
 | 3 | Idempotency verification failed |
 | 126 | Command not executable |
 | 127 | Command not found |

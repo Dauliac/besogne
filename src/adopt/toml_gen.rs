@@ -43,19 +43,19 @@ pub fn generate_toml(scripts: &[ParsedScript], source_path: &Path) -> Result<Str
         if npm_internals.contains(&binary.as_str()) {
             // Still declare node/npm as binaries — they're real executables
             if matches!(binary.as_str(), "node" | "npm" | "yarn" | "pnpm" | "bun") {
-                out.push_str(&format!("[inputs.{binary}]\n"));
+                out.push_str(&format!("[nodes.{binary}]\n"));
                 out.push_str("type = \"binary\"\n\n");
             }
             continue;
         }
-        out.push_str(&format!("[inputs.{}]\n", sanitize_toml_key(binary)));
+        out.push_str(&format!("[nodes.{}]\n", sanitize_toml_key(binary)));
         out.push_str("type = \"binary\"\n\n");
     }
 
     // Command inputs
     for script in scripts {
         out.push_str(&format!(
-            "[inputs.{}]\n",
+            "[nodes.{}]\n",
             sanitize_toml_key(&script.name)
         ));
         out.push_str("type = \"command\"\n");
@@ -191,12 +191,12 @@ mod tests {
 
         let result = generate_toml(&scripts, Path::new("/app/package.json")).unwrap();
 
-        assert!(result.contains("[inputs.tsc]"));
-        assert!(result.contains("[inputs.jest]"));
-        assert!(result.contains("[inputs.kubectl]"));
-        assert!(result.contains("[inputs.build]"));
-        assert!(result.contains("[inputs.test]"));
-        assert!(result.contains("[inputs.deploy]"));
+        assert!(result.contains("[nodes.tsc]"));
+        assert!(result.contains("[nodes.jest]"));
+        assert!(result.contains("[nodes.kubectl]"));
+        assert!(result.contains("[nodes.build]"));
+        assert!(result.contains("[nodes.test]"));
+        assert!(result.contains("[nodes.deploy]"));
         assert!(result.contains("side_effects = true"));
         assert!(result.contains("parents = [\"build\", \"test\"]"));
     }

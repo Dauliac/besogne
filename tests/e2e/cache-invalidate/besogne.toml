@@ -1,11 +1,11 @@
 name = "cache-invalidate"
 description = "Re-runs when input file changes"
 
-[inputs.input-file]
+[nodes.input-file]
 type = "file"
 path = "input.txt"
 
-[inputs.mark]
+[nodes.mark]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo ran >> marker.txt"]

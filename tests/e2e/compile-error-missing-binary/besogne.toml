@@ -1,0 +1,15 @@
+name = "compile-error-test"
+description = "This should fail to compile — binary does not exist"
+verify_first_run = false
+
+[nodes.nonexistent-tool]
+type = "binary"
+
+[nodes.also-missing]
+type = "binary"
+name = "this-binary-absolutely-does-not-exist-xyz-123"
+
+[nodes.run-it]
+type = "command"
+phase = "exec"
+run = ["nonexistent-tool", "--version"]

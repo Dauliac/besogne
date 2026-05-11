@@ -9,7 +9,7 @@ besogne is **not a task manager or orchestrator**. It produces a single self-con
 | Declarative manifest | JSON | YAML | Justfile | Go code | TOML | SDK code |
 | Build to single binary | Yes | No | No | Yes | No | No |
 | One task = one binary | Yes | No | No | No | No | No |
-| Typed preconditions | 9 native types | No | No | No | No | No |
+| Typed seals | 9 native types | No | No | No | No | No |
 | Postconditions (ensure) | Yes | No | No | No | No | No |
 | Sandbox (env/fs/network) | Yes | No | No | No | No | Container |
 | Memoization (default) | Yes | Partial | No | No | No | Yes |
@@ -21,7 +21,7 @@ besogne is **not a task manager or orchestrator**. It produces a single self-con
 
 ## When to use what
 
-**Use besogne when:** you have a shell command (npm install, go test, docker build, deploy script) and you want to declare its preconditions, sandbox its execution, cache its result, and get structured metrics — all in a self-contained binary callable from any tool.
+**Use besogne when:** you have a shell command (npm install, go test, docker build, deploy script) and you want to declare its seals, sandbox its execution, cache its result, and get structured metrics — all in a self-contained binary callable from any tool.
 
 **Use Task/just when:** you need a lightweight multi-task runner and don't need typed validation, sandboxing, or memoization.
 

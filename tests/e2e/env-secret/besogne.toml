@@ -1,11 +1,11 @@
 name = "env-secret"
 description = "Secret env vars — value should not appear in besogne output"
 
-[inputs.BESOGNE_E2E_SECRET]
+[nodes.BESOGNE_E2E_SECRET]
 type = "env"
 secret = true
 
-[inputs.ok]
+[nodes.ok]
 type = "command"
 phase = "exec"
 run = ["echo", "secret-handled"]

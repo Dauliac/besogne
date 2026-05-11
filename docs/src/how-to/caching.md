@@ -1,6 +1,6 @@
 # Cache and skip
 
-All commands are cached by default. If all precondition hashes match the last successful run and all postconditions are still valid, the besogne is skipped. No configuration needed.
+All commands are cached by default. If all seal hashes match the last successful run and all postconditions are still valid, the besogne is skipped. No configuration needed.
 
 ## Default behavior (nothing to do)
 
@@ -32,7 +32,7 @@ side_effects = true
 
 ## How it works
 
-1. All precondition inputs are probed and hashed
+1. All seal inputs are probed and hashed
 2. The combined hash is compared to the cached hash from the last run
 3. If they match AND all postcondition files still exist, the besogne exits 0 immediately
 4. If any input changed or any output is missing, the besogne runs normally

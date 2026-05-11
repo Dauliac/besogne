@@ -31,10 +31,10 @@ fn test_compile_and_run_hello() {
 name = "hello"
 description = "Say hello"
 
-[inputs.echo]
+[nodes.echo]
 type = "binary"
 
-[inputs.hello]
+[nodes.hello]
 type = "command"
 phase = "exec"
 run = ["echo", "hello from besogne"]
@@ -78,10 +78,10 @@ fn test_compile_and_run_with_env() {
 name = "env-test"
 description = "Test env input"
 
-[inputs.HOME]
+[nodes.HOME]
 type = "env"
 
-[inputs.show-home]
+[nodes.show-home]
 type = "command"
 phase = "exec"
 run = ["echo", "home-is-set"]
@@ -112,10 +112,10 @@ fn test_compile_and_run_missing_env_fails() {
 name = "missing-env"
 description = "Test missing env"
 
-[inputs.BESOGNE_NONEXISTENT_REQUIRED_VAR_XYZ]
+[nodes.BESOGNE_NONEXISTENT_REQUIRED_VAR_XYZ]
 type = "env"
 
-[inputs.noop]
+[nodes.noop]
 type = "command"
 phase = "exec"
 run = ["echo", "should not run"]
@@ -150,11 +150,11 @@ fn test_compile_and_run_file_input() {
 name = "file-test"
 description = "Test file input"
 
-[inputs.data-file]
+[nodes.data-file]
 type = "file"
 path = "{}"
 
-[inputs.cat-it]
+[nodes.cat-it]
 type = "command"
 phase = "exec"
 run = ["cat", "{}"]
@@ -188,12 +188,12 @@ fn test_compile_and_run_command_chain() {
 name = "chain-test"
 description = "Test command dependencies"
 
-[inputs.first]
+[nodes.first]
 type = "command"
 phase = "exec"
 run = ["echo", "step-1"]
 
-[inputs.second]
+[nodes.second]
 type = "command"
 phase = "exec"
 run = ["echo", "step-2"]
@@ -226,12 +226,12 @@ fn test_compile_and_run_failing_command() {
 name = "fail-test"
 description = "Test failing command"
 
-[inputs.fail]
+[nodes.fail]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "exit 42"]
 
-[inputs.after]
+[nodes.after]
 type = "command"
 phase = "exec"
 run = ["echo", "should-not-run"]
@@ -262,7 +262,7 @@ fn test_check_valid_manifest() {
 name = "check-test"
 description = "Valid manifest"
 
-[inputs.HOME]
+[nodes.HOME]
 type = "env"
 "#,
     )
@@ -308,7 +308,7 @@ fn test_compile_command_missing_run_fails() {
 name = "bad"
 description = "Command missing run field"
 
-[inputs.broken]
+[nodes.broken]
 type = "command"
 phase = "exec"
 "#,
@@ -338,12 +338,12 @@ fn test_platform_probe_runs() {
 name = "platform-test"
 description = "Test platform input"
 
-[inputs.platform]
+[nodes.platform]
 type = "platform"
 os = "{}"
 arch = "{}"
 
-[inputs.ok]
+[nodes.ok]
 type = "command"
 phase = "exec"
 run = ["echo", "platform-ok"]

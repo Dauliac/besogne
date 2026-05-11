@@ -1,4 +1,4 @@
-use super::types::{BesogneIR, ContentId, ResolvedInput};
+use super::types::{BesogneIR, ContentId, ResolvedNode};
 use crate::manifest::Phase;
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::HashMap;
@@ -11,19 +11,19 @@ pub fn build_exec_dag(
     let mut node_map: HashMap<ContentId, NodeIndex> = HashMap::new();
 
     // Add all exec-phase inputs as nodes
-    let exec_inputs: Vec<&ResolvedInput> = ir
-        .inputs
+    let exec_nodes: Vec<&ResolvedNode> = ir
+        .nodes
         .iter()
         .filter(|i| i.phase == Phase::Exec)
         .collect();
 
-    for input in &exec_inputs {
+    for input in &exec_nodes {
         let idx = graph.add_node(input.id.clone());
         node_map.insert(input.id.clone(), idx);
     }
 
     // Add ordering edges (parent → child)
-    for input in &exec_inputs {
+    for input in &exec_nodes {
         if let Some(node_idx) = node_map.get(&input.id) {
             for parent_id in &input.parents {
                 if let Some(parent_idx) = node_map.get(parent_id) {
