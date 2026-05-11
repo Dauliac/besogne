@@ -25,6 +25,14 @@ pub struct ContextCache {
     /// Per-command cached output from the last successful run
     #[serde(default)]
     pub commands: HashMap<String, CachedCommand>,
+    /// Whether idempotency verification has been performed.
+    /// On first run, besogne auto-verifies (runs twice) and stores results.
+    #[serde(default)]
+    pub verified: bool,
+    /// Per-command verification results from the idempotency check.
+    /// Commands found non-idempotent are listed here so the user can add side_effects = true.
+    #[serde(default)]
+    pub non_idempotent: Vec<String>,
 }
 
 /// Cached output of a single command execution
@@ -203,40 +211,41 @@ fn cache_base_dir() -> PathBuf {
 /// CachedCommand, or LastRun (add/remove/rename/retype a field) produces
 /// different JSON → different hash → all caches invalidated automatically.
 fn cache_schema_hash() -> String {
-    let canary = ContextCache {
-        besogne_hash: "x".into(),
-        compiler_hash: "x".into(),
-        schema_hash: "x".into(),
-        probed_at: Some("x".into()),
-        warmup: HashMap::from([("k".into(), CachedProbe {
-            hash: "x".into(),
-            probed_at: "x".into(),
-            variables: HashMap::from([("k".into(), "v".into())]),
-        })]),
-        last_run: Some(LastRun {
-            input_hash: "x".into(),
-            output_hash: "x".into(),
-            exit_code: 0,
-            ran_at: "x".into(),
-            duration_ms: 0,
-            skipped: false,
-        }),
-        commands: HashMap::from([("k".into(), CachedCommand {
-            stdout: "x".into(),
-            stderr: "x".into(),
-            exit_code: 0,
-            wall_ms: 0,
-            user_ms: 0,
-            sys_ms: 0,
-            max_rss_kb: 0,
-            disk_read_bytes: 0,
-            disk_write_bytes: 0,
-            net_read_bytes: 0,
-            net_write_bytes: 0,
-            processes_spawned: 0,
-            ran_at: "x".into(),
-        })]),
-    };
+    // Serialize a default instance — captures ALL fields including any added by
+    // concurrent changes. Using Default means new fields are automatically included.
+    let mut canary = ContextCache::default();
+    canary.besogne_hash = "x".into();
+    canary.compiler_hash = "x".into();
+    canary.schema_hash = "x".into();
+    canary.probed_at = Some("x".into());
+    canary.warmup.insert("k".into(), CachedProbe {
+        hash: "x".into(),
+        probed_at: "x".into(),
+        variables: HashMap::from([("k".into(), "v".into())]),
+    });
+    canary.last_run = Some(LastRun {
+        input_hash: "x".into(),
+        output_hash: "x".into(),
+        exit_code: 0,
+        ran_at: "x".into(),
+        duration_ms: 0,
+        skipped: false,
+    });
+    canary.commands.insert("k".into(), CachedCommand {
+        stdout: "x".into(),
+        stderr: "x".into(),
+        exit_code: 0,
+        wall_ms: 0,
+        user_ms: 0,
+        sys_ms: 0,
+        max_rss_kb: 0,
+        disk_read_bytes: 0,
+        disk_write_bytes: 0,
+        net_read_bytes: 0,
+        net_write_bytes: 0,
+        processes_spawned: 0,
+        ran_at: "x".into(),
+    });
     let json = serde_json::to_string(&canary).unwrap_or_default();
     blake3::hash(json.as_bytes()).to_hex()[..8].to_string()
 }

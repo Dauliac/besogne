@@ -111,7 +111,6 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         if !has_side_effects(&ir) && context.can_skip(&input_hash) {
             replay_cached_commands(&ir, &context, &mut *renderer);
             let wall_ms = start.elapsed().as_millis() as u64;
-            renderer.on_skip("preconditions cached, postconditions valid");
             renderer.on_summary(0, wall_ms);
             return ExitCode::SUCCESS;
         }
@@ -176,7 +175,6 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     if !has_side_effects(&ir) && context.can_skip(&input_hash) {
         replay_cached_commands(&ir, &context, &mut *renderer);
         let wall_ms = start.elapsed().as_millis() as u64;
-        renderer.on_skip("preconditions unchanged, postconditions valid");
         renderer.on_summary(0, wall_ms);
         return ExitCode::SUCCESS;
     }
@@ -188,13 +186,63 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         }
     }
 
-    // Idempotency verification mode: run twice, compare
-    if args.verify {
+    // Idempotency verification:
+    // - Automatic on first run (no cache, not yet verified) — detect issues early, WARN only
+    // - Forced with --verify — strict mode, FAIL on non-idempotent
+    // Auto-verify on first run disabled — too disruptive (runs DAG twice silently).
+    // Use explicit --verify when ready.
+    let should_verify = args.verify;
+
+    if should_verify {
+        let explicit = args.verify;
+        let reason = if explicit { "explicit --verify" } else { "first run (automatic)" };
+        eprintln!("\x1b[2mbesogne: idempotency check: {reason}\x1b[0m");
+
         let results = verify::verify_idempotency(&ir, &all_variables, &mut *renderer);
-        let all_ok = results.iter().all(|r| r.idempotent || r.side_effects_declared);
+
+        // Store verification results in cache
+        context.verified = true;
+        context.non_idempotent = results
+            .iter()
+            .filter(|r| !r.idempotent && !r.side_effects_declared)
+            .map(|r| r.name.clone())
+            .collect();
+
+        let all_ok = context.non_idempotent.is_empty();
+
+        if !all_ok && explicit {
+            // Explicit --verify: fail hard
+            eprintln!("\n\x1b[33mhint:\x1b[0m add side_effects = true to these commands:");
+            for name in &context.non_idempotent {
+                eprintln!("  [inputs.{name}]");
+                eprintln!("  side_effects = true");
+            }
+            let wall_ms = start.elapsed().as_millis() as u64;
+            context.set_last_run(input_hash, 3, start.elapsed().as_millis() as u64);
+            let _ = context.save();
+            renderer.on_summary(3, wall_ms);
+            return ExitCode::from(3);
+        }
+
+        if !all_ok && !explicit {
+            // First-run automatic: warn but continue
+            eprintln!(
+                "\x1b[33mwarning: some commands are not idempotent (see above)\x1b[0m"
+            );
+            eprintln!("\x1b[33mhint:\x1b[0m add side_effects = true to these commands:");
+            for name in &context.non_idempotent {
+                eprintln!("  [inputs.{name}]");
+                eprintln!("  side_effects = true");
+            }
+        }
+
+        // Store the result — second run is the "real" run
+        context.set_last_run(input_hash, 0, start.elapsed().as_millis() as u64);
+        let _ = context.save();
+
         let wall_ms = start.elapsed().as_millis() as u64;
-        renderer.on_summary(if all_ok { 0 } else { 3 }, wall_ms);
-        return ExitCode::from(if all_ok { 0 } else { 3 });
+        renderer.on_summary(0, wall_ms);
+        return ExitCode::SUCCESS;
     }
 
     execute_dag(&ir, all_variables, input_hash, &mut *renderer, &mut context, start)

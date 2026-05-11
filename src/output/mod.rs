@@ -21,7 +21,6 @@ pub trait OutputRenderer {
     fn on_phase_start(&mut self, phase: &str, count: usize);
     fn on_probe_result(&mut self, input: &ResolvedInput, result: &ProbeResult, status: ProbeStatus);
     fn on_phase_end(&mut self, phase: &str);
-    fn on_skip(&mut self, reason: &str);
     fn on_command_start(&mut self, name: &str, exec: &[String]);
     fn on_command_output(&mut self, name: &str, stdout: &str, stderr: &str);
     fn on_command_end(&mut self, name: &str, result: &CommandResult);
@@ -214,10 +213,10 @@ fn format_metrics_human(m: &Metrics) -> String {
         format!("  \x1b[35m🧠 memory:{}\x1b[0m", format_bytes(m.max_rss_kb * 1024))
     } else { String::new() };
     let disk = if m.disk_read_bytes > 0 || m.disk_write_bytes > 0 {
-        format!("  \x1b[34m💾 disk:↓{} ↑{}\x1b[0m", format_bytes(m.disk_read_bytes), format_bytes(m.disk_write_bytes))
+        format!("  \x1b[34m💾 disk:read {} write {}\x1b[0m", format_bytes(m.disk_read_bytes), format_bytes(m.disk_write_bytes))
     } else { String::new() };
     let net = if m.net_read_bytes > 0 || m.net_write_bytes > 0 {
-        format!("  \x1b[32m🌐 net:↓{} ↑{}\x1b[0m", format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes))
+        format!("  \x1b[32m⬇ download:{} ⬆ upload:{}\x1b[0m", format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes))
     } else { String::new() };
     let procs = format!("  \x1b[31m🔀 processes:{}\x1b[0m", m.processes_spawned + 1);
     format!("{time}{cpu}{mem}{disk}{net}{procs}")
@@ -240,10 +239,10 @@ fn format_metrics_ci(m: &Metrics) -> String {
         format!("  memory:{}", format_bytes(m.max_rss_kb * 1024))
     } else { String::new() };
     let disk = if m.disk_read_bytes > 0 || m.disk_write_bytes > 0 {
-        format!("  disk:↓{} ↑{}", format_bytes(m.disk_read_bytes), format_bytes(m.disk_write_bytes))
+        format!("  disk:read {} write {}", format_bytes(m.disk_read_bytes), format_bytes(m.disk_write_bytes))
     } else { String::new() };
     let net = if m.net_read_bytes > 0 || m.net_write_bytes > 0 {
-        format!("  net:↓{} ↑{}", format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes))
+        format!("  ⬇ download:{} ⬆ upload:{}", format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes))
     } else { String::new() };
     let procs = format!("  processes:{}", m.processes_spawned + 1);
     format!("{time}{cpu}{mem}{disk}{net}{procs}")
@@ -303,10 +302,6 @@ impl OutputRenderer for HumanRenderer {
     }
 
     fn on_phase_end(&mut self, _phase: &str) {}
-
-    fn on_skip(&mut self, reason: &str) {
-        eprintln!("\x1b[33mskip\x1b[0m {reason}");
-    }
 
     fn on_command_start(&mut self, name: &str, exec: &[String]) {
         eprintln!("\n\x1b[1mexec\x1b[0m {name}: {}", exec.join(" "));
@@ -422,9 +417,7 @@ impl OutputRenderer for JsonRenderer {
         self.emit(&serde_json::json!({"event": "phase_end", "phase": phase}));
     }
 
-    fn on_skip(&mut self, reason: &str) {
-        self.emit(&serde_json::json!({"event": "skip", "reason": reason}));
-    }
+
 
     fn on_command_start(&mut self, name: &str, exec: &[String]) {
         self.emit(&serde_json::json!({
@@ -513,10 +506,6 @@ impl OutputRenderer for CiRenderer {
 
     fn on_phase_end(&mut self, _phase: &str) {
         eprintln!("::endgroup::");
-    }
-
-    fn on_skip(&mut self, reason: &str) {
-        eprintln!("::notice::SKIP {reason}");
     }
 
     fn on_command_start(&mut self, name: &str, exec: &[String]) {
