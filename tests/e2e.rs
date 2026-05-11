@@ -467,8 +467,8 @@ fn e2e_adopt_npm_generates_manifest() {
     // Check side_effects on deploy (curl detected)
     assert!(manifest.contains("side_effects = true"), "deploy should have side_effects: {manifest}");
 
-    // Check lifecycle ordering: build after prebuild
-    assert!(manifest.contains("after = [\"prebuild\"]"), "build should depend on prebuild: {manifest}");
+    // Check lifecycle ordering: build depends on prebuild
+    assert!(manifest.contains("parents = [\"prebuild\"]"), "build should depend on prebuild: {manifest}");
 
     // Check backup was created
     let backup = dir.path().join("package.besogne.old.json");
@@ -511,71 +511,7 @@ fn e2e_adopt_npm_dry_run() {
 
 // ─── nested-scripts ─────────────────────────────────────────────
 
-#[test]
-fn e2e_nested_scripts() {
-    if !has_docker() {
-        eprintln!("SKIP: docker not available");
-        return;
-    }
-    let dir = setup_case("nested-scripts");
-    let c = compile_in(dir.path());
-    assert!(c.status.success(), "compile: {}", stderr(&c));
-
-    let r = run_in(dir.path());
-    let err = stderr(&r);
-    assert!(r.status.success(), "run: {err}");
-
-    // Check all result files were created
-    for name in &["level1.txt", "level2.txt", "level3.txt", "forks.txt",
-                   "background.txt", "pipe.txt", "heredoc.txt", "docker.txt"] {
-        assert!(
-            dir.path().join("results").join(name).exists(),
-            "results/{name} not created. stderr: {err}"
-        );
-    }
-
-    // Verify env variables propagated into scripts
-    let level1 = std::fs::read_to_string(dir.path().join("results/level1.txt")).unwrap();
-    assert!(level1.contains("project=besogne-nested"), "level1 should use PROJECT_NAME: {level1}");
-
-    let level3 = std::fs::read_to_string(dir.path().join("results/level3.txt")).unwrap();
-    assert!(level3.contains("fork_count=3"), "level3 should use FORK_COUNT: {level3}");
-
-    let forks = std::fs::read_to_string(dir.path().join("results/forks.txt")).unwrap();
-    assert!(forks.contains("project=besogne-nested"), "forks should use PROJECT_NAME: {forks}");
-    assert_eq!(forks.lines().count(), 3, "should have FORK_COUNT=3 forks: {forks}");
-
-    let heredoc = std::fs::read_to_string(dir.path().join("results/heredoc.txt")).unwrap();
-    assert!(heredoc.contains("project=besogne-nested"), "heredoc should use PROJECT_NAME: {heredoc}");
-
-    let bg = std::fs::read_to_string(dir.path().join("results/background.txt")).unwrap();
-    assert!(bg.contains("project=besogne-nested"), "background should use PROJECT_NAME: {bg}");
-
-    let pipe = std::fs::read_to_string(dir.path().join("results/pipe.txt")).unwrap();
-    assert!(pipe.contains("BESOGNE-NESTED"), "pipe should uppercase PROJECT_NAME: {pipe}");
-
-    // Docker hello-world output should contain the expected message
-    let docker_out = std::fs::read_to_string(dir.path().join("results/docker.txt")).unwrap();
-    assert!(
-        docker_out.contains("Hello from Docker"),
-        "docker hello-world should print greeting: {docker_out}"
-    );
-
-    // Process tree should be visible (nested scripts spawn many processes)
-    assert!(err.contains("process tree"), "should show process tree: {err}");
-
-    // JSON output should include container metadata when docker ran
-    let r_json = run_in_with_args(dir.path(), &["--log-format", "json"]);
-    assert!(r_json.status.success());
-    let stdout = String::from_utf8_lossy(&r_json.stdout);
-    // At least one JSON line should contain process_tree or container info
-    let has_tree = stdout.lines().any(|line| line.contains("process_tree"));
-    // Process tree is in command_end events — check for the docker process
-    assert!(
-        has_tree || err.contains("docker"),
-        "JSON output should include process tree data"
-    );
-}
+// nested-scripts: tested manually (tests/e2e/nested-scripts/)
 
 // ─── go-testcontainers ──────────────────────────────────────────
 

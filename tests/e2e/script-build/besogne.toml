@@ -33,14 +33,14 @@ run = ["sh", "-c", "mkdir -p dist"]
 type = "command"
 phase = "exec"
 run = { file = "./build.sh" }
-after = ["setup"]
+parents = ["setup"]
 
-[[inputs.build.ensure]]
+[[inputs.build.postconditions]]
 type = "file"
 path = "dist/result.json"
 required = true
 
-[[inputs.build.ensure]]
+[[inputs.build.postconditions]]
 type = "file"
 path = "dist/build.log"
 required = true

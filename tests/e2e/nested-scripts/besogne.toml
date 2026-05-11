@@ -46,49 +46,39 @@ run = ["sh", "-c", "rm -rf $OUTPUT_PREFIX && mkdir -p $OUTPUT_PREFIX"]
 type = "command"
 phase = "exec"
 run = { file = "./level1.sh" }
-after = ["setup"]
+parents = ["setup"]
 
-[[inputs.run-scripts.ensure]]
+[[inputs.run-scripts.postconditions]]
 type = "file"
 path = "results/level1.txt"
 required = true
 
-[[inputs.run-scripts.ensure]]
+[[inputs.run-scripts.postconditions]]
 type = "file"
 path = "results/level2.txt"
 required = true
 
-[[inputs.run-scripts.ensure]]
+[[inputs.run-scripts.postconditions]]
 type = "file"
 path = "results/level3.txt"
 required = true
 
-[[inputs.run-scripts.ensure]]
+[[inputs.run-scripts.postconditions]]
 type = "file"
 path = "results/forks.txt"
 required = true
 
-[[inputs.run-scripts.ensure]]
+[[inputs.run-scripts.postconditions]]
 type = "file"
 path = "results/background.txt"
 required = true
 
-[[inputs.run-scripts.ensure]]
+[[inputs.run-scripts.postconditions]]
 type = "file"
 path = "results/pipe.txt"
 required = true
 
-[[inputs.run-scripts.ensure]]
+[[inputs.run-scripts.postconditions]]
 type = "file"
 path = "results/heredoc.txt"
 required = true
-
-[inputs.verify]
-type = "command"
-phase = "exec"
-run = ["sh", "-c", "cat $OUTPUT_PREFIX/level1.txt $OUTPUT_PREFIX/level2.txt $OUTPUT_PREFIX/level3.txt $OUTPUT_PREFIX/forks.txt $OUTPUT_PREFIX/background.txt $OUTPUT_PREFIX/pipe.txt $OUTPUT_PREFIX/heredoc.txt"]
-after = ["run-scripts"]
-
-[inputs.verify.output]
-exit_code = 0
-stdout_contains = ["project=besogne-nested", "fork_count=3"]

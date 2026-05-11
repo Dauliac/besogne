@@ -49,6 +49,8 @@ pub struct CachedCommand {
     pub processes_spawned: u64,
     #[serde(default)]
     pub process_tree: Vec<crate::tracer::ProcessMetrics>,
+    #[serde(default)]
+    pub containers: Vec<crate::tracer::ContainerMetadata>,
     pub ran_at: String,
 }
 
@@ -239,6 +241,7 @@ fn cache_schema_hash() -> String {
         net_write_bytes: 0,
         processes_spawned: 0,
         process_tree: vec![],
+        containers: vec![],
         ran_at: "x".into(),
     });
     let json = serde_json::to_string(&canary).unwrap_or_default();

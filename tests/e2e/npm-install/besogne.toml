@@ -16,7 +16,7 @@ type = "command"
 phase = "exec"
 run = ["npm", "install"]
 
-[[inputs.install.ensure]]
+[[inputs.install.postconditions]]
 type = "file"
 path = "node_modules"
 expect = "directory"

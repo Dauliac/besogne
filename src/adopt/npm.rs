@@ -28,7 +28,7 @@ pub fn parse_package_json(
                 body,
                 binaries: Vec::new(),
                 env_vars: Vec::new(),
-                after: Vec::new(),
+                parents: Vec::new(),
                 side_effects: false,
             }
         })
@@ -62,8 +62,8 @@ pub fn resolve_lifecycle_ordering(scripts: &mut [ParsedScript]) {
     // Apply collected dependencies
     for (target_name, dep_name) in deps_to_add {
         if let Some(target) = scripts.iter_mut().find(|s| s.name == target_name) {
-            if !target.after.contains(&dep_name) {
-                target.after.push(dep_name);
+            if !target.parents.contains(&dep_name) {
+                target.parents.push(dep_name);
             }
         }
     }
@@ -117,7 +117,7 @@ mod tests {
                 body: "lint".into(),
                 binaries: vec![],
                 env_vars: vec![],
-                after: vec![],
+                parents: vec![],
                 side_effects: false,
             },
             ParsedScript {
@@ -125,7 +125,7 @@ mod tests {
                 body: "tsc".into(),
                 binaries: vec![],
                 env_vars: vec![],
-                after: vec![],
+                parents: vec![],
                 side_effects: false,
             },
             ParsedScript {
@@ -133,7 +133,7 @@ mod tests {
                 body: "cp dist/".into(),
                 binaries: vec![],
                 env_vars: vec![],
-                after: vec![],
+                parents: vec![],
                 side_effects: false,
             },
         ];
@@ -141,10 +141,10 @@ mod tests {
         resolve_lifecycle_ordering(&mut scripts);
 
         let build = scripts.iter().find(|s| s.name == "build").unwrap();
-        assert!(build.after.contains(&"prebuild".to_string()));
+        assert!(build.parents.contains(&"prebuild".to_string()));
 
         let postbuild = scripts.iter().find(|s| s.name == "postbuild").unwrap();
-        assert!(postbuild.after.contains(&"build".to_string()));
+        assert!(postbuild.parents.contains(&"build".to_string()));
     }
 
     #[test]
@@ -159,7 +159,7 @@ mod tests {
                 body: "tsc".into(),
                 binaries: vec![],
                 env_vars: vec![],
-                after: vec![],
+                parents: vec![],
                 side_effects: false,
             },
             ParsedScript {
@@ -167,7 +167,7 @@ mod tests {
                 body: "jest".into(),
                 binaries: vec![],
                 env_vars: vec![],
-                after: vec![],
+                parents: vec![],
                 side_effects: false,
             },
         ];

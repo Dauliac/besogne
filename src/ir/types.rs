@@ -104,9 +104,9 @@ pub struct ResolvedInput {
     pub phase: manifest::Phase,
     pub input: ResolvedNativeInput,
 
-    /// For exec-phase inputs: ordering constraints (was: resolved_deps)
+    /// Parent inputs in the DAG — must complete before this input runs
     #[serde(default)]
-    pub after: Vec<ContentId>,
+    pub parents: Vec<ContentId>,
 
     /// Traceability: which plugin produced this
     #[serde(default)]
@@ -201,9 +201,9 @@ pub enum ResolvedNativeInput {
         run: Vec<String>,
         #[serde(default)]
         env: HashMap<String, String>,
-        /// Postconditions (was: outputs)
+        /// Postconditions — what must be true after this command
         #[serde(default)]
-        ensure: Vec<manifest::EnsureSpec>,
+        postconditions: Vec<manifest::PostconditionSpec>,
         /// Opt out of caching: always run, never skip
         #[serde(default)]
         side_effects: bool,
@@ -213,6 +213,9 @@ pub enum ResolvedNativeInput {
         /// Per-command working directory (absolute). If None, uses metadata.workdir.
         #[serde(default)]
         workdir: Option<String>,
+        /// Extra args appended to `run` when --force is passed (tool cache invalidation).
+        #[serde(default)]
+        force_args: Vec<String>,
     },
     User {
         #[serde(default)]

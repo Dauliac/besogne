@@ -197,7 +197,7 @@ run = ["echo", "step-1"]
 type = "command"
 phase = "exec"
 run = ["echo", "step-2"]
-after = ["first"]
+parents = ["first"]
 "#,
     )
     .unwrap();
@@ -235,7 +235,7 @@ run = ["sh", "-c", "exit 42"]
 type = "command"
 phase = "exec"
 run = ["echo", "should-not-run"]
-after = ["fail"]
+parents = ["fail"]
 "#,
     )
     .unwrap();

@@ -24,16 +24,16 @@ run = ["npm", "install"]
 type = "command"
 phase = "exec"
 run = ["npm", "run", "lint"]
-after = ["install"]
+parents = ["install"]
 
 [inputs.test]
 type = "command"
 phase = "exec"
 run = ["npm", "test"]
-after = ["install"]
+parents = ["install"]
 
 [inputs.build]
 type = "command"
 phase = "exec"
 run = ["npm", "run", "build"]
-after = ["lint", "test"]
+parents = ["lint", "test"]

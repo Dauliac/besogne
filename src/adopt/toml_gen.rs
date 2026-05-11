@@ -65,13 +65,13 @@ pub fn generate_toml(scripts: &[ParsedScript], source_path: &Path) -> Result<Str
         let run_spec = format_run_spec(&script.body);
         out.push_str(&run_spec);
 
-        if !script.after.is_empty() {
+        if !script.parents.is_empty() {
             let deps: Vec<String> = script
-                .after
+                .parents
                 .iter()
                 .map(|d| format!("\"{}\"", sanitize_toml_key(d)))
                 .collect();
-            out.push_str(&format!("after = [{}]\n", deps.join(", ")));
+            out.push_str(&format!("parents = [{}]\n", deps.join(", ")));
         }
 
         if script.side_effects {
@@ -168,7 +168,7 @@ mod tests {
                 body: "tsc".into(),
                 binaries: vec!["tsc".into()],
                 env_vars: vec![],
-                after: vec![],
+                parents: vec![],
                 side_effects: false,
             },
             ParsedScript {
@@ -176,7 +176,7 @@ mod tests {
                 body: "jest --coverage".into(),
                 binaries: vec!["jest".into()],
                 env_vars: vec![],
-                after: vec!["build".into()],
+                parents: vec!["build".into()],
                 side_effects: false,
             },
             ParsedScript {
@@ -184,7 +184,7 @@ mod tests {
                 body: "kubectl apply -f k8s/".into(),
                 binaries: vec!["kubectl".into()],
                 env_vars: vec![],
-                after: vec!["build".into(), "test".into()],
+                parents: vec!["build".into(), "test".into()],
                 side_effects: true,
             },
         ];
@@ -198,6 +198,6 @@ mod tests {
         assert!(result.contains("[inputs.test]"));
         assert!(result.contains("[inputs.deploy]"));
         assert!(result.contains("side_effects = true"));
-        assert!(result.contains("after = [\"build\", \"test\"]"));
+        assert!(result.contains("parents = [\"build\", \"test\"]"));
     }
 }

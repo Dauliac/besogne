@@ -27,7 +27,7 @@ pub struct ParsedScript {
     /// Environment variables referenced ($VAR)
     pub env_vars: Vec<String>,
     /// npm lifecycle ordering (pre/post)
-    pub after: Vec<String>,
+    pub parents: Vec<String>,
     /// Detected as impure by heuristics
     pub side_effects: bool,
 }

@@ -15,11 +15,11 @@ Inputs are `HashMap<String, Input>` — the key IS the name. NOT an array.
 [inputs.go]           # key = binary name
 type = "binary"
 
-[inputs.test]         # key = command name (used in after:)
+[inputs.test]         # key = command name (used in parents:)
 type = "command"
 phase = "exec"
 run = ["go", "test"]
-after = ["build"]
+parents = ["build"]
 ```
 
 - `CommandInput` has no `name` — key IS the name
@@ -36,8 +36,8 @@ after = ["build"]
 | `phase: "pre"` | Precondition checked at startup | ~~stage: "warmup"~~ |
 | `phase: "exec"` | Execution DAG step | ~~stage: "runtime"~~ |
 | `run:` | Command action field | ~~exec:~~ |
-| `ensure:` | Postconditions on commands | ~~outputs:~~ |
-| `after:` | Ordering constraints | ~~dependencies:~~ |
+| `postconditions:` | What must be true after command | ~~outputs:~~, ~~ensure:~~ |
+| `parents:` | DAG parents (ordering + binary derivation) | ~~dependencies:~~, ~~after:~~ |
 | `side_effects:` | Opt-out of caching (impure) | ~~idempotent: false~~ |
 | `sandbox:` | Effect handler config | ~~isolation:~~ |
 | `sealed:` | Build-time verified (Nix paths) | ~~build_check:~~ |
@@ -82,7 +82,7 @@ Every design decision maps to CS theory:
 ### Three phases, strict ordering
 - **Build**: static validation, seal Nix paths, embed in binary
 - **Pre**: parallel precondition probes (crossbeam), no dependencies between them
-- **Exec**: DAG execution via `after:` constraints, tier-based parallelism
+- **Exec**: DAG execution via `parents:` constraints, tier-based parallelism
 
 ### Plugins are Nickel
 - `.ncl` files in `plugins/` directory

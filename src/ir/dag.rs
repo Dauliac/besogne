@@ -22,16 +22,16 @@ pub fn build_exec_dag(
         node_map.insert(input.id.clone(), idx);
     }
 
-    // Add ordering edges (after → before)
+    // Add ordering edges (parent → child)
     for input in &exec_inputs {
         if let Some(node_idx) = node_map.get(&input.id) {
-            for after_id in &input.after {
-                if let Some(after_idx) = node_map.get(after_id) {
-                    graph.add_edge(*after_idx, *node_idx, ());
+            for parent_id in &input.parents {
+                if let Some(parent_idx) = node_map.get(parent_id) {
+                    graph.add_edge(*parent_idx, *node_idx, ());
                 } else {
                     return Err(format!(
-                        "exec input {} has after: [{}] which is not an exec-phase input",
-                        input.id, after_id
+                        "exec input {} has parents: [{}] which is not an exec-phase input",
+                        input.id, parent_id
                     ));
                 }
             }

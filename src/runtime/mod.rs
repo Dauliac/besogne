@@ -128,7 +128,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
             return ExitCode::SUCCESS;
         }
 
-        return execute_dag(&ir, all_vars, input_hash, &mut *renderer, &mut context, start);
+        return execute_dag(&ir, all_vars, input_hash, &mut *renderer, &mut context, start, args.force);
     }
 
     // Full warmup: probe all preconditions in parallel
@@ -199,7 +199,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         }
     }
 
-    execute_dag(&ir, all_variables, input_hash, &mut *renderer, &mut context, start)
+    execute_dag(&ir, all_variables, input_hash, &mut *renderer, &mut context, start, args.force)
 }
 
 /// Execute the exec-phase DAG
@@ -210,6 +210,7 @@ fn execute_dag(
     renderer: &mut dyn output::OutputRenderer,
     context: &mut ContextCache,
     start: Instant,
+    force: bool,
 ) -> ExitCode {
     let (graph, _) = match dag::build_exec_dag(ir) {
         Ok(d) => d,
@@ -292,7 +293,7 @@ fn execute_dag(
 
             match &input.input {
                 ResolvedNativeInput::Command {
-                    name, run, env, side_effects, output, workdir, ..
+                    name, run, env, side_effects, output, workdir, force_args, ..
                 } => {
                     if last_exit_code != 0 && !side_effects {
                         continue;
@@ -301,15 +302,24 @@ fn execute_dag(
                     let mut cmd_env = all_variables.clone();
                     cmd_env.extend(env.clone());
 
+                    // Append force_args when --force is active
+                    let effective_run = if force && !force_args.is_empty() {
+                        let mut r = run.clone();
+                        r.extend(force_args.clone());
+                        r
+                    } else {
+                        run.clone()
+                    };
+
                     let ctx = output::CommandContext {
                         binary_paths: &binary_paths,
                         binary_versions: &binary_versions,
                         env_vars: &cmd_env,
                         secret_vars: &secret_vars,
                     };
-                    renderer.on_command_start(name, run, &ctx);
+                    renderer.on_command_start(name, &effective_run, &ctx);
 
-                    let result = match tracer::execute_traced(run, &cmd_env, &ir.sandbox.env, workdir.as_deref()) {
+                    let result = match tracer::execute_traced(&effective_run, &cmd_env, &ir.sandbox.env, workdir.as_deref()) {
                         Ok(r) => r,
                         Err(e) => {
                             eprintln!("error: {e}");
@@ -355,6 +365,7 @@ fn execute_dag(
                             net_write_bytes: result.net_write_bytes,
                             processes_spawned: result.processes_spawned,
                             process_tree: result.process_tree.clone(),
+                            containers: result.containers.clone(),
                             ran_at: chrono::Utc::now().to_rfc3339(),
                         },
                     );

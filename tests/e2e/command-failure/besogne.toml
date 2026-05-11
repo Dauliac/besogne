@@ -10,4 +10,4 @@ run = ["sh", "-c", "echo 'this fails'; exit 1"]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo 'THIS_MUST_NOT_RUN' >> leaked.txt"]
-after = ["fail"]
+parents = ["fail"]

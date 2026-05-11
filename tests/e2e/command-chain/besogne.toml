@@ -10,16 +10,16 @@ run = ["sh", "-c", "echo step-1 >> order.txt"]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo step-2a >> order.txt"]
-after = ["step-1"]
+parents = ["step-1"]
 
 [inputs.step-2b]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo step-2b >> order.txt"]
-after = ["step-1"]
+parents = ["step-1"]
 
 [inputs.step-3]
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo step-3 >> order.txt"]
-after = ["step-2a", "step-2b"]
+parents = ["step-2a", "step-2b"]

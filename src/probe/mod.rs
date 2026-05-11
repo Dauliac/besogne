@@ -430,10 +430,11 @@ mod tests {
                 name: "test".into(),
                 run: vec!["echo".into()],
                 env: HashMap::new(),
-                ensure: vec![],
+                postconditions: vec![],
                 side_effects: false,
                 output: None,
                 workdir: None,
+                force_args: vec![],
             },
         ];
 

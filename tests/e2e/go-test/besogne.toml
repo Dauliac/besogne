@@ -28,7 +28,7 @@ exit_code = 0
 type = "command"
 phase = "exec"
 run = ["go", "test", "-v", "./..."]
-after = ["mod-download"]
+parents = ["mod-download"]
 
 [inputs.test.output]
 exit_code = 0

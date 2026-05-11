@@ -44,7 +44,7 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
                 expect: None,
                 secret: false,
             },
-            after: vec![],
+            parents: vec![],
             from_plugin: Some("flag".to_string()),
             sealed: None,
         };
@@ -153,10 +153,11 @@ fn lower_input(key: &str, input: &Input, base_workdir: &str) -> Result<ResolvedI
                 name: key.to_string(),
                 run: run_resolved,
                 env: c.env.clone().unwrap_or_default(),
-                ensure: c.ensure.clone().unwrap_or_default(),
+                postconditions: c.postconditions.clone().unwrap_or_default(),
                 side_effects: c.side_effects.unwrap_or(false),
                 output: c.output.clone(),
                 workdir: cmd_workdir,
+                force_args: c.force_args.clone().unwrap_or_default(),
             };
             let phase = c.phase.clone().unwrap_or(Phase::Exec);
             let id = ContentId::from_content("command", key, key.as_bytes());
@@ -217,7 +218,7 @@ fn lower_input(key: &str, input: &Input, base_workdir: &str) -> Result<ResolvedI
         id,
         phase,
         input: native,
-        after: vec![],
+        parents: vec![],
         from_plugin: None,
         sealed: None,
     })
@@ -389,7 +390,7 @@ fn resolve_run_spec(spec: &manifest::ExecSpec) -> Vec<String> {
     }
 }
 
-/// Resolve `after:` ordering constraints for exec-phase inputs
+/// Resolve `parents:` ordering constraints for exec-phase inputs
 fn resolve_ordering(
     inputs: &mut Vec<ResolvedInput>,
     manifest_inputs: &HashMap<String, manifest::Input>,
@@ -409,18 +410,18 @@ fn resolve_ordering(
         })
         .collect();
 
-    // Collect `after` constraints from manifest (key = input name)
-    let mut after_by_name: HashMap<String, Vec<String>> = HashMap::new();
+    // Collect `parents` constraints from manifest (key = input name)
+    let mut parents_by_name: HashMap<String, Vec<String>> = HashMap::new();
     for (key, mi) in manifest_inputs {
         match mi {
             manifest::Input::Command(c) => {
-                if let Some(after) = &c.after {
-                    after_by_name.insert(key.clone(), after.clone());
+                if let Some(parents) = &c.parents {
+                    parents_by_name.insert(key.clone(), parents.clone());
                 }
             }
             manifest::Input::Service(s) => {
-                if let Some(after) = &s.after {
-                    after_by_name.insert(key.clone(), after.clone());
+                if let Some(parents) = &s.parents {
+                    parents_by_name.insert(key.clone(), parents.clone());
                 }
             }
             _ => {}
@@ -439,13 +440,13 @@ fn resolve_ordering(
                 _ => None,
             }?;
 
-            let after_names = after_by_name.get(cmd_name)?;
-            let resolved: Result<Vec<ContentId>, String> = after_names
+            let parent_names = parents_by_name.get(cmd_name)?;
+            let resolved: Result<Vec<ContentId>, String> = parent_names
                 .iter()
                 .map(|dep_name| {
                     name_to_id.get(dep_name).cloned().ok_or_else(|| {
                         format!(
-                            "command '{cmd_name}' has after: ['{dep_name}'] which is not an exec-phase input"
+                            "command '{cmd_name}' has parents: ['{dep_name}'] which is not an exec-phase input"
                         )
                     })
                 })
@@ -458,8 +459,8 @@ fn resolve_ordering(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    for (idx, after_ids) in resolutions {
-        inputs[idx].after = after_ids;
+    for (idx, parent_ids) in resolutions {
+        inputs[idx].parents = parent_ids;
     }
 
     Ok(())

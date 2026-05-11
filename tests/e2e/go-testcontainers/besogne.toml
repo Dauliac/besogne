@@ -57,7 +57,7 @@ exit_code = 0
 type = "command"
 phase = "exec"
 run = ["go", "test", "-v", "-count=1", "./..."]
-after = ["mod-download"]
+parents = ["mod-download"]
 side_effects = true
 
 [inputs.test.output]

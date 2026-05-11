@@ -419,14 +419,15 @@ fn format_process_tree_human(tree: &[ProcessMetrics]) {
         }
     }
     print_tree_node(tree, &children, 0, "    ", true);
-    format_containers_human(tree);
 }
 
-/// Show a summary footer for Docker containers detected in the process tree.
-fn format_containers_human(tree: &[ProcessMetrics]) {
-    let containers: Vec<_> = tree.iter()
-        .filter_map(|p| p.container.as_ref())
-        .collect();
+/// Show a summary footer for Docker containers from a CommandResult.
+fn format_containers_human_from_result(result: &CommandResult) {
+    format_containers_human(&result.containers);
+}
+
+/// Show a summary footer for Docker containers.
+fn format_containers_human(containers: &[crate::tracer::ContainerMetadata]) {
     if containers.is_empty() { return; }
     eprintln!(
         "    \x1b[2;35m┌ containers\x1b[0m \x1b[35m({} detected)\x1b[0m",
@@ -672,6 +673,7 @@ impl OutputRenderer for HumanRenderer {
         }
         // Always show process tree on fresh execution
         format_process_tree_human(&result.process_tree);
+        format_containers_human_from_result(result);
     }
 
     fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand, ctx: &CommandContext) {
@@ -698,6 +700,7 @@ impl OutputRenderer for HumanRenderer {
         let metrics = format_metrics_human(&Metrics::from(cached));
         eprintln!("  \x1b[33mcached\x1b[0m {name}  {metrics}");
         format_process_tree_human(&cached.process_tree);
+        format_containers_human(&cached.containers);
     }
 
     fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]) {

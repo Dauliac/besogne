@@ -81,6 +81,8 @@ pub struct CommandResult {
     pub events: Vec<TraceEvent>,
     /// Per-process metrics for the entire process tree (root + all descendants)
     pub process_tree: Vec<ProcessMetrics>,
+    /// Containers created during command execution (detected via Docker API diff)
+    pub containers: Vec<ContainerMetadata>,
 }
 
 /// Execute a command with wait4 for rusage metrics collection
@@ -391,6 +393,10 @@ fn execute_with_wait4(
     let start = Instant::now();
     let (net_rx_before, net_tx_before) = read_net_dev();
 
+    // Snapshot Docker containers before execution to detect newly created ones
+    let containers_before: std::collections::HashSet<String> =
+        query_docker_containers().into_iter().map(|c| c.container_id).collect();
+
     // Become subreaper: all orphaned descendants will be reparented to us
     // so we can wait4 them and collect their rusage.
     unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); }
@@ -623,6 +629,21 @@ fn execute_with_wait4(
         }
     }
 
+    // Detect containers created during execution by diffing Docker state.
+    // This catches containers spawned via Docker API (e.g. testcontainers-go)
+    // that don't appear as `docker run` subprocesses.
+    let mut containers: Vec<ContainerMetadata> = process_tree.iter()
+        .filter_map(|p| p.container.clone())
+        .collect();
+    let process_container_ids: std::collections::HashSet<String> =
+        containers.iter().map(|c| c.container_id.clone()).collect();
+    let containers_after = query_docker_containers();
+    for c in containers_after {
+        if !containers_before.contains(&c.container_id) && !process_container_ids.contains(&c.container_id) {
+            containers.push(c);
+        }
+    }
+
     // Aggregate metrics across the whole tree
     let total_read = process_tree.iter().map(|p| p.read_bytes).sum::<u64>();
     let total_write = process_tree.iter().map(|p| p.write_bytes).sum::<u64>();
@@ -662,6 +683,7 @@ fn execute_with_wait4(
             },
         ],
         process_tree,
+        containers,
     })
 }
 
@@ -762,5 +784,6 @@ fn execute_simple(
         stderr: output.stderr,
         events: vec![],
         process_tree: vec![],
+        containers: vec![],
     })
 }

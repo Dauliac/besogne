@@ -287,7 +287,7 @@ pub struct ServiceInput {
     pub validate: Option<HashMap<String, serde_json::Value>>,
 
     #[serde(default)]
-    pub after: Option<Vec<String>>,
+    pub parents: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -311,18 +311,18 @@ pub struct CommandInput {
     /// Opt out of caching: always run, never skip (deploy, notify, etc.)
     pub side_effects: Option<bool>,
 
-    /// Postconditions — what must be true after this command (was: outputs)
+    /// Postconditions — what must be true after this command
     #[serde(default)]
-    pub ensure: Option<Vec<EnsureSpec>>,
+    pub postconditions: Option<Vec<PostconditionSpec>>,
 
     /// Working directory for this command (relative to manifest dir).
     /// If omitted, runs in the manifest directory.
     #[serde(default)]
     pub workdir: Option<String>,
 
-    /// Ordering constraints (was: dependencies)
+    /// Parent inputs in the DAG — must complete before this command runs
     #[serde(default)]
-    pub after: Option<Vec<String>>,
+    pub parents: Option<Vec<String>>,
 
     #[serde(default)]
     pub validate: Option<HashMap<String, serde_json::Value>>,
@@ -334,6 +334,11 @@ pub struct CommandInput {
     /// Opt-in: disabled by default (output is non-deterministic in general).
     #[serde(default)]
     pub output: Option<OutputSpec>,
+
+    /// Extra args appended to `run` when --force is passed.
+    /// Useful for invalidating tool-specific caches (e.g. `go build -a`, `cargo build --force`).
+    #[serde(default)]
+    pub force_args: Option<Vec<String>>,
 }
 
 /// Specification for command output validation
@@ -459,11 +464,11 @@ pub struct ExtractConfig {
     pub fields: HashMap<String, String>,
 }
 
-/// Postcondition spec (was: OutputSpec)
+/// Postcondition spec — what must be true after a command runs
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnsureSpec {
+pub struct PostconditionSpec {
     #[serde(rename = "type")]
-    pub ensure_type: String,
+    pub postcondition_type: String,
 
     pub path: String,
 
