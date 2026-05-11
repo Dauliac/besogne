@@ -1,0 +1,11 @@
+{
+  "name": "env/nix",
+  "description": "Load environment from nix develop (flake devShell)",
+  "nodes": {
+    "nix": { "type": "binary" },
+    "flake-nix": { "type": "file", "path": "flake.nix" },
+    "flake-lock": { "type": "file", "path": "flake.lock" },
+    "eval": { "type": "command", "phase": "build", "run": ["nix", "print-dev-env", "--json"], "parents": ["flake-nix", "flake-lock", "nix"] },
+    "env": { "type": "source", "format": "json", "phase": "build" }
+  }
+}

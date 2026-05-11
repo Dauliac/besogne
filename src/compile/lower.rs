@@ -53,10 +53,9 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
 
     for (key, input) in &manifest.nodes {
         match input {
-            Node::Plugin(p) => {
+            Node::Plugin(_) => {
                 return Err(format!(
-                    "input '{key}': plugin '{}' not expanded before lowering (bug in compile pipeline)",
-                    p.plugin
+                    "input '{key}': plugin not expanded before lowering (bug in compile pipeline)"
                 ));
             }
             _ => {

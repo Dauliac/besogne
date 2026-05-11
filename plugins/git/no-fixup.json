@@ -1,25 +1,8 @@
 {
   "name": "git/no-fixup",
   "description": "Validate no fixup! or squash! commits exist on current branch",
-  "params": {
-    "base": { "type": "string", "optional": true, "default": "origin/master" }
-  },
-  "produces": [
-    {
-      "type": "command",
-      "description": "no fixup commits",
-      "run": "! git log --oneline {{ base }}..HEAD | grep -qE '^(fixup|squash)!'"
-    },
-    {
-      "type": "command",
-      "description": "list fixup commits",
-      "run": "git log --oneline {{ base }}..HEAD | grep -E '^(fixup|squash)!' || true",
-      "extract": {
-        "format": "text",
-        "fields": {
-          "GIT_FIXUP_COMMITS": "stdout"
-        }
-      }
-    }
-  ]
+  "nodes": {
+    "check": { "type": "command", "description": "no fixup commits", "run": "! git log --oneline origin/master..HEAD | grep -qE '^(fixup|squash)!'" },
+    "list": { "type": "command", "description": "list fixup commits", "run": "git log --oneline origin/master..HEAD | grep -E '^(fixup|squash)!' || true" }
+  }
 }

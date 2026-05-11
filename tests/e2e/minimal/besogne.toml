@@ -5,3 +5,15 @@ description = "Smallest valid besogne"
 type = "command"
 phase = "exec"
 run = ["echo", "hello from besogne"]
+
+[nodes.hello-stdout]
+type = "std"
+stream = "stdout"
+contains = ["hello from besogne"]
+parents = ["hello"]
+
+[nodes.hello-exit]
+type = "std"
+stream = "exit_code"
+expect = "0"
+parents = ["hello"]

@@ -1,38 +1,8 @@
 name = "nested-scripts"
 description = "Nested shell scripts: 3 levels deep, forks, sleep, pipes, traps"
 
-[nodes.sh]
-type = "binary"
-
-[nodes.head]
-type = "binary"
-
-[nodes.od]
-type = "binary"
-
-[nodes.tr]
-type = "binary"
-
-[nodes.tee]
-type = "binary"
-
-[nodes.cat]
-type = "binary"
-
-[nodes.date]
-type = "binary"
-
-[nodes.sleep]
-type = "binary"
-
-[nodes.mkdir]
-type = "binary"
-
-[nodes.rm]
-type = "binary"
-
-[nodes.seq]
-type = "binary"
+[nodes."coreutils/shell"]
+type = "plugin"
 
 [nodes.level1]
 type = "file"

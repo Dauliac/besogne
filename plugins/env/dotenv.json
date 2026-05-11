@@ -1,0 +1,8 @@
+{
+  "name": "env/dotenv",
+  "description": "Load environment from a .env file",
+  "nodes": {
+    "file": { "type": "file", "path": ".env" },
+    "env": { "type": "source", "format": "dotenv", "path": ".env" }
+  }
+}

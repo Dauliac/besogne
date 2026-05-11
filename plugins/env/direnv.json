@@ -1,0 +1,10 @@
+{
+  "name": "env/direnv",
+  "description": "Load environment from direnv (.envrc)",
+  "nodes": {
+    "direnv": { "type": "binary" },
+    "envrc": { "type": "file", "path": ".envrc" },
+    "eval": { "type": "command", "phase": "exec", "run": ["direnv", "export", "json"], "parents": ["envrc", "direnv"] },
+    "env": { "type": "source", "format": "json" }
+  }
+}

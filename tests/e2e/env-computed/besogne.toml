@@ -13,3 +13,9 @@ value = "hello-world"
 type = "command"
 phase = "exec"
 run = ["sh", "-c", "echo MY_VAR=$MY_VAR ANOTHER=$ANOTHER"]
+
+[nodes.check-stdout]
+type = "std"
+stream = "stdout"
+contains = ["MY_VAR=/custom/path", "ANOTHER=hello-world"]
+parents = ["check"]

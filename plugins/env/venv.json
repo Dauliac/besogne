@@ -1,0 +1,10 @@
+{
+  "name": "env/venv",
+  "description": "Load Python virtual environment",
+  "nodes": {
+    "python": { "type": "binary" },
+    "pyvenv-cfg": { "type": "file", "path": "venv/pyvenv.cfg" },
+    "VIRTUAL_ENV": { "type": "env", "value": "venv" },
+    "env": { "type": "source", "format": "dotenv", "path": "venv/pyvenv.cfg" }
+  }
+}

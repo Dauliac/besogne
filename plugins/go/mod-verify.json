@@ -1,1 +1,7 @@
-{"name":"go/mod-verify","description":"stub","params":{},"produces":[]}
+{
+  "name": "go/mod-verify",
+  "description": "Verify Go module dependencies are consistent with go.sum",
+  "nodes": {
+    "verify": { "type": "command", "description": "go mod verify", "run": ["go", "mod", "verify"] }
+  }
+}

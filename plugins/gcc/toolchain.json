@@ -1,0 +1,10 @@
+{
+  "name": "gcc/toolchain",
+  "description": "GCC compiler and internal tools spawned during C compilation",
+  "nodes": {
+    "gcc": { "type": "binary" },
+    "cc1": { "type": "binary", "parents": ["gcc"] },
+    "as": { "type": "binary" },
+    "ld": { "type": "binary" }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "env/conda",
+  "description": "Load Conda environment",
+  "nodes": {
+    "conda": { "type": "binary" },
+    "eval": { "type": "command", "phase": "exec", "run": ["conda", "env", "export", "--json"], "parents": ["conda"] },
+    "env": { "type": "source", "format": "json" }
+  }
+}

@@ -1,23 +1,8 @@
 {
   "name": "docker/registry",
-  "description": "Validate Docker registry authentication and extract user info",
-  "params": {
-    "registry": { "type": "string" }
-  },
-  "produces": [
-    {
-      "type": "command",
-      "description": "docker registry auth",
-      "run": ["docker", "login", "--get-login", "{{ registry }}"],
-      "extract": {
-        "format": "text",
-        "fields": {
-          "REGISTRY_USER": "stdout"
-        }
-      },
-      "validate": {
-        "REGISTRY_USER": "string"
-      }
-    }
-  ]
+  "description": "Validate Docker registry authentication",
+  "nodes": {
+    "docker/docker": { "type": "plugin" },
+    "auth": { "type": "command", "description": "docker registry auth", "run": ["docker", "login", "--get-login", "docker.io"] }
+  }
 }

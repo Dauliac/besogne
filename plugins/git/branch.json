@@ -1,34 +1,7 @@
 {
   "name": "git/branch",
-  "description": "Capture current git branch, optionally validate against expected name or pattern",
-  "params": {
-    "expect": { "type": "string", "optional": true },
-    "pattern": { "type": "string", "optional": true }
-  },
-  "produces": [
-    {
-      "type": "command",
-      "description": "git current branch",
-      "run": ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-      "extract": {
-        "format": "text",
-        "fields": {
-          "GIT_BRANCH": "stdout"
-        }
-      },
-      "validate": {
-        "GIT_BRANCH": {
-          "type": "string",
-          "pattern": "{{ pattern }}",
-          "when": "pattern"
-        },
-        "GIT_BRANCH_EXACT": {
-          "type": "string",
-          "pattern": "^{{ expect }}$",
-          "field": "GIT_BRANCH",
-          "when": { "all": ["expect", { "not": "pattern" }] }
-        }
-      }
-    }
-  ]
+  "description": "Capture current git branch",
+  "nodes": {
+    "branch": { "type": "command", "description": "git current branch", "run": ["git", "rev-parse", "--abbrev-ref", "HEAD"] }
+  }
 }

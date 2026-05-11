@@ -1,41 +1,8 @@
 {
   "name": "docker/daemon",
-  "description": "Validate Docker daemon is running and extract version metadata",
-  "params": {
-    "host": { "type": "string", "optional": true }
-  },
-  "produces": [
-    {
-      "type": "file",
-      "path": "/var/run/docker.sock",
-      "expect": "socket",
-      "when": { "not": "host" }
-    },
-    {
-      "type": "service",
-      "tcp": "{{ host }}",
-      "when": "host"
-    },
-    {
-      "type": "command",
-      "description": "docker daemon info",
-      "run": ["docker", "info", "--format", "{{json .}}"],
-      "env": {
-        "DOCKER_HOST": { "value": "{{ host }}", "when": "host" }
-      },
-      "extract": {
-        "format": "json",
-        "fields": {
-          "DOCKER_SERVER_VERSION": "$.ServerVersion",
-          "DOCKER_API_VERSION": "$.ClientInfo.APIVersion",
-          "DOCKER_OS": "$.OSType",
-          "DOCKER_ARCH": "$.Architecture"
-        }
-      },
-      "validate": {
-        "DOCKER_SERVER_VERSION": "string",
-        "DOCKER_OS": "string"
-      }
-    }
-  ]
+  "description": "Validate Docker daemon is running via local socket",
+  "nodes": {
+    "docker/docker": { "type": "plugin" },
+    "info": { "type": "command", "description": "docker daemon info", "run": ["docker", "info", "--format", "{{json .}}"] }
+  }
 }

@@ -1,0 +1,10 @@
+{
+  "name": "env/mise",
+  "description": "Load environment from mise (.mise.toml)",
+  "nodes": {
+    "mise": { "type": "binary" },
+    "config": { "type": "file", "path": ".mise.toml" },
+    "eval": { "type": "command", "phase": "exec", "run": ["mise", "env", "--json"], "parents": ["config", "mise"] },
+    "env": { "type": "source", "format": "json" }
+  }
+}

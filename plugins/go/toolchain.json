@@ -1,0 +1,11 @@
+{
+  "name": "go/toolchain",
+  "description": "Go compiler and internal tools spawned by go commands (test, build, etc.)",
+  "nodes": {
+    "go": { "type": "binary" },
+    "compile": { "type": "binary", "parents": ["go"] },
+    "link": { "type": "binary", "parents": ["go"] },
+    "vet": { "type": "binary", "parents": ["go"] },
+    "cgo": { "type": "binary", "parents": ["go"] }
+  }
+}

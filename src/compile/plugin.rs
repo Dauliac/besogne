@@ -1,5 +1,5 @@
 use crate::compile::nickel;
-use crate::manifest::{Node, Manifest};
+use crate::manifest::{Node, Manifest, PatchOp};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -27,6 +27,7 @@ pub fn expand_plugins(
                 let produced = expand_plugin_json(
                     key,
                     &plugin_input.overrides,
+                    &plugin_input.patch,
                     source,
                     manifest_path,
                     &mut visited,
@@ -80,6 +81,7 @@ fn parse_plugin_ref(plugin_ref: &str) -> Result<(String, String), String> {
 fn expand_plugin_json(
     plugin_ref: &str,
     overrides: &Option<HashMap<String, serde_json::Value>>,
+    patch: &Option<HashMap<String, HashMap<String, PatchOp>>>,
     source: &str,
     manifest_path: &Path,
     visited: &mut Vec<String>,
@@ -98,14 +100,22 @@ fn expand_plugin_json(
     let plugin_path = resolve_plugin_path(source, plugin_ref, manifest_path)?;
     let mut nodes = load_plugin_nodes(&plugin_path)?;
 
-    // Apply per-node overrides (shallow merge into matching nodes)
+    // Apply per-node overrides (shallow merge — replaces fields)
     if let Some(overrides) = overrides {
         for (node_key, partial) in overrides {
             if let Some(base) = nodes.get_mut(node_key) {
                 json_shallow_merge(base, partial);
             } else {
-                // Override adds a new node to the plugin
                 nodes.insert(node_key.clone(), partial.clone());
+            }
+        }
+    }
+
+    // Apply per-node patches (array operations — append/prepend/remove)
+    if let Some(patches) = patch {
+        for (node_key, field_patches) in patches {
+            if let Some(node) = nodes.get_mut(node_key) {
+                apply_patches(node, field_patches);
             }
         }
     }
@@ -128,10 +138,14 @@ fn expand_plugin_json(
             let sub_overrides = value
                 .get("overrides")
                 .and_then(|o| serde_json::from_value(o.clone()).ok());
+            let sub_patch = value
+                .get("patch")
+                .and_then(|p| serde_json::from_value(p.clone()).ok());
 
             let sub_nodes = expand_plugin_json(
                 sub_ref,
                 &sub_overrides,
+                &sub_patch,
                 source,
                 manifest_path,
                 visited,
@@ -210,6 +224,37 @@ fn inject_name_json(value: &mut serde_json::Value, key: &str) {
                 "name".to_string(),
                 serde_json::Value::String(key.to_string()),
             );
+        }
+    }
+}
+
+/// Apply array patches to a node's fields (append/prepend/remove by value).
+fn apply_patches(
+    node: &mut serde_json::Value,
+    field_patches: &HashMap<String, PatchOp>,
+) {
+    if let Some(obj) = node.as_object_mut() {
+        for (field, patch) in field_patches {
+            let arr = obj
+                .entry(field.clone())
+                .or_insert_with(|| serde_json::Value::Array(vec![]));
+
+            if let serde_json::Value::Array(arr) = arr {
+                // Remove by value
+                if let Some(remove_vals) = &patch.remove {
+                    arr.retain(|v| !remove_vals.contains(v));
+                }
+                // Prepend
+                if let Some(prepend_vals) = &patch.prepend {
+                    let mut new_arr = prepend_vals.clone();
+                    new_arr.append(arr);
+                    *arr = new_arr;
+                }
+                // Append
+                if let Some(append_vals) = &patch.append {
+                    arr.extend(append_vals.iter().cloned());
+                }
+            }
         }
     }
 }

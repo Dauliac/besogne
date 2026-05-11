@@ -1,0 +1,8 @@
+{
+  "name": "node/toolchain",
+  "description": "Node.js runtime and npm package manager",
+  "nodes": {
+    "node": { "type": "binary" },
+    "npm": { "type": "binary", "parents": ["node"] }
+  }
+}

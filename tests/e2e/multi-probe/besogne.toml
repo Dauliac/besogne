@@ -15,8 +15,8 @@ value = "/tmp/besogne-probe"
 type = "file"
 path = "data.txt"
 
-[nodes.sh]
-type = "binary"
+[nodes."coreutils/shell"]
+type = "plugin"
 
 [nodes.platform]
 type = "platform"

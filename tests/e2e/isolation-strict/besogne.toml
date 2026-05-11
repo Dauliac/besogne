@@ -2,8 +2,8 @@ name = "isolation-strict"
 description = "Strict env sandbox — only declared vars visible"
 sandbox = "strict"
 
-[nodes.sh]
-type = "binary"
+[nodes."coreutils/shell"]
+type = "plugin"
 
 [nodes.ALLOWED_VAR]
 type = "env"

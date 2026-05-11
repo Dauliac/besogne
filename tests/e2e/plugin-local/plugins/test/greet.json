@@ -1,24 +1,8 @@
 {
   "name": "test/greet",
   "description": "Test plugin: echoes a greeting",
-  "params": {
-    "message": { "type": "string" },
-    "loud": { "type": "bool", "optional": true }
-  },
-  "produces": [
-    {
-      "type": "command",
-      "name": "greet",
-      "phase": "exec",
-      "run": ["echo", "{{ message }}"]
-    },
-    {
-      "type": "command",
-      "name": "greet-loud",
-      "phase": "exec",
-      "run": ["sh", "-c", "echo '{{ message }}' | tr a-z A-Z"],
-      "parents": ["greet"],
-      "when": "loud"
-    }
-  ]
+  "nodes": {
+    "greet": { "type": "command", "phase": "exec", "run": ["echo", "hello"] },
+    "greet-loud": { "type": "command", "phase": "exec", "run": ["sh", "-c", "echo 'hello' | tr a-z A-Z"], "parents": ["greet"] }
+  }
 }

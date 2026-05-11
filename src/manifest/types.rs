@@ -346,10 +346,24 @@ pub struct MetricInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginInput {
-    /// Per-node overrides: node_name → partial node object to merge.
-    /// A plugin IS a manifest — overrides let you customize its nodes.
+    /// Per-node overrides: node_name → partial node object to merge (replaces fields).
     #[serde(default)]
     pub overrides: Option<HashMap<String, serde_json::Value>>,
+
+    /// Per-node array patches: node_name → field_name → { append, prepend, remove }.
+    #[serde(default)]
+    pub patch: Option<HashMap<String, HashMap<String, PatchOp>>>,
+}
+
+/// Array patch operations for plugin node fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchOp {
+    #[serde(default)]
+    pub append: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    pub prepend: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    pub remove: Option<Vec<serde_json::Value>>,
 }
 
 /// Source input — reads a map of env vars from a file or std parent.

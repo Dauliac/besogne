@@ -1,36 +1,14 @@
 name = "go-testcontainers"
 description = "Run Go tests with testcontainers (Docker)"
 
-[nodes.go]
-type = "binary"
+[nodes."go/toolchain"]
+type = "plugin"
 
-[nodes.docker]
-type = "binary"
+[nodes."gcc/toolchain"]
+type = "plugin"
 
-# Go toolchain internals (spawned by `go test`, not in PATH)
-[nodes.compile]
-type = "binary"
-parents = ["go"]
-
-[nodes.link]
-type = "binary"
-parents = ["go"]
-
-[nodes.vet]
-type = "binary"
-parents = ["go"]
-
-[nodes.cgo]
-type = "binary"
-parents = ["go"]
-
-# C compiler used by cgo for testcontainers native deps
-[nodes.gcc]
-type = "binary"
-
-[nodes.cc1]
-type = "binary"
-parents = ["gcc"]
+[nodes."docker/docker"]
+type = "plugin"
 
 # go test produces a test binary named after the module
 [nodes."testcontainers."]

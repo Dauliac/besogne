@@ -1,0 +1,8 @@
+{
+  "name": "python/toolchain",
+  "description": "Python interpreter binaries",
+  "nodes": {
+    "python3": { "type": "binary" },
+    "python": { "type": "binary", "parents": ["python3"] }
+  }
+}

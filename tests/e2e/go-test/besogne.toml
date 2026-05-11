@@ -1,8 +1,8 @@
 name = "go-test"
 description = "Run Go tests"
 
-[nodes.go]
-type = "binary"
+[nodes."go/toolchain"]
+type = "plugin"
 
 [nodes.go-mod]
 type = "file"
