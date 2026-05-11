@@ -1,3 +1,0 @@
-level2: project=besogne-nested stamp=1778507996
-subshell: start project=besogne-nested
-subshell: end

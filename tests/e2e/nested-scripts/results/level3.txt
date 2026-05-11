@@ -1,3 +1,0 @@
-level3: sum=6 fork_count=3
-level3: random=20fe9448305d8e07
-level3: trap fired project=besogne-nested
