@@ -14,6 +14,11 @@ pub struct ContextCache {
     pub besogne_hash: String,
     #[serde(default)]
     pub compiler_hash: String,
+    /// Structural hash of the cache format — auto-derived, no manual versioning.
+    /// ANY field change (add/remove/rename/retype) in ContextCache, CachedProbe,
+    /// CachedCommand, or LastRun produces a different hash → cache invalidated.
+    #[serde(default)]
+    pub schema_hash: String,
     pub probed_at: Option<String>,
     pub warmup: HashMap<String, CachedProbe>,
     pub last_run: Option<LastRun>,
@@ -32,6 +37,16 @@ pub struct CachedCommand {
     pub user_ms: u64,
     pub sys_ms: u64,
     pub max_rss_kb: u64,
+    #[serde(default)]
+    pub disk_read_bytes: u64,
+    #[serde(default)]
+    pub disk_write_bytes: u64,
+    #[serde(default)]
+    pub net_read_bytes: u64,
+    #[serde(default)]
+    pub net_write_bytes: u64,
+    #[serde(default)]
+    pub processes_spawned: u64,
     pub ran_at: String,
 }
 
@@ -54,33 +69,43 @@ pub struct LastRun {
 
 impl ContextCache {
     /// Load cache from disk, or return empty cache.
-    /// If the stored compiler_hash doesn't match the current binary, the cache is invalidated.
+    ///
+    /// Defense-in-depth invalidation — cache is rejected if ANY of:
+    /// 1. `compiler_hash` mismatch — besogne binary changed (code/schema change)
+    /// 2. `schema_hash` mismatch — cache struct shape changed (new fields, type changes)
+    /// 3. JSON deserialization fails — corrupt or incompatible format
     pub fn load(besogne_hash: &str) -> Self {
         let current_compiler = compiler_self_hash();
+        let current_schema = cache_schema_hash();
+        let fresh = || Self {
+            besogne_hash: besogne_hash.to_string(),
+            compiler_hash: current_compiler.clone(),
+            schema_hash: current_schema.clone(),
+            ..Default::default()
+        };
+
         let path = cache_path(&current_compiler, besogne_hash);
         match std::fs::read_to_string(&path) {
             Ok(content) => {
-                let mut loaded: Self = serde_json::from_str(&content).unwrap_or_else(|_| Self {
-                    besogne_hash: besogne_hash.to_string(),
-                    compiler_hash: current_compiler.clone(),
-                    ..Default::default()
-                });
-                // Double-check: if compiler_hash in file doesn't match, invalidate
+                let loaded: Self = match serde_json::from_str(&content) {
+                    Ok(c) => c,
+                    Err(_) => return fresh(), // corrupt/incompatible → invalidate
+                };
+                // Check compiler hash
                 if loaded.compiler_hash != current_compiler {
-                    return Self {
-                        besogne_hash: besogne_hash.to_string(),
-                        compiler_hash: current_compiler,
-                        ..Default::default()
-                    };
+                    return fresh();
                 }
-                loaded.besogne_hash = besogne_hash.to_string();
-                loaded
+                // Check schema hash — catches field additions/removals/renames
+                if !loaded.schema_hash.is_empty() && loaded.schema_hash != current_schema {
+                    return fresh();
+                }
+                Self {
+                    besogne_hash: besogne_hash.to_string(),
+                    schema_hash: current_schema,
+                    ..loaded
+                }
             }
-            Err(_) => Self {
-                besogne_hash: besogne_hash.to_string(),
-                compiler_hash: current_compiler,
-                ..Default::default()
-            },
+            Err(_) => fresh(),
         }
     }
 
@@ -169,6 +194,51 @@ fn cache_base_dir() -> PathBuf {
             format!("{home}/.cache")
         });
     Path::new(&cache_dir).join("besogne")
+}
+
+/// Structural hash of the cache format — auto-derived, no manual versioning.
+///
+/// Creates a canary instance with all fields populated, serializes to JSON,
+/// and hashes the output. ANY structural change to ContextCache, CachedProbe,
+/// CachedCommand, or LastRun (add/remove/rename/retype a field) produces
+/// different JSON → different hash → all caches invalidated automatically.
+fn cache_schema_hash() -> String {
+    let canary = ContextCache {
+        besogne_hash: "x".into(),
+        compiler_hash: "x".into(),
+        schema_hash: "x".into(),
+        probed_at: Some("x".into()),
+        warmup: HashMap::from([("k".into(), CachedProbe {
+            hash: "x".into(),
+            probed_at: "x".into(),
+            variables: HashMap::from([("k".into(), "v".into())]),
+        })]),
+        last_run: Some(LastRun {
+            input_hash: "x".into(),
+            output_hash: "x".into(),
+            exit_code: 0,
+            ran_at: "x".into(),
+            duration_ms: 0,
+            skipped: false,
+        }),
+        commands: HashMap::from([("k".into(), CachedCommand {
+            stdout: "x".into(),
+            stderr: "x".into(),
+            exit_code: 0,
+            wall_ms: 0,
+            user_ms: 0,
+            sys_ms: 0,
+            max_rss_kb: 0,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
+            net_read_bytes: 0,
+            net_write_bytes: 0,
+            processes_spawned: 0,
+            ran_at: "x".into(),
+        })]),
+    };
+    let json = serde_json::to_string(&canary).unwrap_or_default();
+    blake3::hash(json.as_bytes()).to_hex()[..8].to_string()
 }
 
 /// BLAKE3 hash of the current binary (the sealed besogne).

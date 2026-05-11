@@ -152,6 +152,121 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
+/// Shared metrics snapshot — used by both fresh and cached command rendering
+struct Metrics {
+    wall_ms: u64,
+    user_ms: u64,
+    sys_ms: u64,
+    max_rss_kb: u64,
+    disk_read_bytes: u64,
+    disk_write_bytes: u64,
+    net_read_bytes: u64,
+    net_write_bytes: u64,
+    processes_spawned: u64,
+}
+
+impl From<&CommandResult> for Metrics {
+    fn from(r: &CommandResult) -> Self {
+        Self {
+            wall_ms: r.wall_ms,
+            user_ms: r.user_ms,
+            sys_ms: r.sys_ms,
+            max_rss_kb: r.max_rss_kb,
+            disk_read_bytes: r.disk_read_bytes,
+            disk_write_bytes: r.disk_write_bytes,
+            net_read_bytes: r.net_read_bytes,
+            net_write_bytes: r.net_write_bytes,
+            processes_spawned: r.processes_spawned,
+        }
+    }
+}
+
+impl From<&CachedCommand> for Metrics {
+    fn from(c: &CachedCommand) -> Self {
+        Self {
+            wall_ms: c.wall_ms,
+            user_ms: c.user_ms,
+            sys_ms: c.sys_ms,
+            max_rss_kb: c.max_rss_kb,
+            disk_read_bytes: c.disk_read_bytes,
+            disk_write_bytes: c.disk_write_bytes,
+            net_read_bytes: c.net_read_bytes,
+            net_write_bytes: c.net_write_bytes,
+            processes_spawned: c.processes_spawned,
+        }
+    }
+}
+
+fn format_metrics_human(m: &Metrics) -> String {
+    let time = format!("\x1b[36m⏱ time:{:.3}s\x1b[0m", m.wall_ms as f64 / 1000.0);
+    let cpu = if m.user_ms > 0 || m.sys_ms > 0 {
+        let cores_used = if m.wall_ms > 0 {
+            (m.user_ms + m.sys_ms) as f64 / m.wall_ms as f64
+        } else { 0.0 };
+        format!(
+            "  \x1b[33m⚡ cpu:{:.2}s user + {:.2}s kernel ({:.1} cores)\x1b[0m",
+            m.user_ms as f64 / 1000.0,
+            m.sys_ms as f64 / 1000.0,
+            cores_used,
+        )
+    } else { String::new() };
+    let mem = if m.max_rss_kb > 0 {
+        format!("  \x1b[35m🧠 memory:{}\x1b[0m", format_bytes(m.max_rss_kb * 1024))
+    } else { String::new() };
+    let disk = if m.disk_read_bytes > 0 || m.disk_write_bytes > 0 {
+        format!("  \x1b[34m💾 disk:↓{} ↑{}\x1b[0m", format_bytes(m.disk_read_bytes), format_bytes(m.disk_write_bytes))
+    } else { String::new() };
+    let net = if m.net_read_bytes > 0 || m.net_write_bytes > 0 {
+        format!("  \x1b[32m🌐 net:↓{} ↑{}\x1b[0m", format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes))
+    } else { String::new() };
+    let procs = format!("  \x1b[31m🔀 processes:{}\x1b[0m", m.processes_spawned + 1);
+    format!("{time}{cpu}{mem}{disk}{net}{procs}")
+}
+
+fn format_metrics_ci(m: &Metrics) -> String {
+    let time = format!("{:.3}s", m.wall_ms as f64 / 1000.0);
+    let cpu = if m.user_ms > 0 || m.sys_ms > 0 {
+        let cores_used = if m.wall_ms > 0 {
+            (m.user_ms + m.sys_ms) as f64 / m.wall_ms as f64
+        } else { 0.0 };
+        format!(
+            "  cpu:{:.2}s user + {:.2}s kernel ({:.1} cores)",
+            m.user_ms as f64 / 1000.0,
+            m.sys_ms as f64 / 1000.0,
+            cores_used,
+        )
+    } else { String::new() };
+    let mem = if m.max_rss_kb > 0 {
+        format!("  memory:{}", format_bytes(m.max_rss_kb * 1024))
+    } else { String::new() };
+    let disk = if m.disk_read_bytes > 0 || m.disk_write_bytes > 0 {
+        format!("  disk:↓{} ↑{}", format_bytes(m.disk_read_bytes), format_bytes(m.disk_write_bytes))
+    } else { String::new() };
+    let net = if m.net_read_bytes > 0 || m.net_write_bytes > 0 {
+        format!("  net:↓{} ↑{}", format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes))
+    } else { String::new() };
+    let procs = format!("  processes:{}", m.processes_spawned + 1);
+    format!("{time}{cpu}{mem}{disk}{net}{procs}")
+}
+
+fn format_metrics_json(m: &Metrics) -> serde_json::Value {
+    let cores_used = if m.wall_ms > 0 {
+        (m.user_ms + m.sys_ms) as f64 / m.wall_ms as f64
+    } else { 0.0 };
+    serde_json::json!({
+        "time_ms": m.wall_ms,
+        "cpu_user_ms": m.user_ms,
+        "cpu_kernel_ms": m.sys_ms,
+        "cpu_cores_used": cores_used,
+        "memory_bytes": m.max_rss_kb * 1024,
+        "disk_read_bytes": m.disk_read_bytes,
+        "disk_write_bytes": m.disk_write_bytes,
+        "net_download_bytes": m.net_read_bytes,
+        "net_upload_bytes": m.net_write_bytes,
+        "processes": m.processes_spawned + 1,
+    })
+}
+
 // ── Human renderer ──────────────────────────────────────────────────
 
 pub struct HumanRenderer;
@@ -203,41 +318,11 @@ impl OutputRenderer for HumanRenderer {
     }
 
     fn on_command_end(&mut self, name: &str, result: &CommandResult) {
-        let time = format!("\x1b[36m⏱ time:{:.3}s\x1b[0m", result.wall_ms as f64 / 1000.0);
-        let cpu = if result.user_ms > 0 || result.sys_ms > 0 {
-            let cores_used = if result.wall_ms > 0 {
-                (result.user_ms + result.sys_ms) as f64 / result.wall_ms as f64
-            } else { 0.0 };
-            format!(
-                "  \x1b[33m⚡ cpu:{:.2}s user + {:.2}s kernel ({:.1} cores)\x1b[0m",
-                result.user_ms as f64 / 1000.0,
-                result.sys_ms as f64 / 1000.0,
-                cores_used,
-            )
-        } else { String::new() };
-        let mem = if result.max_rss_kb > 0 {
-            format!("  \x1b[35m🧠 memory:{}\x1b[0m", format_bytes(result.max_rss_kb * 1024))
-        } else { String::new() };
-        let disk = {
-            let r = result.disk_read_bytes;
-            let w = result.disk_write_bytes;
-            if r > 0 || w > 0 {
-                format!("  \x1b[34m💾 disk:read {} write {}\x1b[0m", format_bytes(r), format_bytes(w))
-            } else { String::new() }
-        };
-        let net = {
-            let r = result.net_read_bytes;
-            let w = result.net_write_bytes;
-            if r > 0 || w > 0 {
-                format!("  \x1b[32m🌐 net:download {} upload {}\x1b[0m", format_bytes(r), format_bytes(w))
-            } else { String::new() }
-        };
-        let procs = format!("  \x1b[31m🔀 processes:{}\x1b[0m", result.processes_spawned + 1);
-
+        let metrics = format_metrics_human(&Metrics::from(result));
         if result.exit_code == 0 {
-            eprintln!("  \x1b[32mok\x1b[0m {name}  {time}{cpu}{mem}{disk}{net}{procs}");
+            eprintln!("  \x1b[32mok\x1b[0m {name}  {metrics}");
         } else {
-            eprintln!("  \x1b[31mfail\x1b[0m {name}  exit {}  {time}{cpu}{mem}{disk}{net}{procs}", result.exit_code);
+            eprintln!("  \x1b[31mfail\x1b[0m {name}  exit {}  {metrics}", result.exit_code);
         }
     }
 
@@ -257,22 +342,8 @@ impl OutputRenderer for HumanRenderer {
                 eprintln!("    \x1b[2m{line}\x1b[0m");
             }
         }
-        let time = format!("time:{:.3}s", cached.wall_ms as f64 / 1000.0);
-        let cpu = if cached.user_ms > 0 || cached.sys_ms > 0 {
-            format!(
-                "  cpu:{:.2}s user + {:.2}s kernel",
-                cached.user_ms as f64 / 1000.0,
-                cached.sys_ms as f64 / 1000.0,
-            )
-        } else {
-            String::new()
-        };
-        let mem = if cached.max_rss_kb > 0 {
-            format!("  memory:{:.1}MB", cached.max_rss_kb as f64 / 1024.0)
-        } else {
-            String::new()
-        };
-        eprintln!("  \x1b[33mcached\x1b[0m {name}  {time}{cpu}{mem}");
+        let metrics = format_metrics_human(&Metrics::from(cached));
+        eprintln!("  \x1b[33mcached\x1b[0m {name}  {metrics}");
     }
 
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64) {
@@ -376,39 +447,29 @@ impl OutputRenderer for JsonRenderer {
     }
 
     fn on_command_end(&mut self, name: &str, result: &CommandResult) {
-        let cores_used = if result.wall_ms > 0 {
-            (result.user_ms + result.sys_ms) as f64 / result.wall_ms as f64
-        } else { 0.0 };
-        self.emit(&serde_json::json!({
+        let mut obj = serde_json::json!({
             "event": "command_end",
             "name": name,
             "exit_code": result.exit_code,
-            "time_ms": result.wall_ms,
-            "cpu_user_ms": result.user_ms,
-            "cpu_kernel_ms": result.sys_ms,
-            "cpu_cores_used": cores_used,
-            "memory_bytes": result.max_rss_kb * 1024,
-            "disk_read_bytes": result.disk_read_bytes,
-            "disk_write_bytes": result.disk_write_bytes,
-            "net_download_bytes": result.net_read_bytes,
-            "net_upload_bytes": result.net_write_bytes,
-            "processes": result.processes_spawned + 1,
-            "context_switches_voluntary": result.voluntary_cs,
-            "context_switches_involuntary": result.involuntary_cs,
-        }));
+        });
+        let metrics = format_metrics_json(&Metrics::from(result));
+        obj.as_object_mut().unwrap().extend(metrics.as_object().unwrap().clone());
+        self.emit(&obj);
     }
 
     fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand) {
-        self.emit(&serde_json::json!({
+        let mut obj = serde_json::json!({
             "event": "command_cached",
             "name": name,
             "exec": exec,
             "exit_code": cached.exit_code,
-            "time_ms": cached.wall_ms,
             "ran_at": cached.ran_at,
             "stdout": cached.stdout,
             "stderr": cached.stderr,
-        }));
+        });
+        let metrics = format_metrics_json(&Metrics::from(cached));
+        obj.as_object_mut().unwrap().extend(metrics.as_object().unwrap().clone());
+        self.emit(&obj);
     }
 
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64) {
@@ -468,40 +529,11 @@ impl OutputRenderer for CiRenderer {
     }
 
     fn on_command_end(&mut self, name: &str, result: &CommandResult) {
-        let time = format!("{:.3}s", result.wall_ms as f64 / 1000.0);
-        let mem = if result.max_rss_kb > 0 {
-            format!("  memory:{}", format_bytes(result.max_rss_kb * 1024))
-        } else { String::new() };
-        let disk = {
-            let r = result.disk_read_bytes;
-            let w = result.disk_write_bytes;
-            if r > 0 || w > 0 {
-                format!("  disk:read {} write {}", format_bytes(r), format_bytes(w))
-            } else { String::new() }
-        };
-        let cpu = if result.user_ms > 0 || result.sys_ms > 0 {
-            let cores_used = if result.wall_ms > 0 {
-                (result.user_ms + result.sys_ms) as f64 / result.wall_ms as f64
-            } else { 0.0 };
-            format!(
-                "  cpu:{:.2}s user + {:.2}s kernel ({:.1} cores)",
-                result.user_ms as f64 / 1000.0,
-                result.sys_ms as f64 / 1000.0,
-                cores_used,
-            )
-        } else { String::new() };
-        let net = {
-            let r = result.net_read_bytes;
-            let w = result.net_write_bytes;
-            if r > 0 || w > 0 {
-                format!("  net:download {} upload {}", format_bytes(r), format_bytes(w))
-            } else { String::new() }
-        };
-        let procs = format!("  processes:{}", result.processes_spawned + 1);
+        let metrics = format_metrics_ci(&Metrics::from(result));
         if result.exit_code == 0 {
-            eprintln!("  [PASS] {name}  {time}{cpu}{mem}{disk}{net}{procs}");
+            eprintln!("  [PASS] {name}  {metrics}");
         } else {
-            eprintln!("  [FAIL] {name}  exit {}  {time}{cpu}{mem}{disk}{net}{procs}", result.exit_code);
+            eprintln!("  [FAIL] {name}  exit {}  {metrics}", result.exit_code);
         }
         eprintln!("::endgroup::");
     }
@@ -514,8 +546,8 @@ impl OutputRenderer for CiRenderer {
         if !cached.stderr.is_empty() {
             for line in cached.stderr.lines() { eprintln!("    {line}"); }
         }
-        let time = format!("{:.3}s", cached.wall_ms as f64 / 1000.0);
-        eprintln!("  [CACHE] {name}  {time}");
+        let metrics = format_metrics_ci(&Metrics::from(cached));
+        eprintln!("  [CACHE] {name}  {metrics}");
         eprintln!("::endgroup::");
     }
 

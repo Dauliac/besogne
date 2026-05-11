@@ -280,6 +280,11 @@ fn execute_dag(
                             user_ms: result.user_ms,
                             sys_ms: result.sys_ms,
                             max_rss_kb: result.max_rss_kb,
+                            disk_read_bytes: result.disk_read_bytes,
+                            disk_write_bytes: result.disk_write_bytes,
+                            net_read_bytes: result.net_read_bytes,
+                            net_write_bytes: result.net_write_bytes,
+                            processes_spawned: result.processes_spawned,
                             ran_at: chrono::Utc::now().to_rfc3339(),
                         },
                     );

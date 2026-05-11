@@ -26,14 +26,14 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
     // 2b. Build-time binary resolution — shift-left validation
     resolve_build_binaries(&mut ir)?;
 
-    // 3. Check compile cache
+    // 3. Check compile cache — key = H(compiler_binary + ir_json)
+    //    Compiler change → new hash → cache miss (even if manifest unchanged)
     let ir_json = serde_json::to_vec(&ir)
         .map_err(|e| format!("cannot serialize IR for cache key: {e}"))?;
-    let cache_hash = blake3::hash(&ir_json).to_hex()[..32].to_string();
+    let cache_hash = compile_cache_key(&ir_json);
     let cached_path = compile_cache_path(&cache_hash);
 
     if cached_path.exists() {
-        // Cache hit — copy cached binary to output
         std::fs::copy(&cached_path, output_path)
             .map_err(|e| format!("cannot copy cached binary: {e}"))?;
         #[cfg(unix)]
@@ -70,7 +70,7 @@ pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), Str
 
     let ir_json = serde_json::to_vec(&ir)
         .map_err(|e| format!("cannot serialize IR for cache key: {e}"))?;
-    let cache_hash = blake3::hash(&ir_json).to_hex()[..32].to_string();
+    let cache_hash = compile_cache_key(&ir_json);
     let cached_path = compile_cache_path(&cache_hash);
 
     if cached_path.exists() {
@@ -187,6 +187,18 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
             errors.join("\n  ")
         ))
     }
+}
+
+/// Compile cache key = H(compiler_binary_hash + ir_json).
+/// Ensures that ANY code change invalidates all compiled binaries,
+/// even if the manifest content is identical.
+fn compile_cache_key(ir_json: &[u8]) -> String {
+    let compiler_hash = crate::runtime::cache::compiler_self_hash();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(compiler_hash.as_bytes());
+    hasher.update(b":");
+    hasher.update(ir_json);
+    hasher.finalize().to_hex()[..32].to_string()
 }
 
 fn compile_cache_path(hash: &str) -> PathBuf {

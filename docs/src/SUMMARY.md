@@ -17,6 +17,7 @@
 - [Sandbox execution](./how-to/sandbox.md)
 - [Use flags](./how-to/flags.md)
 - [Docker integration](./how-to/docker.md)
+- [Verify idempotency](./how-to/verify.md)
 
 # Reference
 
