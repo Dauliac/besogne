@@ -419,17 +419,68 @@ fn format_process_tree_human(tree: &[ProcessMetrics]) {
         }
     }
     print_tree_node(tree, &children, 0, "    ", true);
+    format_containers_human(tree);
+}
+
+/// Show a summary footer for Docker containers detected in the process tree.
+fn format_containers_human(tree: &[ProcessMetrics]) {
+    let containers: Vec<_> = tree.iter()
+        .filter_map(|p| p.container.as_ref())
+        .collect();
+    if containers.is_empty() { return; }
+    eprintln!(
+        "    \x1b[2;35m┌ containers\x1b[0m \x1b[35m({} detected)\x1b[0m",
+        containers.len(),
+    );
+    for (i, c) in containers.iter().enumerate() {
+        let connector = if i == containers.len() - 1 { "└─" } else { "├─" };
+        let name = if c.container_name.is_empty() {
+            String::new()
+        } else {
+            format!(" \x1b[1;37m{}\x1b[0m", c.container_name)
+        };
+        let ports = if c.ports.is_empty() {
+            String::new()
+        } else {
+            format!("  \x1b[36m{}\x1b[0m", c.ports.join(", "))
+        };
+        let status = if c.status.is_empty() {
+            String::new()
+        } else {
+            format!("  \x1b[2m{}\x1b[0m", c.status)
+        };
+        eprintln!(
+            "    {connector} \x1b[35m{}\x1b[0m \x1b[2m{}\x1b[0m{name}{ports}{status}",
+            &c.container_id, c.image,
+        );
+    }
 }
 
 /// Label for a process tree node: prefer cmdline (full path), fall back to comm, then pid.
+/// Long paths (especially nix store paths) are shortened via `crop_path`.
 fn process_label(p: &ProcessMetrics) -> String {
     if !p.cmdline.is_empty() {
-        p.cmdline.clone()
+        crop_cmdline(&p.cmdline, 80)
     } else if !p.comm.is_empty() {
         p.comm.clone()
     } else {
         format!("pid:{}", p.pid)
     }
+}
+
+/// Shorten all absolute paths in a command line string using `crop_path`.
+fn crop_cmdline(cmdline: &str, max_path_len: usize) -> String {
+    cmdline
+        .split(' ')
+        .map(|token| {
+            if token.starts_with('/') {
+                crop_path(token, max_path_len)
+            } else {
+                token.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn print_tree_node(

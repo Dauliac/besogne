@@ -246,6 +246,13 @@ pub struct BinaryInput {
     #[serde(default)]
     pub version: Option<String>,
 
+    /// Parent binary inputs this binary is embedded in (e.g. Go toolchain internals).
+    /// Binaries with parents skip PATH resolution — their hash is derived from the
+    /// parent(s) hash. This handles toolchain-internal binaries like `compile`, `link`,
+    /// `vet` that live inside `$GOROOT/pkg/tool/` rather than in PATH.
+    #[serde(default)]
+    pub parents: Option<Vec<String>>,
+
     #[serde(default)]
     pub phase: Option<Phase>,
 

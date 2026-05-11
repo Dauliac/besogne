@@ -170,6 +170,10 @@ pub enum ResolvedNativeInput {
         path: Option<String>,
         #[serde(default)]
         version_constraint: Option<String>,
+        /// Parent binary names — this binary is embedded in (e.g. Go's `compile` inside `go`).
+        /// Skips PATH resolution; hash derived from parent(s).
+        #[serde(default)]
+        parents: Vec<String>,
         /// Build-time resolved: detected source (Nix/Mise/System)
         #[serde(default)]
         source: Option<BinarySourceResolved>,

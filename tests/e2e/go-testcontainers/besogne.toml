@@ -7,6 +7,36 @@ type = "binary"
 [inputs.docker]
 type = "binary"
 
+# Go toolchain internals (spawned by `go test`, not in PATH)
+[inputs.compile]
+type = "binary"
+parents = ["go"]
+
+[inputs.link]
+type = "binary"
+parents = ["go"]
+
+[inputs.vet]
+type = "binary"
+parents = ["go"]
+
+[inputs.cgo]
+type = "binary"
+parents = ["go"]
+
+# C compiler used by cgo for testcontainers native deps
+[inputs.gcc]
+type = "binary"
+
+[inputs.cc1]
+type = "binary"
+parents = ["gcc"]
+
+# go test produces a test binary named after the module
+[inputs."testcontainers."]
+type = "binary"
+parents = ["go"]
+
 [inputs.go-mod]
 type = "file"
 path = "go.mod"

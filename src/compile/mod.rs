@@ -130,17 +130,23 @@ fn resolve_build_binaries(ir: &mut BesogneIR) -> Result<(), String> {
 fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), String> {
     let mut errors = Vec::new();
 
-    for input in &mut ir.inputs {
+    // First pass: resolve all binaries WITHOUT parents (normal PATH resolution)
+    for input in ir.inputs.iter_mut() {
         if let ResolvedNativeInput::Binary {
             name,
             path,
             version_constraint,
+            parents,
             source,
             resolved_path,
             resolved_version,
             binary_hash,
         } = &mut input.input
         {
+            if !parents.is_empty() {
+                continue; // handled in second pass
+            }
+
             let has_version_field = version_constraint.is_some();
 
             match binary::resolve_binary(name, path.as_deref(), has_version_field) {
@@ -183,7 +189,92 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
                     }
                 }
                 Err(e) => {
-                    errors.push(format!("binary '{name}': {e}"));
+                    let parents_info = if !parents.is_empty() {
+                        format!(" (parents: [{}])", parents.join(", "))
+                    } else {
+                        String::new()
+                    };
+                    errors.push(format!(
+                        "\x1b[1;31merror\x1b[0m: binary \x1b[1m'{name}'\x1b[0m not found{parents_info}\n\
+                         \x1b[1;34m  -->\x1b[0m manifest [inputs.{name}]\n\
+                         \x1b[1;34m   |\x1b[0m\n\
+                         \x1b[1;34m   |\x1b[0m  [inputs.{name}]\n\
+                         \x1b[1;34m   |\x1b[0m  type = \"binary\"\n\
+                         \x1b[1;34m   |\x1b[0m\n\
+                         \x1b[1;34m   =\x1b[0m {e}\n\
+                         \x1b[1;34m   =\x1b[0m \x1b[33mhint\x1b[0m: add it to PATH, set an explicit \"path\" field, or remove this input"
+                    ));
+                }
+            }
+        }
+    }
+
+    if !errors.is_empty() {
+        return Err(errors.join("\n\n"));
+    }
+
+    // Collect resolved hashes by binary name (for parent lookups)
+    let resolved_hashes: std::collections::HashMap<String, String> = ir.inputs.iter()
+        .filter_map(|i| {
+            if let ResolvedNativeInput::Binary { name, binary_hash: Some(h), parents, .. } = &i.input {
+                if parents.is_empty() {
+                    return Some((name.clone(), h.clone()));
+                }
+            }
+            None
+        })
+        .collect();
+
+    // Second pass: resolve binaries WITH parents (derive hash from parent hashes)
+    for input in ir.inputs.iter_mut() {
+        if let ResolvedNativeInput::Binary {
+            name,
+            parents,
+            binary_hash,
+            ..
+        } = &mut input.input
+        {
+            if parents.is_empty() {
+                continue; // already resolved
+            }
+
+            // Derive hash from all parent hashes
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(b"child:");
+            hasher.update(name.as_bytes());
+            for parent_name in parents.iter() {
+                match resolved_hashes.get(parent_name) {
+                    Some(parent_hash) => {
+                        hasher.update(b":");
+                        hasher.update(parent_hash.as_bytes());
+                    }
+                    None => {
+                        errors.push(format!(
+                            "\x1b[1;31merror\x1b[0m: binary \x1b[1m'{name}'\x1b[0m parent not found\n\
+                             \x1b[1;34m  -->\x1b[0m manifest [inputs.{name}]\n\
+                             \x1b[1;34m   |\x1b[0m\n\
+                             \x1b[1;34m   |\x1b[0m  parents = [\"{parent_name}\"]\n\
+                             \x1b[1;34m   |\x1b[0m\n\
+                             \x1b[1;34m   =\x1b[0m parent '{parent_name}' not found or not resolved\n\
+                             \x1b[1;34m   =\x1b[0m \x1b[33mhint\x1b[0m: '{parent_name}' must be declared as a binary input"
+                        ));
+                    }
+                }
+            }
+
+            if errors.is_empty() {
+                let derived_hash = hasher.finalize().to_hex().to_string();
+                *binary_hash = Some(derived_hash.clone());
+
+                input.sealed = Some(SealedSnapshot {
+                    hash: derived_hash,
+                    size: None,
+                    verified_at: chrono::Utc::now().to_rfc3339(),
+                });
+
+                if !quiet {
+                    let parent_list = parents.join(", ");
+                    eprintln!("besogne: resolved binary '{name}' → derived from [{parent_list}]");
                 }
             }
         }

@@ -405,6 +405,7 @@ mod tests {
                 name: "sh".into(),
                 path: Some("/bin/sh".into()),
                 version_constraint: None,
+                parents: vec![],
                 source: None,
                 resolved_path: Some("/bin/sh".into()),
                 resolved_version: None,

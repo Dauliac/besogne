@@ -113,10 +113,12 @@ fn lower_input(key: &str, input: &Input, base_workdir: &str) -> Result<ResolvedI
                 .version
                 .clone()
                 .or_else(|| extract_version_constraint(&b.validate));
+            let parents = b.parents.clone().unwrap_or_default();
             let native = ResolvedNativeInput::Binary {
                 name: bin_name.clone(),
                 path: b.path.clone(),
                 version_constraint,
+                parents,
                 source: None,
                 resolved_path: None,
                 resolved_version: None,
