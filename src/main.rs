@@ -220,20 +220,40 @@ fn main() -> ExitCode {
             }
 
             let mut failed = false;
+            let cwd = std::env::current_dir().unwrap_or_default();
+
             for manifest_path in &manifests {
+                let stem = manifest_path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("besogne");
+                let name = stem.strip_suffix(".besogne").unwrap_or(stem);
+
                 let out = output.clone().unwrap_or_else(|| {
-                    // Derive output name from manifest: foo.besogne.json → foo
-                    let stem = manifest_path.file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("besogne");
-                    // Strip .besogne suffix if present
-                    let name = stem.strip_suffix(".besogne").unwrap_or(stem);
-                    manifest_path.parent().unwrap_or(std::path::Path::new(".")).join(name)
+                    // Default: .besogne/<name> symlink
+                    cwd.join(".besogne").join(name)
                 });
 
                 match compile::compile(manifest_path, &out) {
-                    Ok(()) => {
-                        eprintln!("besogne: built {} → {}", manifest_path.display(), out.display());
+                    Ok(store_path) => {
+                        // Create .besogne/ symlink if no explicit -o
+                        if output.is_none() {
+                            let link_dir = cwd.join(".besogne");
+                            let _ = std::fs::create_dir_all(&link_dir);
+                            let link_path = link_dir.join(name);
+                            // Remove old symlink/file if exists
+                            let _ = std::fs::remove_file(&link_path);
+                            #[cfg(unix)]
+                            {
+                                let _ = std::os::unix::fs::symlink(&store_path, &link_path);
+                            }
+                            eprintln!(
+                                "besogne: built {} → .besogne/{} (store: {})",
+                                manifest_path.display(), name,
+                                &store_path.display().to_string().chars().rev().take(40).collect::<String>().chars().rev().collect::<String>()
+                            );
+                        } else {
+                            eprintln!("besogne: built {} → {}", manifest_path.display(), out.display());
+                        }
                     }
                     Err(e) => {
                         eprintln!("{}", output::style::error_diag(&format!("{}: {e}", manifest_path.display())));

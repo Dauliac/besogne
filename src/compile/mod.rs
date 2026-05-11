@@ -9,9 +9,10 @@ use crate::output::style::{self, DiagBuilder};
 use crate::probe::binary;
 use std::path::{Path, PathBuf};
 
-/// Compile a manifest into a self-contained binary.
-/// Uses a content-addressed cache in $XDG_CACHE_HOME/besogne/compiled/ to avoid rebuilds.
-pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
+/// Compile a manifest into a self-contained binary in the global store.
+/// Returns the store path of the binary.
+/// Uses a content-addressed cache in $XDG_CACHE_HOME/besogne/store/ — same IR = same binary.
+pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, String> {
     // 1. Parse manifest
     let mut manifest = manifest::load_manifest(manifest_path)?;
 
@@ -27,16 +28,16 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
     // 2b. Build-time binary resolution — shift-left validation
     resolve_build_binaries(&mut ir)?;
 
-    // 3. Check compile cache — key = H(compiler_binary + ir_json)
-    //    Compiler change → new hash → cache miss (even if manifest unchanged)
+    // 3. Check content-addressed store
     let ir_json = serde_json::to_vec(&ir)
         .map_err(|e| format!("cannot serialize IR for cache key: {e}"))?;
     let cache_hash = compile_cache_key(&ir_json);
-    let cached_path = compile_cache_path(&cache_hash);
+    let store_binary = store_binary_path(&cache_hash);
 
-    if cached_path.exists() {
-        std::fs::copy(&cached_path, output_path)
-            .map_err(|e| format!("cannot copy cached binary: {e}"))?;
+    if store_binary.exists() {
+        // Store hit — copy or symlink to output
+        std::fs::copy(&store_binary, output_path)
+            .map_err(|e| format!("cannot copy from store: {e}"))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -44,20 +45,21 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
             std::fs::set_permissions(output_path, perms)
                 .map_err(|e| format!("cannot set permissions: {e}"))?;
         }
-        eprintln!("besogne: cache hit ({cache_hash})");
-        return Ok(());
+        eprintln!("besogne: store hit ({cache_hash})");
+        return Ok(store_binary);
     }
 
-    // 4. Cache miss — emit binary
-    embed::emit(output_path, &ir)?;
-
-    // 5. Store in cache
-    if let Some(parent) = cached_path.parent() {
+    // 4. Store miss — emit binary directly to store
+    if let Some(parent) = store_binary.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::copy(output_path, &cached_path);
+    embed::emit(&store_binary, &ir)?;
 
-    Ok(())
+    // 5. Copy to output path
+    std::fs::copy(&store_binary, output_path)
+        .map_err(|e| format!("cannot copy to output: {e}"))?;
+
+    Ok(store_binary)
 }
 
 /// Compile without progress messages (for `besogne run` where the binary handles output)
@@ -72,11 +74,11 @@ pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), Str
     let ir_json = serde_json::to_vec(&ir)
         .map_err(|e| format!("cannot serialize IR for cache key: {e}"))?;
     let cache_hash = compile_cache_key(&ir_json);
-    let cached_path = compile_cache_path(&cache_hash);
+    let store_bin = store_binary_path(&cache_hash);
 
-    if cached_path.exists() {
-        std::fs::copy(&cached_path, output_path)
-            .map_err(|e| format!("cannot copy cached binary: {e}"))?;
+    if store_bin.exists() {
+        std::fs::copy(&store_bin, output_path)
+            .map_err(|e| format!("cannot copy from store: {e}"))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -87,12 +89,12 @@ pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), Str
         return Ok(());
     }
 
-    embed::emit(output_path, &ir)?;
-
-    if let Some(parent) = cached_path.parent() {
+    if let Some(parent) = store_bin.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::copy(output_path, &cached_path);
+    embed::emit(&store_bin, &ir)?;
+    std::fs::copy(&store_bin, output_path)
+        .map_err(|e| format!("cannot copy to output: {e}"))?;
 
     Ok(())
 }
@@ -305,13 +307,15 @@ fn compile_cache_key(ir_json: &[u8]) -> String {
     hasher.finalize().to_hex()[..32].to_string()
 }
 
-fn compile_cache_path(hash: &str) -> PathBuf {
+/// Content-addressed store path: ~/.cache/besogne/store/{hash}/binary
+fn store_binary_path(hash: &str) -> PathBuf {
     let cache_dir = std::env::var("XDG_CACHE_HOME").unwrap_or_else(|_| {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         format!("{home}/.cache")
     });
     Path::new(&cache_dir)
         .join("besogne")
-        .join("compiled")
+        .join("store")
         .join(hash)
+        .join("binary")
 }
