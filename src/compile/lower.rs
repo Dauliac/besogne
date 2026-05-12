@@ -132,8 +132,9 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
                 name: Some(key.to_string()),
                 tcp: s.tcp.clone(),
                 http: s.http.clone(),
+                retry: lower_retry(&s.retry)?,
             };
-            let phase = s.phase.clone().unwrap_or(Phase::Seal);
+            let phase = s.phase.clone().unwrap_or(Phase::Exec);
             let id = ContentId::from_content("service", identifier, identifier.as_bytes());
             (native, phase, id)
         }
@@ -152,21 +153,13 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
                 workdir: cmd_workdir,
                 force_args: c.force_args.clone().unwrap_or_default(),
                 debug_args: c.debug_args.clone().unwrap_or_default(),
+                retry: lower_retry(&c.retry)?,
             };
             let phase = c.phase.clone().unwrap_or(Phase::Exec);
             let id = ContentId::from_content("command", key, key.as_bytes());
             (native, phase, id)
         }
 
-        Node::User(u) => {
-            let identifier = u.in_group.as_deref().unwrap_or("current");
-            let native = ResolvedNativeNode::User {
-                in_group: u.in_group.clone(),
-            };
-            let phase = u.phase.clone().unwrap_or(Phase::Seal);
-            let id = ContentId::from_content("user", identifier, identifier.as_bytes());
-            (native, phase, id)
-        }
 
         Node::Platform(p) => {
             let identifier = format!(
@@ -187,8 +180,9 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
             let native = ResolvedNativeNode::Dns {
                 host: d.host.clone(),
                 expect: d.expect.clone(),
+                retry: lower_retry(&d.retry)?,
             };
-            let phase = d.phase.clone().unwrap_or(Phase::Seal);
+            let phase = d.phase.clone().unwrap_or(Phase::Exec);
             let id = ContentId::from_content("dns", &d.host, d.host.as_bytes());
             (native, phase, id)
         }
@@ -198,7 +192,7 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
                 metric: m.metric.clone(),
                 path: m.path.clone(),
             };
-            let phase = m.phase.clone().unwrap_or(Phase::Seal);
+            let phase = m.phase.clone().unwrap_or(Phase::Exec);
             let id = ContentId::from_content("metric", &m.metric, m.metric.as_bytes());
             (native, phase, id)
         }
@@ -443,6 +437,10 @@ fn resolve_ordering(
                     let key = i.id.0.split(':').nth(1).unwrap_or("").to_string();
                     Some((key, i.id.clone()))
                 }
+                ResolvedNativeNode::Dns { .. } if i.phase == Phase::Exec => {
+                    let key = i.id.0.split(':').nth(1).unwrap_or("").to_string();
+                    Some((key, i.id.clone()))
+                }
                 _ => None,
             }
         })
@@ -477,6 +475,11 @@ fn resolve_ordering(
                     parents_by_name.insert(key.clone(), parents.clone());
                 }
             }
+            manifest::Node::Dns(d) => {
+                if let Some(parents) = &d.parents {
+                    parents_by_name.insert(key.clone(), parents.clone());
+                }
+            }
             _ => {}
         }
     }
@@ -490,7 +493,8 @@ fn resolve_ordering(
             let cmd_name = match &input.node {
                 ResolvedNativeNode::Command { name, .. } => Some(name.as_str()),
                 ResolvedNativeNode::Service { name: Some(name), .. } => Some(name.as_str()),
-                ResolvedNativeNode::Source { .. } | ResolvedNativeNode::Std { .. } => {
+                ResolvedNativeNode::Source { .. } | ResolvedNativeNode::Std { .. }
+                | ResolvedNativeNode::Dns { .. } => {
                     Some(input.id.0.split(':').nth(1).unwrap_or(""))
                 }
                 _ => None,
@@ -742,4 +746,90 @@ fn resolve_sandbox(sandbox: &Option<manifest::Sandbox>) -> SandboxResolved {
             }
         }
     }
+}
+
+/// Parse a human-readable duration string into milliseconds.
+/// Supported: "500ms", "1s", "2m", "1h", "1m30s"
+fn parse_duration_proper(s: &str) -> Result<u64, String> {
+    let s = s.trim();
+    let mut total_ms: u64 = 0;
+    let mut rest = s;
+
+    while !rest.is_empty() {
+        // Consume digits
+        let num_end = rest.find(|c: char| !c.is_ascii_digit() && c != '.').unwrap_or(rest.len());
+        if num_end == 0 {
+            return Err(format!("invalid duration: '{s}'"));
+        }
+        let val: f64 = rest[..num_end].parse().map_err(|_| format!("invalid duration: '{s}'"))?;
+        rest = &rest[num_end..];
+
+        if rest.is_empty() {
+            // Bare number = seconds
+            total_ms += (val * 1_000.0) as u64;
+            break;
+        }
+
+        // Consume unit
+        if rest.starts_with("ms") {
+            total_ms += val as u64;
+            rest = &rest[2..];
+        } else if rest.starts_with('s') {
+            total_ms += (val * 1_000.0) as u64;
+            rest = &rest[1..];
+        } else if rest.starts_with('m') {
+            total_ms += (val * 60_000.0) as u64;
+            rest = &rest[1..];
+        } else if rest.starts_with('h') {
+            total_ms += (val * 3_600_000.0) as u64;
+            rest = &rest[1..];
+        } else {
+            return Err(format!("unknown duration unit in '{s}'"));
+        }
+    }
+
+    if total_ms == 0 && s != "0" && s != "0s" && s != "0ms" {
+        return Err(format!("duration parsed to zero: '{s}'"));
+    }
+
+    Ok(total_ms)
+}
+
+/// Lower manifest RetryConfig to IR RetryResolved
+fn lower_retry(retry: &Option<manifest::RetryConfig>) -> Result<Option<RetryResolved>, String> {
+    let rc = match retry {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+
+    let interval_ms = parse_duration_proper(&rc.interval)?;
+
+    let backoff = match rc.backoff.as_deref() {
+        None | Some("fixed") => RetryBackoff::Fixed,
+        Some("linear") => RetryBackoff::Linear,
+        Some("exponential") | Some("expo") => RetryBackoff::Exponential,
+        Some(other) => return Err(format!(
+            "unknown backoff strategy '{other}': expected fixed, linear, or exponential"
+        )),
+    };
+
+    let max_interval_ms = rc.max_interval.as_ref()
+        .map(|s| parse_duration_proper(s))
+        .transpose()?;
+
+    let timeout_ms = rc.timeout.as_ref()
+        .map(|s| parse_duration_proper(s))
+        .transpose()?;
+
+    if rc.attempts < 1 {
+        return Err("retry.attempts must be >= 1".into());
+    }
+
+    Ok(Some(RetryResolved {
+        attempts: rc.attempts,
+        interval_ms,
+        backoff,
+        max_interval_ms,
+        timeout_ms,
+    }))
 }

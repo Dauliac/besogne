@@ -192,6 +192,8 @@ pub enum ResolvedNativeNode {
         tcp: Option<String>,
         #[serde(default)]
         http: Option<String>,
+        #[serde(default)]
+        retry: Option<RetryResolved>,
     },
     Command {
         name: String,
@@ -206,11 +208,10 @@ pub enum ResolvedNativeNode {
         force_args: Vec<String>,
         #[serde(default)]
         debug_args: Vec<String>,
-    },
-    User {
         #[serde(default)]
-        in_group: Option<String>,
+        retry: Option<RetryResolved>,
     },
+
     Platform {
         #[serde(default)]
         os: Option<String>,
@@ -221,6 +222,8 @@ pub enum ResolvedNativeNode {
         host: String,
         #[serde(default)]
         expect: Option<String>,
+        #[serde(default)]
+        retry: Option<RetryResolved>,
     },
     Metric {
         metric: String,
@@ -247,4 +250,105 @@ pub enum ResolvedNativeNode {
         #[serde(default)]
         expect: Option<String>,
     },
+}
+
+/// Resolved retry configuration — durations parsed from strings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryResolved {
+    pub attempts: u32,
+    /// Base interval in milliseconds
+    pub interval_ms: u64,
+    pub backoff: RetryBackoff,
+    /// Maximum interval cap in milliseconds (None = unlimited)
+    #[serde(default)]
+    pub max_interval_ms: Option<u64>,
+    /// Total timeout in milliseconds (None = unlimited)
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RetryBackoff {
+    Fixed,
+    Linear,
+    Exponential,
+}
+
+impl RetryResolved {
+    /// Compute the delay for a given attempt (0-indexed)
+    pub fn delay_for_attempt(&self, attempt: u32) -> std::time::Duration {
+        let base = self.interval_ms;
+        let ms = match self.backoff {
+            RetryBackoff::Fixed => base,
+            RetryBackoff::Linear => base * (attempt as u64 + 1),
+            RetryBackoff::Exponential => base * 2u64.saturating_pow(attempt),
+        };
+        let capped = match self.max_interval_ms {
+            Some(max) => ms.min(max),
+            None => ms,
+        };
+        std::time::Duration::from_millis(capped)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_fixed_backoff() {
+        let r = RetryResolved {
+            attempts: 5,
+            interval_ms: 1000,
+            backoff: RetryBackoff::Fixed,
+            max_interval_ms: None,
+            timeout_ms: None,
+        };
+        assert_eq!(r.delay_for_attempt(0), Duration::from_secs(1));
+        assert_eq!(r.delay_for_attempt(3), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_linear_backoff() {
+        let r = RetryResolved {
+            attempts: 5,
+            interval_ms: 1000,
+            backoff: RetryBackoff::Linear,
+            max_interval_ms: None,
+            timeout_ms: None,
+        };
+        assert_eq!(r.delay_for_attempt(0), Duration::from_secs(1));  // 1000 * 1
+        assert_eq!(r.delay_for_attempt(1), Duration::from_secs(2));  // 1000 * 2
+        assert_eq!(r.delay_for_attempt(4), Duration::from_secs(5));  // 1000 * 5
+    }
+
+    #[test]
+    fn test_exponential_backoff() {
+        let r = RetryResolved {
+            attempts: 5,
+            interval_ms: 1000,
+            backoff: RetryBackoff::Exponential,
+            max_interval_ms: None,
+            timeout_ms: None,
+        };
+        assert_eq!(r.delay_for_attempt(0), Duration::from_secs(1));  // 1000 * 2^0
+        assert_eq!(r.delay_for_attempt(1), Duration::from_secs(2));  // 1000 * 2^1
+        assert_eq!(r.delay_for_attempt(3), Duration::from_secs(8));  // 1000 * 2^3
+    }
+
+    #[test]
+    fn test_max_interval_cap() {
+        let r = RetryResolved {
+            attempts: 10,
+            interval_ms: 1000,
+            backoff: RetryBackoff::Exponential,
+            max_interval_ms: Some(5000),
+            timeout_ms: None,
+        };
+        assert_eq!(r.delay_for_attempt(0), Duration::from_secs(1));
+        assert_eq!(r.delay_for_attempt(3), Duration::from_secs(5));  // 8000 capped to 5000
+        assert_eq!(r.delay_for_attempt(10), Duration::from_secs(5)); // capped
+    }
 }

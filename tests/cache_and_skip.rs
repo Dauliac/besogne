@@ -166,8 +166,6 @@ path = "{}"
 [nodes.platform]
 type = "platform"
 
-[nodes.user]
-type = "user"
 
 [nodes.cpu-count]
 type = "metric"

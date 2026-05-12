@@ -199,14 +199,71 @@ fn cache_path(compiler_hash: &str, besogne_hash: &str) -> PathBuf {
         .join("context.json")
 }
 
-/// Base cache directory: `$XDG_CACHE_HOME/besogne/`
-fn cache_base_dir() -> PathBuf {
-    let cache_dir = std::env::var("XDG_CACHE_HOME")
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            format!("{home}/.cache")
-        });
-    Path::new(&cache_dir).join("besogne")
+/// Base cache directory for besogne.
+///
+/// Resolution chain (first match wins):
+/// 1. `$XDG_CACHE_HOME/besogne/`     — explicit XDG override
+/// 2. `$HOME/.cache/besogne/`         — XDG default
+/// 3. `<passwd_home>/.cache/besogne/` — passwd entry (containers, cron, systemd)
+/// 4. `/var/cache/besogne/<uid>/`     — system cache (no home dir at all)
+/// 5. `/tmp/besogne-<uid>/`           — absolute last resort
+pub fn cache_base_dir() -> PathBuf {
+    // 1. Explicit XDG
+    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
+        if !xdg.is_empty() {
+            return Path::new(&xdg).join("besogne");
+        }
+    }
+
+    // 2–3. Home-based (env, then passwd)
+    if let Some(home) = resolve_home() {
+        return Path::new(&home).join(".cache").join("besogne");
+    }
+
+    // 4–5. No home directory — use system paths scoped by uid
+    let uid = get_uid();
+    let var_cache = PathBuf::from(format!("/var/cache/besogne/{uid}"));
+    if var_cache.parent().map(|p| p.exists()).unwrap_or(false) {
+        return var_cache;
+    }
+    PathBuf::from(format!("/tmp/besogne-{uid}"))
+}
+
+/// Resolve the user's home directory from environment or passwd.
+fn resolve_home() -> Option<String> {
+    // $HOME
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            return Some(home);
+        }
+    }
+
+    // passwd entry (works in containers, cron, systemd, nix builds)
+    #[cfg(unix)]
+    {
+        let uid = unsafe { libc::getuid() };
+        let pw = unsafe { libc::getpwuid(uid) };
+        if !pw.is_null() {
+            let dir = unsafe { std::ffi::CStr::from_ptr((*pw).pw_dir) };
+            if let Ok(s) = dir.to_str() {
+                if !s.is_empty() {
+                    return Some(s.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(unix)]
+fn get_uid() -> u32 {
+    unsafe { libc::getuid() }
+}
+
+#[cfg(not(unix))]
+fn get_uid() -> u32 {
+    0
 }
 
 /// Structural hash of the cache format — auto-derived, no manual versioning.

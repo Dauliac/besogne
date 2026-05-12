@@ -448,7 +448,7 @@ fn print_markdown_doc(ir: &BesogneIR) {
         print_flag_table(flags);
     }
 
-    // Inputs by phase
+    // Nodes by phase
     let phases = [
         ("Build (sealed)", Phase::Build),
         ("Pre (seals)", Phase::Seal),

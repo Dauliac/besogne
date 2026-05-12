@@ -26,6 +26,17 @@ pub fn resolve_binary(
     explicit_path: Option<&str>,
     probe_version_flag: bool,
 ) -> Result<ResolvedBinary, String> {
+    resolve_binary_with_cache(name, explicit_path, probe_version_flag, None)
+}
+
+/// Resolve with an optional shared hash cache (keyed by canonical path).
+/// Multiple binaries pointing to the same file (e.g., coreutils) are hashed once.
+pub fn resolve_binary_with_cache(
+    name: &str,
+    explicit_path: Option<&str>,
+    probe_version_flag: bool,
+    hash_cache: Option<&std::sync::Mutex<std::collections::HashMap<PathBuf, String>>>,
+) -> Result<ResolvedBinary, String> {
     // 1. Resolve raw path
     let raw_path = match explicit_path {
         Some(p) => {
@@ -54,10 +65,19 @@ pub fn resolve_binary(
     // 4. Extract version based on source
     let version = extract_version(&source, &canonical, probe_version_flag);
 
-    // 5. Hash the binary
-    let hash = match std::fs::read(&canonical) {
-        Ok(content) => blake3::hash(&content).to_hex().to_string(),
-        Err(e) => return Err(format!("cannot read binary '{name}': {e}")),
+    // 5. Hash the binary (deduplicated by canonical path)
+    let hash = if let Some(cache) = hash_cache {
+        let guard = cache.lock().unwrap();
+        if let Some(cached) = guard.get(&canonical) {
+            cached.clone()
+        } else {
+            drop(guard);
+            let h = hash_binary(&canonical, name)?;
+            cache.lock().unwrap().insert(canonical.clone(), h.clone());
+            h
+        }
+    } else {
+        hash_binary(&canonical, name)?
     };
 
     Ok(ResolvedBinary {
@@ -68,6 +88,13 @@ pub fn resolve_binary(
         version,
         hash,
     })
+}
+
+fn hash_binary(canonical: &PathBuf, name: &str) -> Result<String, String> {
+    match std::fs::read(canonical) {
+        Ok(content) => Ok(blake3::hash(&content).to_hex().to_string()),
+        Err(e) => Err(format!("cannot read binary '{name}': {e}")),
+    }
 }
 
 // ─── Source detection ───────────────────────────────────────────

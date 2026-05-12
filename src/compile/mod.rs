@@ -1,32 +1,62 @@
 pub mod embed;
 mod lower;
-pub mod nickel;
 pub mod component;
 
 use crate::ir::types::{BesogneIR, ResolvedNativeNode, SealedSnapshot};
-use crate::manifest;
+use crate::manifest::{self, Phase};
 use crate::output::style::{self, DiagBuilder};
 use crate::probe::binary;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 /// Compile a manifest into a self-contained binary in the global store.
 /// Returns the store path of the binary.
 /// Uses a content-addressed cache in $XDG_CACHE_HOME/besogne/store/ — same IR = same binary.
 pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, String> {
+    let build_start = Instant::now();
+
     // 1. Parse manifest
+    let step = Instant::now();
     let mut manifest = manifest::load_manifest(manifest_path)?;
+    let parse_ms = step.elapsed().as_millis();
+    eprintln!("  {} parsed {} ({}ms)",
+        style::styled(style::status::PROBED, "•"),
+        style::dim(&manifest_path.display().to_string()),
+        parse_ms);
 
     // 1b. Expand components → native inputs
-    if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
+    let component_count = manifest.nodes.values()
+        .filter(|i| matches!(i, manifest::Node::Component(_)))
+        .count();
+    if component_count > 0 {
+        let step = Instant::now();
         let expanded = component::expand_components(&manifest, manifest_path)?;
+        let expand_ms = step.elapsed().as_millis();
+        let produced = expanded.len();
         manifest.nodes = expanded;
+        eprintln!("  {} expanded {} component → {} node ({}ms)",
+            style::styled(style::status::PROBED, "•"),
+            component_count, produced, expand_ms);
     }
 
     // 2. Lower manifest to IR (resolve types, compute hashes)
+    let step = Instant::now();
     let mut ir = lower::lower_manifest(&manifest, manifest_path)?;
+    let lower_ms = step.elapsed().as_millis();
+    let node_summary = build_node_summary(&ir);
+    eprintln!("  {} lowered {node_summary} ({}ms)",
+        style::styled(style::status::PROBED, "•"),
+        lower_ms);
 
     // 2b. Build-time binary resolution — shift-left validation
-    resolve_build_binaries(&mut ir)?;
+    let step = Instant::now();
+    let pin_result = resolve_build_binaries_inner(&mut ir, true);
+    let pin_ms = step.elapsed().as_millis();
+    let pin_summary = build_pin_summary(&ir);
+    eprintln!("  {} pinned {pin_summary} ({}ms)",
+        style::styled(style::status::PINNED, "•"),
+        pin_ms);
+    pin_result?;
 
     // 3. Check content-addressed store
     let ir_json = serde_json::to_vec(&ir)
@@ -45,15 +75,21 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, Stri
             std::fs::set_permissions(output_path, perms)
                 .map_err(|e| format!("cannot set permissions: {e}"))?;
         }
-        eprintln!("besogne: store hit ({cache_hash})");
+        let total_ms = build_start.elapsed().as_millis();
+        eprintln!("  {} store hit {} ({}ms total)",
+            style::styled(style::status::SEALED, "•"),
+            style::dim(&cache_hash[..16]),
+            total_ms);
         return Ok(store_binary);
     }
 
     // 4. Store miss — emit binary directly to store
+    let step = Instant::now();
     if let Some(parent) = store_binary.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     embed::emit(&store_binary, &ir)?;
+    let emit_ms = step.elapsed().as_millis();
 
     // 5. Write metadata sidecar (provenance + Nix store compatibility)
     write_store_metadata(&store_binary, &ir, &cache_hash, manifest_path);
@@ -62,11 +98,21 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, Stri
     std::fs::copy(&store_binary, output_path)
         .map_err(|e| format!("cannot copy to output: {e}"))?;
 
+    let binary_size = std::fs::metadata(&store_binary).ok().map(|m| m.len()).unwrap_or(0);
+    let total_ms = build_start.elapsed().as_millis();
+    eprintln!("  {} emitted {} ({}, {}ms, {}ms total)",
+        style::styled(style::status::PROBED, "•"),
+        style::dim(&cache_hash[..16]),
+        format_size(binary_size),
+        emit_ms,
+        total_ms);
+
     Ok(store_binary)
 }
 
-/// Compile without progress messages (for `besogne run` where the binary handles output)
+/// Compile with minimal progress (for `besogne run` where the binary handles output)
 pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
+    let build_start = Instant::now();
     let mut manifest = manifest::load_manifest(manifest_path)?;
     if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
         manifest.nodes = component::expand_components(&manifest, manifest_path)?;
@@ -99,6 +145,12 @@ pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), Str
     write_store_metadata(&store_bin, &ir, &cache_hash, manifest_path);
     std::fs::copy(&store_bin, output_path)
         .map_err(|e| format!("cannot copy to output: {e}"))?;
+
+    let total_ms = build_start.elapsed().as_millis();
+    let node_summary = build_node_summary(&ir);
+    eprintln!("  {} built {node_summary} ({}ms)",
+        style::styled(style::status::PROBED, "•"),
+        total_ms);
 
     Ok(())
 }
@@ -135,36 +187,53 @@ fn resolve_build_binaries(ir: &mut BesogneIR) -> Result<(), String> {
 }
 
 fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), String> {
-    let mut errors = Vec::new();
+    use std::sync::Mutex;
 
-    // First pass: resolve all binaries WITHOUT parents (normal PATH resolution)
-    for input in ir.nodes.iter_mut() {
-        if let ResolvedNativeNode::Binary {
-            name,
-            path,
-            version_constraint,
-            parents,
-            source,
-            resolved_path,
-            resolved_version,
-            binary_hash,
-        } = &mut input.node
-        {
-            if !parents.is_empty() {
-                continue; // handled in second pass
+    // Collect binary resolution tasks (index, name, path, has_version)
+    let tasks: Vec<(usize, String, Option<String>, bool)> = ir.nodes.iter().enumerate()
+        .filter_map(|(idx, input)| {
+            if let ResolvedNativeNode::Binary { name, path, version_constraint, parents, .. } = &input.node {
+                if parents.is_empty() {
+                    return Some((idx, name.clone(), path.clone(), version_constraint.is_some()));
+                }
             }
+            None
+        })
+        .collect();
 
-            let has_version_field = version_constraint.is_some();
+    // Resolve all binaries in parallel with shared hash cache
+    // (many binaries like coreutils share the same canonical path)
+    let hash_cache: Mutex<std::collections::HashMap<std::path::PathBuf, String>> =
+        Mutex::new(std::collections::HashMap::new());
+    let results: Mutex<Vec<(usize, Result<binary::ResolvedBinary, String>)>> =
+        Mutex::new(Vec::with_capacity(tasks.len()));
 
-            match binary::resolve_binary(name, path.as_deref(), has_version_field) {
-                Ok(resolved) => {
+    crossbeam::scope(|s| {
+        for (idx, name, path, has_version) in &tasks {
+            let results = &results;
+            let hash_cache = &hash_cache;
+            s.spawn(move |_| {
+                let resolved = binary::resolve_binary_with_cache(
+                    name, path.as_deref(), *has_version, Some(hash_cache));
+                results.lock().unwrap().push((*idx, resolved));
+            });
+        }
+    }).unwrap();
+
+    // Apply results back to IR
+    let mut errors = Vec::new();
+    for (idx, result) in results.into_inner().unwrap() {
+        let input = &mut ir.nodes[idx];
+        match result {
+            Ok(resolved) => {
+                if let ResolvedNativeNode::Binary {
+                    name, source, resolved_path, resolved_version, binary_hash, ..
+                } = &mut input.node {
                     *source = Some(resolved.source);
-                    *resolved_path =
-                        Some(resolved.canonical_path.to_string_lossy().to_string());
+                    *resolved_path = Some(resolved.canonical_path.to_string_lossy().to_string());
                     *resolved_version = resolved.version;
                     *binary_hash = Some(resolved.hash.clone());
 
-                    // Seal the binary snapshot
                     let size = std::fs::metadata(&resolved.canonical_path)
                         .ok()
                         .map(|m| m.len());
@@ -189,13 +258,14 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
                                 None => "unknown".to_string(),
                             },
                         );
-
                         if let Some(ver) = resolved_version.as_ref() {
                             eprintln!("  version: {ver}");
                         }
                     }
                 }
-                Err(e) => {
+            }
+            Err(e) => {
+                if let ResolvedNativeNode::Binary { name, parents, .. } = &input.node {
                     let parents_info = if !parents.is_empty() {
                         format!(" (parents: [{}])", parents.join(", "))
                     } else {
@@ -389,13 +459,60 @@ fn compile_cache_key(ir_json: &[u8]) -> String {
 
 /// Content-addressed store path: ~/.cache/besogne/store/{hash}/binary
 fn store_binary_path(hash: &str) -> PathBuf {
-    let cache_dir = std::env::var("XDG_CACHE_HOME").unwrap_or_else(|_| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        format!("{home}/.cache")
-    });
-    Path::new(&cache_dir)
-        .join("besogne")
+    crate::runtime::cache::cache_base_dir()
         .join("store")
         .join(hash)
         .join("binary")
+}
+
+/// Summarize IR nodes by phase: "3 build, 2 seal, 4 exec"
+fn build_node_summary(ir: &BesogneIR) -> String {
+    let build = ir.nodes.iter().filter(|n| n.phase == Phase::Build).count();
+    let seal = ir.nodes.iter().filter(|n| n.phase == Phase::Seal).count();
+    let exec = ir.nodes.iter().filter(|n| n.phase == Phase::Exec).count();
+    let mut parts = Vec::new();
+    if build > 0 { parts.push(format!("{build} build")); }
+    if seal > 0 { parts.push(format!("{seal} seal")); }
+    if exec > 0 { parts.push(format!("{exec} exec")); }
+    parts.join(", ")
+}
+
+/// Summarize pinned binaries by source: "32 nix, 1 system, 2 mise"
+fn build_pin_summary(ir: &BesogneIR) -> String {
+    let mut nix = 0usize;
+    let mut mise = 0usize;
+    let mut system = 0usize;
+    let mut other = 0usize;
+    for node in &ir.nodes {
+        if let ResolvedNativeNode::Binary { source, binary_hash, .. } = &node.node {
+            if binary_hash.is_none() { continue; }
+            match source {
+                Some(crate::ir::types::BinarySourceResolved::Nix { .. }) => nix += 1,
+                Some(crate::ir::types::BinarySourceResolved::Mise { .. }) => mise += 1,
+                Some(crate::ir::types::BinarySourceResolved::System) => system += 1,
+                None => other += 1,
+            }
+        }
+    }
+    let total = nix + mise + system + other;
+    let mut parts = vec![format!("{total} binaries")];
+    let mut sources = Vec::new();
+    if nix > 0 { sources.push(format!("{nix} nix")); }
+    if system > 0 { sources.push(format!("{system} system")); }
+    if mise > 0 { sources.push(format!("{mise} mise")); }
+    if other > 0 { sources.push(format!("{other} other")); }
+    if !sources.is_empty() {
+        parts.push(format!("({})", sources.join(", ")));
+    }
+    parts.join(" ")
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes >= 1_048_576 {
+        format!("{:.1}MB", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1024 {
+        format!("{:.1}KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes}B")
+    }
 }

@@ -39,12 +39,16 @@ pub mod palette {
 /// Node lifecycle status
 pub mod status {
     use super::palette::*;
-    pub const SEALED: &str = BLUE;       // build-time verified, immutable
-    pub const CACHED: &str = YELLOW;     // reused from cache, not re-verified
-    pub const FRESH: &str = GREEN;       // just probed/executed successfully
+    pub const PINNED: &str = GREEN;      // build-time frozen — validated
+    pub const SEALED: &str = GREEN;      // reused from cache — validated
+    pub const PROBED: &str = GREEN;      // just probed/verified — validated
     pub const FAILED: &str = RED;        // probe or command failed
-    pub const PENDING: &str = YELLOW;    // not yet evaluated
+    pub const PENDING: &str = BLUE;      // not yet evaluated — to run
     pub const SKIP: &str = YELLOW;       // skipped (nothing to do)
+    pub const INVALIDATED: &str = YELLOW; // changed, triggers re-execution
+    // General-purpose aliases (for commands, summaries, non-probe contexts)
+    pub const FRESH: &str = GREEN;       // command succeeded — validated
+    pub const CACHED: &str = GREEN;      // command replayed from cache — validated
 }
 
 /// Node type badges
@@ -55,7 +59,7 @@ pub mod node {
     pub const ENV: &str = YELLOW;
     pub const COMMAND: &str = BOLD_WHITE;
     pub const SERVICE: &str = GREEN;
-    pub const USER: &str = MAGENTA;
+
     pub const PLATFORM: &str = CYAN;
     pub const DNS: &str = GREEN;
     pub const METRIC: &str = YELLOW;
@@ -119,9 +123,9 @@ pub mod structure {
 
 /// Status labels (probe/command outcomes)
 pub mod label {
+    pub const PINNED: &str = "pinned";
     pub const SEALED: &str = "sealed";
-    pub const CACHED: &str = "cached";
-    pub const FRESH: &str = "ok";
+    pub const PROBED: &str = "probed";
     pub const FAILED: &str = "fail";
     pub const PENDING: &str = "pending";
     pub const DONE: &str = "done";
@@ -129,6 +133,9 @@ pub mod label {
     pub const PASSED: &str = "passed";
     pub const SKIPPED: &str = "skipped";
     pub const EXEC: &str = "exec";
+    // General-purpose aliases (for commands, summaries, non-probe contexts)
+    pub const FRESH: &str = "ok";
+    pub const CACHED: &str = "cached";
 }
 
 /// Node type short names (for badges)
@@ -138,7 +145,7 @@ pub mod badge {
     pub const ENV: &str = " env ";
     pub const COMMAND: &str = " cmd ";
     pub const SERVICE: &str = " svc ";
-    pub const USER: &str = " usr ";
+
     pub const PLATFORM: &str = "plat";
     pub const DNS: &str = " dns ";
     pub const METRIC: &str = " met ";

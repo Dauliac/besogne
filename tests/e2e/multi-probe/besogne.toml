@@ -21,8 +21,6 @@ type = "component"
 [nodes.platform]
 type = "platform"
 
-[nodes.user-check]
-type = "user"
 
 [nodes.cpu]
 type = "metric"

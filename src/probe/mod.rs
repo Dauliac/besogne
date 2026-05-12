@@ -6,9 +6,9 @@ pub mod metric;
 pub mod platform;
 pub mod service;
 pub mod source;
-pub mod user;
 
-use crate::ir::ResolvedNativeNode;
+
+use crate::ir::{ResolvedNativeNode, RetryResolved};
 use std::collections::HashMap;
 
 /// Result of probing an input
@@ -60,16 +60,15 @@ pub fn probe_input(input: &ResolvedNativeNode) -> ProbeResult {
         }
         .probe(),
 
-        ResolvedNativeNode::Service { tcp, http, .. } => service::ServiceProbe {
-            tcp: tcp.as_deref(),
-            http: http.as_deref(),
+        ResolvedNativeNode::Service { tcp, http, retry, .. } => {
+            let probe = || service::ServiceProbe {
+                tcp: tcp.as_deref(),
+                http: http.as_deref(),
+            }.probe();
+            probe_with_retry(probe, retry.as_ref())
         }
-        .probe(),
 
-        ResolvedNativeNode::User { in_group, .. } => user::UserProbe {
-            in_group: in_group.as_deref(),
-        }
-        .probe(),
+
 
         ResolvedNativeNode::Platform { os, arch, .. } => platform::PlatformProbe {
             expected_os: os.as_deref(),
@@ -77,11 +76,13 @@ pub fn probe_input(input: &ResolvedNativeNode) -> ProbeResult {
         }
         .probe(),
 
-        ResolvedNativeNode::Dns { host, expect, .. } => dns::DnsProbe {
-            host,
-            expect: expect.as_deref(),
+        ResolvedNativeNode::Dns { host, expect, retry, .. } => {
+            let probe = || dns::DnsProbe {
+                host,
+                expect: expect.as_deref(),
+            }.probe();
+            probe_with_retry(probe, retry.as_ref())
         }
-        .probe(),
 
         ResolvedNativeNode::Metric { metric, path, .. } => metric::MetricProbe {
             metric,
@@ -111,6 +112,83 @@ pub fn probe_input(input: &ResolvedNativeNode) -> ProbeResult {
                 error: None,
             }
         }
+    }
+}
+
+/// Execute a probe with optional retry logic.
+/// On failure, retries according to the retry config with backoff and timeout.
+pub fn probe_with_retry<F>(probe_fn: F, retry: Option<&RetryResolved>) -> ProbeResult
+where
+    F: Fn() -> ProbeResult,
+{
+    let retry = match retry {
+        Some(r) => r,
+        None => return probe_fn(),
+    };
+
+    let deadline = retry.timeout_ms.map(|t| std::time::Instant::now() + std::time::Duration::from_millis(t));
+    let mut last_result = ProbeResult {
+        success: false,
+        hash: String::new(),
+        variables: HashMap::new(),
+        error: Some("no attempts made".into()),
+    };
+
+    for attempt in 0..retry.attempts {
+        if let Some(dl) = deadline {
+            if std::time::Instant::now() >= dl {
+                last_result.error = Some(format!(
+                    "retry timeout after {} attempts: {}",
+                    attempt,
+                    last_result.error.as_deref().unwrap_or("unknown"),
+                ));
+                return last_result;
+            }
+        }
+
+        last_result = probe_fn();
+        if last_result.success {
+            return last_result;
+        }
+
+        // Don't sleep after the last attempt
+        if attempt + 1 < retry.attempts {
+            let delay = retry.delay_for_attempt(attempt);
+
+            // Respect timeout deadline
+            let delay = if let Some(dl) = deadline {
+                let remaining = dl.saturating_duration_since(std::time::Instant::now());
+                delay.min(remaining)
+            } else {
+                delay
+            };
+
+            if !delay.is_zero() {
+                eprintln!("  {} retry {}/{} in {}",
+                    crate::output::style::styled(crate::output::style::status::PENDING, "retry"),
+                    attempt + 1, retry.attempts,
+                    format_duration(delay));
+                std::thread::sleep(delay);
+            }
+        }
+    }
+
+    last_result.error = Some(format!(
+        "failed after {} attempts: {}",
+        retry.attempts,
+        last_result.error.as_deref().unwrap_or("unknown"),
+    ));
+    last_result
+}
+
+fn format_duration(d: std::time::Duration) -> String {
+    let ms = d.as_millis();
+    if ms < 1000 {
+        format!("{}ms", ms)
+    } else if ms < 60_000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else {
+        format!("{:.1}m", ms as f64 / 60_000.0)
     }
 }
 
@@ -319,23 +397,6 @@ mod tests {
         assert!(result.error.unwrap().contains("expected os=fakeos"));
     }
 
-    #[test]
-    fn test_user_probe_current() {
-        let result = user::UserProbe { in_group: None }.probe();
-        assert!(result.success);
-        assert!(result.variables.contains_key("USER_NAME"));
-        assert!(result.variables.contains_key("USER_UID"));
-    }
-
-    #[test]
-    fn test_user_probe_nonexistent_group() {
-        let result = user::UserProbe {
-            in_group: Some("besogne_fake_group_xyz"),
-        }
-        .probe();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("not in group"));
-    }
 
     #[test]
     fn test_dns_probe_localhost() {
@@ -424,9 +485,7 @@ mod tests {
                 resolved_version: None,
                 binary_hash: None,
             },
-            ResolvedNativeNode::User {
-                in_group: None,
-            },
+
             ResolvedNativeNode::Platform {
                 os: None,
                 arch: None,
@@ -434,6 +493,7 @@ mod tests {
             ResolvedNativeNode::Dns {
                 host: "localhost".into(),
                 expect: None,
+                retry: None,
             },
             ResolvedNativeNode::Metric {
                 metric: "cpu.count".into(),
@@ -447,6 +507,7 @@ mod tests {
                 workdir: None,
                 force_args: vec![],
                 debug_args: vec![],
+                retry: None,
             },
             ResolvedNativeNode::Source {
                 format: "dotenv".into(),
@@ -461,5 +522,88 @@ mod tests {
             // Just verify no panics — some may fail depending on system
             let _ = result;
         }
+    }
+
+    #[test]
+    fn test_probe_with_retry_succeeds_first_try() {
+        let retry = RetryResolved {
+            attempts: 3,
+            interval_ms: 10,
+            backoff: crate::ir::RetryBackoff::Fixed,
+            max_interval_ms: None,
+            timeout_ms: None,
+        };
+        let result = probe_with_retry(|| ProbeResult {
+            success: true,
+            hash: "abc".into(),
+            variables: HashMap::new(),
+            error: None,
+        }, Some(&retry));
+        assert!(result.success);
+    }
+
+    #[test]
+    fn test_probe_with_retry_fails_then_succeeds() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let counter = AtomicU32::new(0);
+        let retry = RetryResolved {
+            attempts: 5,
+            interval_ms: 10,
+            backoff: crate::ir::RetryBackoff::Fixed,
+            max_interval_ms: None,
+            timeout_ms: None,
+        };
+        let result = probe_with_retry(|| {
+            let n = counter.fetch_add(1, Ordering::SeqCst);
+            if n < 2 {
+                ProbeResult {
+                    success: false,
+                    hash: String::new(),
+                    variables: HashMap::new(),
+                    error: Some("not ready".into()),
+                }
+            } else {
+                ProbeResult {
+                    success: true,
+                    hash: "ok".into(),
+                    variables: HashMap::new(),
+                    error: None,
+                }
+            }
+        }, Some(&retry));
+        assert!(result.success);
+        assert_eq!(counter.load(Ordering::SeqCst), 3); // 2 failures + 1 success
+    }
+
+    #[test]
+    fn test_probe_with_retry_exhausts_attempts() {
+        let retry = RetryResolved {
+            attempts: 3,
+            interval_ms: 10,
+            backoff: crate::ir::RetryBackoff::Fixed,
+            max_interval_ms: None,
+            timeout_ms: None,
+        };
+        let result = probe_with_retry(|| ProbeResult {
+            success: false,
+            hash: String::new(),
+            variables: HashMap::new(),
+            error: Some("down".into()),
+        }, Some(&retry));
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("failed after 3 attempts"));
+    }
+
+    #[test]
+    fn test_probe_with_retry_none_skips_retry() {
+        let result = probe_with_retry(|| ProbeResult {
+            success: false,
+            hash: String::new(),
+            variables: HashMap::new(),
+            error: Some("fail".into()),
+        }, None);
+        assert!(!result.success);
+        // No retry wrapper text
+        assert_eq!(result.error.unwrap(), "fail");
     }
 }

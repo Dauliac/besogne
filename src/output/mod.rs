@@ -16,9 +16,14 @@ use style::{label, badge, phase_label, metric_label, message};
 /// Why a probe result is being reported
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbeStatus {
+    /// Build-phase: frozen at build time, embedded in binary
+    Pinned,
+    /// Cached: replaying sealed result from previous run
     Sealed,
-    Fresh,
-    Cached,
+    /// Freshly probed/verified just now
+    Probed,
+    /// Probe failed
+    Failed,
 }
 
 /// Context passed alongside command start — resolved paths and env values
@@ -39,6 +44,9 @@ pub trait OutputRenderer {
     fn on_command_output(&mut self, name: &str, stdout: &str, stderr: &str);
     fn on_command_end(&mut self, name: &str, result: &CommandResult);
     fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand, ctx: &CommandContext);
+    fn on_build_pinned_summary(&mut self, nodes: &[&ResolvedNode]);
+    fn on_changed_probes(&mut self, changed: &[String]);
+    fn on_skip(&mut self, total_nodes: usize, ran_at: &str, duration_ms: u64);
     fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]);
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64);
 }
@@ -51,17 +59,59 @@ pub fn renderer_for_format(format: &LogFormat, verbose: bool) -> Box<dyn OutputR
     }
 }
 
+fn node_type_name(node: &ResolvedNativeNode) -> &'static str {
+    match node {
+        ResolvedNativeNode::Binary { .. } => "binary",
+        ResolvedNativeNode::File { .. } => "file",
+        ResolvedNativeNode::Env { .. } => "env",
+        ResolvedNativeNode::Service { .. } => "service",
+        ResolvedNativeNode::Command { .. } => "command",
+
+        ResolvedNativeNode::Platform { .. } => "platform",
+        ResolvedNativeNode::Dns { .. } => "dns",
+        ResolvedNativeNode::Metric { .. } => "metric",
+        ResolvedNativeNode::Source { .. } => "source",
+        ResolvedNativeNode::Std { .. } => "std",
+    }
+}
+
+/// Build a "N type, M type, ..." summary string from a list of nodes
+fn build_pinned_summary(nodes: &[&ResolvedNode]) -> String {
+    let mut counts: Vec<(&'static str, usize)> = Vec::new();
+    for node in nodes {
+        let name = node_type_name(&node.node);
+        if let Some(entry) = counts.iter_mut().find(|(n, _)| *n == name) {
+            entry.1 += 1;
+        } else {
+            counts.push((name, 1));
+        }
+    }
+    counts.iter()
+        .map(|(name, count)| {
+            if *count == 1 {
+                format!("{count} {name}")
+            } else {
+                let plural = match *name {
+                    "binary" => "binaries",
+                    _ => return format!("{count} {name}s"),
+                };
+                format!("{count} {plural}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 // ── Shared helpers ──────────────────────────────────────────────────
 
-fn input_label(input: &ResolvedNode) -> String {
+pub fn input_label(input: &ResolvedNode) -> String {
     match &input.node {
         ResolvedNativeNode::Env { name, .. } => format!("env:{name}"),
         ResolvedNativeNode::File { path, .. } => format!("file:{path}"),
         ResolvedNativeNode::Binary { name, .. } => format!("binary:{name}"),
         ResolvedNativeNode::Service { tcp, http, .. } =>
             format!("service:{}", tcp.as_deref().or(http.as_deref()).unwrap_or("?")),
-        ResolvedNativeNode::User { in_group, .. } =>
-            format!("user:{}", in_group.as_deref().unwrap_or("current")),
+
         ResolvedNativeNode::Platform { os, arch, .. } =>
             format!("platform:{}-{}", os.as_deref().unwrap_or("?"), arch.as_deref().unwrap_or("?")),
         ResolvedNativeNode::Dns { host, .. } => format!("dns:{host}"),
@@ -109,16 +159,8 @@ fn probe_detail(input: &ResolvedNode, result: &ProbeResult) -> String {
             let target = tcp.as_deref().or(http.as_deref()).unwrap_or("?");
             format!("{label} {target}")
         }
-        ResolvedNativeNode::User { in_group, .. } => {
-            if let Some(user) = result.variables.get("USER_NAME") {
-                match in_group {
-                    Some(g) => format!("{user} in:{g}"),
-                    None => user.clone(),
-                }
-            } else {
-                in_group.as_deref().unwrap_or("current").to_string()
-            }
-        }
+
+
         ResolvedNativeNode::Platform { .. } => {
             let os = result.variables.get("PLATFORM_OS").map(|s| s.as_str()).unwrap_or("?");
             let arch = result.variables.get("PLATFORM_ARCH").map(|s| s.as_str()).unwrap_or("?");
@@ -149,17 +191,19 @@ fn probe_detail(input: &ResolvedNode, result: &ProbeResult) -> String {
 
 fn status_label(s: ProbeStatus) -> &'static str {
     match s {
+        ProbeStatus::Pinned => label::PINNED,
         ProbeStatus::Sealed => label::SEALED,
-        ProbeStatus::Fresh => label::FRESH,
-        ProbeStatus::Cached => label::CACHED,
+        ProbeStatus::Probed => label::PROBED,
+        ProbeStatus::Failed => label::FAILED,
     }
 }
 
 fn probe_status_token(s: ProbeStatus) -> &'static str {
     match s {
+        ProbeStatus::Pinned => status::PINNED,
         ProbeStatus::Sealed => status::SEALED,
-        ProbeStatus::Cached => status::CACHED,
-        ProbeStatus::Fresh => status::FRESH,
+        ProbeStatus::Probed => status::PROBED,
+        ProbeStatus::Failed => status::FAILED,
     }
 }
 
@@ -489,11 +533,12 @@ pub struct HumanRenderer {
     cached_probes: usize,
     cached_commands: usize,
     last_cached_at: Option<String>,
+    phase_start: Option<std::time::Instant>,
 }
 
 impl HumanRenderer {
     pub fn new(verbose: bool) -> Self {
-        Self { verbose, cached_probes: 0, cached_commands: 0, last_cached_at: None }
+        Self { verbose, cached_probes: 0, cached_commands: 0, last_cached_at: None, phase_start: None }
     }
 }
 
@@ -503,10 +548,20 @@ impl OutputRenderer for HumanRenderer {
             bold(&ir.metadata.name), ir.metadata.version, ir.metadata.description);
     }
 
-    fn on_phase_start(&mut self, _phase: &str, _count: usize) {}
+    fn on_phase_start(&mut self, p: &str, count: usize) {
+        if count == 0 { return; }
+        let token = match p {
+            "build" => phase::BUILD,
+            "seal" => phase::SEAL,
+            "exec" => phase::EXEC,
+            _ => phase::EXEC,
+        };
+        self.phase_start = Some(std::time::Instant::now());
+        eprintln!("\n{}", styled(token, &format!("▸ {p} ({count} nodes)")));
+    }
 
     fn on_probe_result(&mut self, input: &ResolvedNode, result: &ProbeResult, s: ProbeStatus) {
-        if !self.verbose && s == ProbeStatus::Cached {
+        if !self.verbose && s == ProbeStatus::Sealed {
             self.cached_probes += 1;
             return;
         }
@@ -519,10 +574,21 @@ impl OutputRenderer for HumanRenderer {
         }
     }
 
-    fn on_phase_end(&mut self, _phase: &str) {}
+    fn on_phase_end(&mut self, p: &str) {
+        if let Some(start) = self.phase_start.take() {
+            let ms = start.elapsed().as_millis();
+            let token = match p {
+                "build" => phase::BUILD,
+                "seal" => phase::SEAL,
+                "exec" => phase::EXEC,
+                _ => phase::EXEC,
+            };
+            eprintln!("  {} {}", styled(token, &format!("▸ {p}")), dim(&format!("({ms}ms)")));
+        }
+    }
 
     fn on_command_start(&mut self, name: &str, exec: &[String], ctx: &CommandContext) {
-        eprintln!("\n{} {name}: {}", bold(label::EXEC), exec.join(" "));
+        eprintln!("  {} {name}: {}", bold("▹"), exec.join(" "));
         format_command_context_human(exec, ctx);
     }
 
@@ -562,6 +628,26 @@ impl OutputRenderer for HumanRenderer {
         let metrics = format_metrics_human(&Metrics::from(cached));
         eprintln!("  {} {name}  {metrics}", styled(status::CACHED, label::CACHED));
         format_process_tree_human(&cached.process_tree);
+    }
+
+    fn on_build_pinned_summary(&mut self, nodes: &[&ResolvedNode]) {
+        let summary = build_pinned_summary(nodes);
+        eprintln!("  {} {summary}", styled(status::PINNED, label::PINNED));
+    }
+
+    fn on_changed_probes(&mut self, changed: &[String]) {
+        eprintln!("\n  {} {} changed → re-executing",
+            styled(status::INVALIDATED, "△"),
+            changed.join(", "));
+    }
+
+    fn on_skip(&mut self, total_nodes: usize, ran_at: &str, duration_ms: u64) {
+        eprintln!("\n{} ({} nodes cached, ran {}, {:.3}s, use {} to show last run)",
+            styled(status::FRESH, label::NOTHING_TO_DO),
+            total_nodes,
+            format_relative_time(ran_at),
+            duration_ms as f64 / 1000.0,
+            bold("--status"));
     }
 
     fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]) {
@@ -682,6 +768,22 @@ impl OutputRenderer for JsonRenderer {
         self.emit(&obj);
     }
 
+    fn on_build_pinned_summary(&mut self, nodes: &[&ResolvedNode]) {
+        let counts: HashMap<&str, usize> = nodes.iter().fold(HashMap::new(), |mut m, n| {
+            *m.entry(node_type_name(&n.node)).or_insert(0) += 1;
+            m
+        });
+        self.emit(&serde_json::json!({"event": "build_pinned", "counts": counts, "total": nodes.len()}));
+    }
+
+    fn on_changed_probes(&mut self, changed: &[String]) {
+        self.emit(&serde_json::json!({"event": "changed_probes", "changed": changed}));
+    }
+
+    fn on_skip(&mut self, total_nodes: usize, ran_at: &str, duration_ms: u64) {
+        self.emit(&serde_json::json!({"event": "skip", "total_nodes": total_nodes, "ran_at": ran_at, "duration_ms": duration_ms}));
+    }
+
     fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]) {
         if binaries.is_empty() && env_vars.is_empty() { return; }
         self.emit(&serde_json::json!({"event": "undeclared_deps", "binaries": binaries, "env_vars": env_vars}));
@@ -707,10 +809,10 @@ impl OutputRenderer for CiRenderer {
     fn on_probe_result(&mut self, input: &ResolvedNode, result: &ProbeResult, s: ProbeStatus) {
         let detail = probe_detail(input, result);
         let tag = match s {
+            ProbeStatus::Pinned => "[PIN]",
             ProbeStatus::Sealed => "[SEAL]",
-            ProbeStatus::Cached => "[CACHE]",
-            ProbeStatus::Fresh if result.success => "[PASS]",
-            ProbeStatus::Fresh => "[FAIL]",
+            ProbeStatus::Probed => "[PROBE]",
+            ProbeStatus::Failed => "[FAIL]",
         };
         if result.success { eprintln!("  {tag} {detail}"); }
         else { eprintln!("  {tag} {detail} — {}", result.error.as_deref().unwrap_or(label::FAILED)); }
@@ -759,6 +861,19 @@ impl OutputRenderer for CiRenderer {
         eprintln!("::endgroup::");
     }
 
+    fn on_build_pinned_summary(&mut self, nodes: &[&ResolvedNode]) {
+        let summary = build_pinned_summary(nodes);
+        eprintln!("  [PIN] {summary}");
+    }
+
+    fn on_changed_probes(&mut self, changed: &[String]) {
+        eprintln!("::notice::Changed: {}", changed.join(", "));
+    }
+
+    fn on_skip(&mut self, total_nodes: usize, ran_at: &str, duration_ms: u64) {
+        eprintln!("::notice::SKIP ({total_nodes} nodes cached, ran {ran_at}, {:.3}s)", duration_ms as f64 / 1000.0);
+    }
+
     fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]) {
         if binaries.is_empty() && env_vars.is_empty() { return; }
         eprintln!("::warning::Undeclared runtime dependencies — cache disabled");
@@ -774,10 +889,11 @@ impl OutputRenderer for CiRenderer {
 
 // ── Status tree (--status) ──────────────────────────────────────────
 
-enum NodeStatus { Sealed, Cached, Unknown }
+enum NodeStatus { Pinned, Sealed, Cached, Unknown }
 
 fn node_status_badge(s: &NodeStatus) -> String {
     match s {
+        NodeStatus::Pinned => style::status_badge(label::PINNED, status::PINNED),
         NodeStatus::Sealed => style::status_badge(label::SEALED, status::SEALED),
         NodeStatus::Cached => style::status_badge(label::CACHED, status::CACHED),
         NodeStatus::Unknown => style::status_badge(label::PENDING, status::PENDING),
@@ -791,7 +907,7 @@ fn node_type_badge(n: &ResolvedNode) -> String {
         ResolvedNativeNode::Env { .. }      => (node::ENV, badge::ENV),
         ResolvedNativeNode::Service { .. }  => (node::SERVICE, badge::SERVICE),
         ResolvedNativeNode::Command { .. }  => (node::COMMAND, badge::COMMAND),
-        ResolvedNativeNode::User { .. }     => (node::USER, badge::USER),
+
         ResolvedNativeNode::Platform { .. } => (node::PLATFORM, badge::PLATFORM),
         ResolvedNativeNode::Dns { .. }      => (node::DNS, badge::DNS),
         ResolvedNativeNode::Metric { .. }   => (node::METRIC, badge::METRIC),
@@ -828,8 +944,7 @@ fn node_short_label(n: &ResolvedNode) -> String {
             let display_cmd = if cmd.len() > 40 { format!("{}...", &cmd[..37]) } else { cmd };
             format!("{name} {}{se}", dim(&display_cmd))
         }
-        ResolvedNativeNode::User { in_group, .. } =>
-            in_group.as_deref().unwrap_or("current").to_string(),
+
         ResolvedNativeNode::Platform { os, arch, .. } =>
             format!("{}/{}", os.as_deref().unwrap_or("?"), arch.as_deref().unwrap_or("?")),
         ResolvedNativeNode::Dns { host, .. } => host.clone(),
@@ -846,8 +961,11 @@ fn node_short_label(n: &ResolvedNode) -> String {
 }
 
 fn get_node_status(n: &ResolvedNode, cache: &ContextCache) -> NodeStatus {
-    if n.sealed.is_some() { return NodeStatus::Sealed; }
-    if cache.get_probe(&n.id.0).is_some() { return NodeStatus::Cached; }
+    if n.sealed.is_some() { return NodeStatus::Pinned; }
+    if cache.get_probe(&n.id.0).is_some() {
+        // Seal-phase probes → "sealed", exec-phase probes → "cached"
+        return if n.phase == Phase::Exec { NodeStatus::Cached } else { NodeStatus::Sealed };
+    }
     if let ResolvedNativeNode::Command { name, .. } = &n.node {
         if cache.get_command(name).is_some() { return NodeStatus::Cached; }
     }

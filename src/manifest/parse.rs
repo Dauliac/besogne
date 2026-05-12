@@ -12,12 +12,6 @@ pub fn load_manifest(path: &Path) -> Result<Manifest, String> {
         .to_lowercase();
 
     let manifest: Manifest = match ext.as_str() {
-        "ncl" => {
-            // Nickel manifest: evaluate to JSON first, then parse
-            let json_str = crate::compile::nickel::eval_file(path)?;
-            serde_json::from_str(&json_str)
-                .map_err(|e| format!("nickel manifest {} evaluated to invalid JSON: {e}", path.display()))?
-        }
         "yaml" | "yml" => serde_yaml::from_str(&content)
             .map_err(|e| format!("invalid manifest YAML in {}: {e}", path.display()))?,
         "toml" => toml::from_str(&content)
@@ -38,8 +32,8 @@ pub fn discover_manifests() -> Vec<std::path::PathBuf> {
     let mut found = Vec::new();
 
     // 1. Check current dir for well-known names
-    for name in &["besogne.json", "besogne.yaml", "besogne.yml", "besogne.toml", "besogne.ncl",
-                   ".besogne.json", ".besogne.yaml", ".besogne.yml", ".besogne.toml", ".besogne.ncl"] {
+    for name in &["besogne.json", "besogne.yaml", "besogne.yml", "besogne.toml",
+                   ".besogne.json", ".besogne.yaml", ".besogne.yml", ".besogne.toml"] {
         let p = cwd.join(name);
         if p.is_file() {
             found.push(p);
@@ -55,8 +49,7 @@ pub fn discover_manifests() -> Vec<std::path::PathBuf> {
                 if (lower.ends_with(".besogne.json")
                     || lower.ends_with(".besogne.yaml")
                     || lower.ends_with(".besogne.yml")
-                    || lower.ends_with(".besogne.toml")
-                    || lower.ends_with(".besogne.ncl"))
+                    || lower.ends_with(".besogne.toml"))
                     && !found.contains(&path)
                 {
                     found.push(path);
@@ -69,14 +62,14 @@ pub fn discover_manifests() -> Vec<std::path::PathBuf> {
     if found.is_empty() {
         if let Some(git_root) = find_git_root(&cwd) {
             if git_root != cwd {
-                for name in &["besogne.json", "besogne.yaml", "besogne.yml", "besogne.toml", "besogne.ncl"] {
+                for name in &["besogne.json", "besogne.yaml", "besogne.yml", "besogne.toml"] {
                     let p = git_root.join(name);
                     if p.is_file() {
                         found.push(p);
                     }
                 }
                 if let Some(repo_name) = git_root.file_name().and_then(|n| n.to_str()) {
-                    for ext in &["json", "yaml", "yml", "toml", "ncl"] {
+                    for ext in &["json", "yaml", "yml", "toml"] {
                         let p = git_root.join(format!("{repo_name}.besogne.{ext}"));
                         if p.is_file() && !found.contains(&p) {
                             found.push(p);
@@ -94,7 +87,7 @@ pub fn discover_manifests() -> Vec<std::path::PathBuf> {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if matches!(ext, "toml" | "json" | "yaml" | "yml" | "ncl")
+                    if matches!(ext, "toml" | "json" | "yaml" | "yml")
                         && path.is_file()
                         && !found.contains(&path)
                     {

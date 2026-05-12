@@ -126,7 +126,7 @@ pub enum Node {
     Binary(BinaryInput),
     Service(ServiceInput),
     Command(CommandInput),
-    User(UserInput),
+
     Platform(PlatformInput),
     Dns(DnsInput),
     Metric(MetricInput),
@@ -141,12 +141,12 @@ impl Node {
             Node::Env(e) => e.phase.clone().unwrap_or(Phase::Seal),
             Node::File(f) => f.phase.clone().unwrap_or(Phase::Seal),
             Node::Binary(b) => b.phase.clone().unwrap_or(Phase::Build),
-            Node::Service(s) => s.phase.clone().unwrap_or(Phase::Seal),
+            Node::Service(s) => s.phase.clone().unwrap_or(Phase::Exec),
             Node::Command(c) => c.phase.clone().unwrap_or(Phase::Exec),
-            Node::User(u) => u.phase.clone().unwrap_or(Phase::Seal),
+
             Node::Platform(p) => p.phase.clone().unwrap_or(Phase::Build),
-            Node::Dns(d) => d.phase.clone().unwrap_or(Phase::Seal),
-            Node::Metric(m) => m.phase.clone().unwrap_or(Phase::Seal),
+            Node::Dns(d) => d.phase.clone().unwrap_or(Phase::Exec),
+            Node::Metric(m) => m.phase.clone().unwrap_or(Phase::Exec),
             Node::Component(_) => Phase::Seal,
             Node::Source(s) => s.phase.clone().unwrap_or(Phase::Seal),
             Node::Std(_) => Phase::Exec,
@@ -292,20 +292,12 @@ pub struct CommandInput {
     /// Extra args appended to `run` when --debug is passed.
     #[serde(default)]
     pub debug_args: Option<Vec<String>>,
+
+    /// Retry configuration for transient failures
+    #[serde(default)]
+    pub retry: Option<RetryConfig>,
 }
 
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserInput {
-    #[serde(default)]
-    pub in_group: Option<String>,
-
-    #[serde(default)]
-    pub not: Option<String>,
-
-    #[serde(default)]
-    pub phase: Option<Phase>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlatformInput {
@@ -331,6 +323,12 @@ pub struct DnsInput {
 
     #[serde(default)]
     pub phase: Option<Phase>,
+
+    #[serde(default)]
+    pub retry: Option<RetryConfig>,
+
+    #[serde(default)]
+    pub parents: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -432,8 +430,23 @@ pub enum ExecSpec {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetryConfig {
+    /// Maximum number of attempts (including the first try)
     pub attempts: u32,
+
+    /// Base interval between retries (e.g. "1s", "500ms", "2m")
     pub interval: String,
+
+    /// Backoff strategy: "fixed", "linear", "exponential" (default: "fixed")
+    #[serde(default)]
+    pub backoff: Option<String>,
+
+    /// Maximum interval cap when using backoff (e.g. "30s", "5m")
+    #[serde(default)]
+    pub max_interval: Option<String>,
+
+    /// Total timeout for all attempts combined (e.g. "5m", "10m")
+    #[serde(default)]
+    pub timeout: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
