@@ -8,7 +8,7 @@ mod runtime;
 mod tracer;
 
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 #[derive(Parser)]
@@ -136,6 +136,23 @@ fn resolve_single_input_quiet<'a>(
     }
 }
 
+fn create_besogne_symlink(cwd: &Path, name: &str, target: &Path) {
+    let link_dir = cwd.join(".besogne");
+    let _ = std::fs::create_dir_all(&link_dir);
+    let link_path = link_dir.join(name);
+    let _ = std::fs::remove_file(&link_path);
+    #[cfg(unix)]
+    {
+        let _ = std::os::unix::fs::symlink(target, &link_path);
+    }
+}
+
+fn store_path_short(path: &Path) -> String {
+    let s = path.display().to_string();
+    let tail: String = s.chars().rev().take(40).collect::<String>().chars().rev().collect();
+    tail
+}
+
 #[cfg(unix)]
 fn exec_binary(path: &PathBuf, args: &[String]) -> std::io::Error {
     use std::os::unix::process::CommandExt;
@@ -233,52 +250,92 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
 
-            let mut failed = false;
             let cwd = std::env::current_dir().unwrap_or_default();
 
-            for manifest_path in &manifests {
+            // Prepare build tasks: (manifest_path, output_path, name)
+            let tasks: Vec<(PathBuf, PathBuf, String)> = manifests.iter().map(|manifest_path| {
                 let stem = manifest_path.file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("besogne");
-                let name = stem.strip_suffix(".besogne").unwrap_or(stem);
-
+                let name = stem.strip_suffix(".besogne").unwrap_or(stem).to_string();
                 let out = output.clone().unwrap_or_else(|| {
-                    // Default: .besogne/<name>
                     let dir = cwd.join(".besogne");
                     let _ = std::fs::create_dir_all(&dir);
-                    dir.join(name)
+                    dir.join(&name)
                 });
+                (manifest_path.clone(), out, name)
+            }).collect();
 
-                match compile::compile(manifest_path, &out) {
+            if tasks.len() == 1 {
+                // Single manifest: compile with progress output
+                let (manifest_path, out, name) = &tasks[0];
+                match compile::compile(manifest_path, out) {
                     Ok(store_path) => {
-                        // Create .besogne/ symlink if no explicit -o
                         if output.is_none() {
-                            let link_dir = cwd.join(".besogne");
-                            let _ = std::fs::create_dir_all(&link_dir);
-                            let link_path = link_dir.join(name);
-                            // Remove old symlink/file if exists
-                            let _ = std::fs::remove_file(&link_path);
-                            #[cfg(unix)]
-                            {
-                                let _ = std::os::unix::fs::symlink(&store_path, &link_path);
-                            }
+                            create_besogne_symlink(&cwd, name, &store_path);
                             eprintln!(
                                 "besogne: built {} → .besogne/{} (store: {})",
                                 manifest_path.display(), name,
-                                &store_path.display().to_string().chars().rev().take(40).collect::<String>().chars().rev().collect::<String>()
+                                store_path_short(&store_path)
                             );
                         } else {
                             eprintln!("besogne: built {} → {}", manifest_path.display(), out.display());
                         }
+                        ExitCode::SUCCESS
                     }
                     Err(e) => {
                         eprintln!("{}", output::style::error_diag(&format!("{}: {e}", manifest_path.display())));
-                        failed = true;
+                        ExitCode::from(2)
                     }
                 }
-            }
+            } else {
+                // Multiple manifests: compile in parallel (quiet), then show results
+                let build_start = std::time::Instant::now();
+                eprintln!("besogne: building {} manifests in parallel...", tasks.len());
 
-            if failed { ExitCode::from(2) } else { ExitCode::SUCCESS }
+                let results: std::sync::Mutex<Vec<(String, PathBuf, Result<PathBuf, String>)>> =
+                    std::sync::Mutex::new(Vec::new());
+
+                crossbeam::scope(|s| {
+                    for (manifest_path, out, name) in &tasks {
+                        let results = &results;
+                        s.spawn(move |_| {
+                            let result = compile::compile_quiet(manifest_path, out)
+                                .map(|_| out.clone());
+                            results.lock().unwrap().push((name.clone(), manifest_path.clone(), result));
+                        });
+                    }
+                }).unwrap();
+
+                let mut failed = false;
+                let mut results = results.into_inner().unwrap();
+                results.sort_by(|a, b| a.0.cmp(&b.0));
+
+                for (name, manifest_path, result) in &results {
+                    match result {
+                        Ok(out) => {
+                            if output.is_none() {
+                                // Read store path from the output binary for symlink
+                                let store_path = out.clone();
+                                create_besogne_symlink(&cwd, name, &store_path);
+                            }
+                            eprintln!("  {} {name} {}",
+                                output::style::styled(output::style::status::FRESH, "✓"),
+                                output::style::dim(&manifest_path.display().to_string()));
+                        }
+                        Err(e) => {
+                            eprintln!("  {} {name}: {e}",
+                                output::style::styled(output::style::status::FAILED, "✗"));
+                            failed = true;
+                        }
+                    }
+                }
+
+                let total_ms = build_start.elapsed().as_millis();
+                eprintln!("besogne: built {} manifests ({}ms)", results.len(), total_ms);
+
+                if failed { ExitCode::from(2) } else { ExitCode::SUCCESS }
+            }
         }
 
         Some(Commands::Run { input, args }) => {
