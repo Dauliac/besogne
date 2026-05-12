@@ -300,8 +300,7 @@ fn main() -> ExitCode {
                     for (manifest_path, out, name) in &tasks {
                         let results = &results;
                         s.spawn(move |_| {
-                            let result = compile::compile_quiet(manifest_path, out)
-                                .map(|_| out.clone());
+                            let result = compile::compile_quiet(manifest_path);
                             results.lock().unwrap().push((name.clone(), manifest_path.clone(), result));
                         });
                     }
@@ -313,11 +312,9 @@ fn main() -> ExitCode {
 
                 for (name, manifest_path, result) in &results {
                     match result {
-                        Ok(out) => {
+                        Ok(store_path) => {
                             if output.is_none() {
-                                // Read store path from the output binary for symlink
-                                let store_path = out.clone();
-                                create_besogne_symlink(&cwd, name, &store_path);
+                                create_besogne_symlink(&cwd, name, store_path);
                             }
                             eprintln!("  {} {name} {}",
                                 output::style::styled(output::style::status::FRESH, "✓"),
@@ -391,9 +388,23 @@ fn main() -> ExitCode {
             let needs_build = force_rebuild || !bin_path.exists();
 
             if needs_build {
-                if let Err(e) = compile::compile_quiet(&manifest_path, &bin_path) {
-                    eprintln!("{}", output::style::error_diag(&e.to_string()));
-                    return ExitCode::from(2);
+                match compile::compile_quiet(&manifest_path) {
+                    Ok(store_path) => {
+                        // Copy from store to run cache
+                        if let Err(e) = std::fs::copy(&store_path, &bin_path) {
+                            eprintln!("{}", output::style::error_diag(&format!("cannot copy to run cache: {e}")));
+                            return ExitCode::from(2);
+                        }
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            let _ = std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755));
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("{}", output::style::error_diag(&e.to_string()));
+                        return ExitCode::from(2);
+                    }
                 }
                 if json_mode {
                     eprintln!(

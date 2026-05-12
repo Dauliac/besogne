@@ -89,6 +89,8 @@ fn has_docker() -> bool {
 fn copy_dir(src: &Path, dst: &Path) {
     for entry in std::fs::read_dir(src).unwrap() {
         let entry = entry.unwrap();
+        // Skip .besogne/ (auto-generated symlinks, not part of test fixtures)
+        if entry.file_name() == ".besogne" { continue; }
         let dest = dst.join(entry.file_name());
         if entry.file_type().unwrap().is_dir() {
             std::fs::create_dir_all(&dest).unwrap();

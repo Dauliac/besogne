@@ -110,8 +110,9 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, Stri
     Ok(store_binary)
 }
 
-/// Compile with minimal progress (for `besogne run` where the binary handles output)
-pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), String> {
+/// Compile with minimal progress. Returns the store path of the binary.
+/// Does NOT copy to output_path — caller should create a symlink or copy.
+pub fn compile_quiet(manifest_path: &Path) -> Result<PathBuf, String> {
     let build_start = Instant::now();
     let mut manifest = manifest::load_manifest(manifest_path)?;
     if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
@@ -126,16 +127,7 @@ pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), Str
     let store_bin = store_binary_path(&cache_hash);
 
     if store_bin.exists() {
-        std::fs::copy(&store_bin, output_path)
-            .map_err(|e| format!("cannot copy from store: {e}"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o755);
-            std::fs::set_permissions(output_path, perms)
-                .map_err(|e| format!("cannot set permissions: {e}"))?;
-        }
-        return Ok(());
+        return Ok(store_bin);
     }
 
     if let Some(parent) = store_bin.parent() {
@@ -143,8 +135,6 @@ pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), Str
     }
     embed::emit(&store_bin, &ir)?;
     write_store_metadata(&store_bin, &ir, &cache_hash, manifest_path);
-    std::fs::copy(&store_bin, output_path)
-        .map_err(|e| format!("cannot copy to output: {e}"))?;
 
     let total_ms = build_start.elapsed().as_millis();
     let node_summary = build_node_summary(&ir);
@@ -152,7 +142,7 @@ pub fn compile_quiet(manifest_path: &Path, output_path: &Path) -> Result<(), Str
         style::styled(style::status::PROBED, "•"),
         total_ms);
 
-    Ok(())
+    Ok(store_bin)
 }
 
 /// Parse manifest and lower to IR — no binary resolution, no compilation.
