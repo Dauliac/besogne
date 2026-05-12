@@ -4,47 +4,85 @@ besogne integrates deeply with Nix. Store paths are sealed at build time, binari
 
 ## Nix devShell variant
 
-```json
-{
-  "name": "npm-install",
-  "version": "0.1.0",
-  "description": "Install Node.js dependencies (Nix devShell)",
-  "sandbox": "strict",
-  "inputs": [
-    { "key": "nodejs", "type": "plugin", "plugin": "nix/package",
-      "pname": "nodejs", "version": "20.11.0",
-      "out": "/nix/store/abc-nodejs-20.11.0", "bins": ["node", "npm", "npx"] },
-    { "type": "file", "path": "package.json" },
-    { "type": "file", "path": "package-lock.json" },
-    { "type": "command", "name": "install", "phase": "exec",
-      "run": ["npm", "ci"],
-      "ensure": [
-        { "type": "file", "path": "node_modules", "expect": "directory", "required": true }
-      ] }
-  ]
-}
+```toml
+name = "npm-install"
+description = "Install Node.js dependencies (Nix devShell)"
+sandbox = "strict"
+
+[nodes.node]
+type = "binary"
+sealed = true
+
+[nodes.npm]
+type = "binary"
+sealed = true
+
+[nodes.package-json]
+type = "file"
+path = "package.json"
+
+[nodes.lockfile]
+type = "file"
+path = "package-lock.json"
+
+[nodes.install]
+type = "command"
+phase = "exec"
+run = ["npm", "ci"]
+
+[nodes.node-modules]
+type = "file"
+path = "node_modules"
+expect = "directory"
+parents = ["install"]
 ```
 
-The `nix/package` plugin:
-- Verifies the store path exists at build time (`sealed`)
-- Exposes `node`, `npm`, `npx` as binary inputs with absolute paths
-- Auto-generates `$NODE`, `$NPM`, `$NPX` variables
+When `sealed = true`, besogne:
+- Resolves the binary at build time (during `besogne build`)
+- Detects the Nix store path and embeds the absolute path
+- Verifies the store path exists (build fails if not)
+- Hashes the binary content for cache invalidation
 
-## Nix plugins
+## Nix components
 
-- `nix/package` — standard packages (stdenv.mkDerivation)
-- `nix/app` — flake apps (`apps.<system>.<name>`)
-- `nix/derivation` — any derivation (runCommand, writeText, multi-output)
+Use builtin components for common Nix patterns:
 
-## mkBesogneApp
+```toml
+[nodes."nix/package"]
+type = "component"
 
-In your `flake.nix`, use `mkBesogneApp` to generate the manifest and compile in one step:
+[nodes."nix/app"]
+type = "component"
 
-```nix
-packages.my-task = besogne.mkBesogneApp {
-  name = "my-task";
-  version = "0.1.0";
-  inputs = [ pkgs.go pkgs.golangci-lint ];
-  # ... generates manifest with nix/package plugins, calls besogne build
-};
+[nodes."nix/derivation"]
+type = "component"
 ```
+
+## Source environment from Nix
+
+Use a `source` node to inject Nix environment variables:
+
+```toml
+[nodes.nix-env]
+type = "source"
+format = "json"
+path = "nix-env.json"
+phase = "build"
+select = ["GOPATH", "PATH", "CC"]
+```
+
+Or use the `env/nix` component:
+
+```toml
+[nodes."env/nix"]
+type = "component"
+```
+
+## Binary source detection
+
+besogne automatically detects binary sources at build time:
+- **Nix**: binaries in `/nix/store/` — version parsed from store path, immutable
+- **mise**: binaries in mise install dirs — version parsed from path
+- **System**: all other binaries — no safe version detection by default
+
+This detection happens transparently and is embedded in the IR for runtime use.

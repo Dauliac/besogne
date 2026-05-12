@@ -1,74 +1,57 @@
-# Plugins
+# Components
 
-Plugins are Nickel files that expand into native inputs. They live in `plugins/<category>/<name>.ncl`.
+Components are reusable manifests that expand into native nodes. They live in `components/<category>/<name>.json`.
 
-## Plugin structure
+## Component structure
 
-```nickel
+A component IS a manifest — same `nodes: {}` format:
+
+```json
 {
-  name = "aws/session",
-  version = "0.1.0",
-  description = "Validate AWS session via STS",
-
-  params | {
-    profile | String | optional,
-    region | String | optional,
-  },
-
-  defaults = {
-    on_fail = "fail",
-  },
-
-  produces = fun params => [
-    {
-      type = "command",
-      description = "aws sts identity",
-      run = ["aws", "sts", "get-caller-identity"],
-      env = { AWS_PROFILE = params.profile },
-      extract = {
-        format = "json",
-        fields = { AWS_ACCOUNT_ID = "$.Account" },
-      },
-    },
-  ],
+  "name": "go/deps",
+  "nodes": {
+    "go/toolchain": { "type": "component" },
+    "go-mod": { "type": "file", "path": "go.mod" },
+    "download": { "type": "command", "run": ["go", "mod", "download"],
+                   "parents": ["go/toolchain.go", "go-mod"] }
+  }
 }
 ```
 
-- `params` — Nickel contract on parameters. Validated when the plugin is used.
-- `produces` — function from params to a list of native inputs.
-- `defaults` — default values applied to produced inputs.
-
-## Plugin composition
-
-Plugins can import other plugins:
-
-```nickel
-let kubeconfig_plugin = import "k8s/kubeconfig.ncl" in
-{
-  produces = fun params =>
-    kubeconfig_plugin.produces { path = params.kubeconfig }
-    @ own_inputs,
-}
-```
-
-## Multi-phase plugins
-
-Produced inputs can have different phases:
-
-```nickel
-produces = fun params => [
-  { type = "env", name = "KUBECONFIG", phase = `seal` },
-  { type = "file", path = params.path, phase = "exec" },
-  { type = "command", name = "cluster-info", phase = "exec",
-    after = ["kubeconfig-file"] },
-]
-```
+- No separate schema, no params, no templates.
+- `nodes` map uses the same format as terminal manifests.
+- Components can reference other components via `type: "component"` nodes (recursive expansion).
 
 ## Overrides
 
-Users override plugin internals:
+Users override component internals with shallow merge:
+
+```toml
+[nodes."go/deps".overrides.download]
+description = "custom download step"
+```
+
+## Patches
+
+Array operations (append/prepend/remove) on component node fields:
+
+```toml
+[nodes."go/deps".patch.download.run]
+append = ["-x", "-v"]
+```
+
+## Multi-phase components
+
+Produced nodes can have different phases:
 
 ```json
-{ "key": "k8s", "type": "plugin", "plugin": "k8s/cluster",
-  "overrides": { "KUBECONFIG": { "phase": "build" } } }
+{
+  "nodes": {
+    "kubeconfig": { "type": "env", "phase": "seal" },
+    "config-file": { "type": "file", "path": "kubeconfig.yaml", "phase": "exec" },
+    "cluster-info": { "type": "command", "phase": "exec",
+                      "run": ["kubectl", "cluster-info"],
+                      "parents": ["config-file"] }
+  }
+}
 ```

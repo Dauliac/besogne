@@ -1,6 +1,6 @@
 # Getting started
 
-This tutorial walks you through creating your first besogne: a "hello world" that validates an input and runs a command.
+This tutorial walks you through creating your first besogne: a "hello world" that validates a seal and runs a command.
 
 ## Prerequisites
 
@@ -15,10 +15,10 @@ Create `besogne.toml`:
 name = "hello"
 description = "My first besogne"
 
-[inputs.USER]
+[nodes.USER]
 type = "env"
 
-[inputs.greet]
+[nodes.greet]
 type = "command"
 phase = "exec"
 run = ["echo", "hello from besogne"]
@@ -42,7 +42,7 @@ besogne run
 Output:
 ```
 hello — My first besogne
-  checking 1 inputs...
+  checking 1 seal...
   ✓ env:USER
 
 ▶ greet: echo hello from besogne
@@ -68,7 +68,7 @@ env -u USER ./hello
 Output:
 ```
 hello — My first besogne
-  checking 1 inputs...
+  checking 1 seal...
   ✗ env:USER — env var 'USER' is not set
 
 ✗ FAILED exit 2  0.001s

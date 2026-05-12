@@ -1,6 +1,6 @@
 # Output modes
 
-besogne supports three output modes, selectable via `--log-format` or `BESOGNE_OUTPUT` env var.
+besogne supports three output modes, selectable via `--log-format` (`-l`).
 
 ## Human (default)
 
@@ -47,10 +47,10 @@ Machine-readable, one JSON object per line.
 
 ```json
 {"event":"start","name":"hello","version":"0.0.1"}
-{"event":"warmup_start","input_count":2}
+{"event":"seal_start","input_count":2}
 {"event":"probe","input":"binary:go","success":true}
 {"event":"probe","input":"file:go.mod","success":true}
-{"event":"warmup_end"}
+{"event":"seal_end"}
 {"event":"command_start","name":"test","exec":["go","test","./..."]}
 {"event":"command_end","name":"test","exit_code":0,"wall_ms":1234,"user_ms":800,"sys_ms":200,"max_rss_kb":45000}
 {"event":"summary","exit_code":0,"wall_ms":1250}

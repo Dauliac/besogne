@@ -8,55 +8,55 @@ This tutorial creates a multi-step CI pipeline: test, lint, coverage report, wit
 name = "go-ci"
 description = "Go CI pipeline: test + lint + coverage"
 
-[inputs.go]
+[nodes.go]
 type = "binary"
 
-[inputs.golangci-lint]
+[nodes.golangci-lint]
 type = "binary"
 
-[inputs.go-mod]
+[nodes.go-mod]
 type = "file"
 path = "go.mod"
 
-[inputs.go-sum]
+[nodes.go-sum]
 type = "file"
 path = "go.sum"
 
-[inputs.test]
+[nodes.test]
 type = "command"
 phase = "exec"
 run = ["go", "test", "-v", "-coverprofile=cover.out", "./..."]
 
-[[inputs.test.ensure]]
+[nodes.cover-out]
 type = "file"
 path = "cover.out"
-required = true
+parents = ["test"]
 
-[inputs.lint]
+[nodes.lint]
 type = "command"
 phase = "exec"
 run = ["golangci-lint", "run", "./..."]
 
-[inputs.coverage]
+[nodes.coverage]
 type = "command"
 phase = "exec"
 run = ["go", "tool", "cover", "-html=cover.out", "-o", "coverage.html"]
-after = ["test"]
+parents = ["cover-out"]
 
-[[inputs.coverage.ensure]]
+[nodes.coverage-html]
 type = "file"
 path = "coverage.html"
-required = true
+parents = ["coverage"]
 ```
 
 ## The DAG
 
 ```
-test ──→ coverage
+test ──→ cover-out ──→ coverage ──→ coverage-html
 lint     (parallel with test, no dependency)
 ```
 
-`test` and `lint` run in the same tier (parallel). `coverage` waits for `test` (it needs `cover.out`).
+`test` and `lint` run in the same tier (parallel). `coverage` waits for `cover-out` — a file postcondition of `test`. This gives finer-grained caching: if `cover.out` hasn't changed, `coverage` can skip.
 
 ## Build and run
 
@@ -67,7 +67,7 @@ besogne run
 Output:
 ```
 go-ci — Go CI pipeline: test + lint + coverage
-  checking 4 inputs...
+  checking 4 seals...
   ✓ binary:go
   ✓ binary:golangci-lint
   ✓ file:go.mod

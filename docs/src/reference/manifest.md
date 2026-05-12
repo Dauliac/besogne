@@ -8,34 +8,34 @@ A besogne manifest is a TOML, YAML, or JSON file. Supported filenames: `besogne.
 |---|---|---|---|
 | `name` | string | yes | Besogne name |
 | `description` | string | yes | Human description |
-| `side_effects` | bool | no | Opt out of caching (default: false) |
 | `sandbox` | string/object | no | Sandbox preset or custom config |
 | `flags` | array | no | CLI flags for the produced binary |
-| `inputs` | map | no | Named map of all seals and execution steps |
+| `components` | map | no | Component sources: namespace → source |
+| `nodes` | map | no | Named map of all seals and execution steps |
 
-## Inputs (named map)
+## Nodes (named map)
 
-Inputs are a **named map** — the key IS the input's identity.
+Nodes are a **named map** — the key IS the node's identity.
 
 TOML:
 ```toml
-[inputs.go]
+[nodes.go]
 type = "binary"
 
-[inputs.go-mod]
+[nodes.go-mod]
 type = "file"
 path = "go.mod"
 
-[inputs.test]
+[nodes.test]
 type = "command"
 phase = "exec"
 run = ["go", "test", "./..."]
-after = ["build"]
+parents = ["build"]
 ```
 
 YAML:
 ```yaml
-inputs:
+nodes:
   go:
     type: binary
   go-mod:
@@ -45,62 +45,59 @@ inputs:
     type: command
     phase: exec
     run: ["go", "test", "./..."]
-    after: ["build"]
+    parents: ["build"]
 ```
 
 The key serves as:
-- **Command name** — used in `after:` references
+- **Command name** — used in `parents:` references
 - **Env var name** — defaults to the key for `env` type (override with `name:`)
 - **Binary name** — defaults to the key for `binary` type (override with `name:`)
-- **Plugin reference** — used for `after:` from exec-phase commands
+- **Component reference** — resolves to `components/<key>.json`
 
-## Native input types
+## Native node types
 
-`env`, `file`, `binary`, `service`, `command`, `source`, `user`, `platform`, `dns`, `metric`, `plugin`.
+`env`, `file`, `binary`, `service`, `command`, `source`, `platform`, `dns`, `metric`, `component`, `std`.
 
 ### Phase
 
-Each input has a `phase` (when it's evaluated):
+Each node has a `phase` (when it's evaluated):
 
 | Phase | When | Default for |
 |---|---|---|
 | `build` | `besogne build` | binary, platform |
-| `seal` | Startup (parallel) | env, file, service, user, dns, metric |
-| `exec` | DAG execution | command |
+| `seal` | Startup (parallel) | env, file, source |
+| `exec` | DAG execution | command, service, dns, metric |
 
-### Command inputs
+### Command nodes
 
 ```toml
-[inputs.test]
+[nodes.test]
 type = "command"
 phase = "exec"
 run = ["go", "test", "./..."]
 env = { CGO_ENABLED = "0" }
-after = ["install"]
+parents = ["install"]
 side_effects = false
-
-[[inputs.test.ensure]]
-type = "file"
-path = "cover.out"
-required = true
+force_args = ["-count=1"]
+debug_args = ["-v"]
 ```
 
 `run` forms:
 - Array: `["go", "test"]`
 - String (bash): `"go test | grep PASS"`
-- Pipe: `{ pipe = [["echo", "hello"], ["tr", "a-z", "A-Z"]] }`
 - Script: `{ file = "./run.sh", args = ["--flag"] }`
 
-### Plugin inputs
+### Component nodes
 
 ```toml
-[inputs.k8s]
-type = "plugin"
-plugin = "k8s/cluster"
-context = "staging"
+[nodes."go/deps"]
+type = "component"
 
-[inputs.k8s.overrides]
-KUBECONFIG = { phase = "build" }
+[nodes."go/deps".overrides.download]
+description = "custom download step"
+
+[nodes."go/deps".patch.download.run]
+append = ["-x", "-v"]
 ```
 
 ## Sandbox presets
@@ -140,12 +137,11 @@ required = true
 
 | Field | Default |
 |---|---|
-| `side_effects` | `false` (everything cached by default) |
 | `sandbox` | none (inherit everything) |
 | `phase` for binary | `build` |
-| `phase` for env/file/service | `seal` |
-| `phase` for command | `exec` |
+| `phase` for platform | `build` |
+| `phase` for env/file/source | `seal` |
+| `phase` for command/service/dns/metric | `exec` |
 | `on_missing` | `fail` |
 | `side_effects` | `false` (cached by default) |
-| `required` (ensure) | `true` |
 | `name` (env/binary) | map key |

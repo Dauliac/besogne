@@ -11,7 +11,7 @@
 # How-to guides
 
 - [Use with Nix](./how-to/nix.md)
-- [Add seals](./how-to/seals.md)
+- [Add seals](./how-to/preconditions.md)
 - [Use components](./how-to/components.md)
 - [Project organization](./how-to/project-organization.md)
 - [Cache and skip](./how-to/caching.md)
@@ -22,7 +22,7 @@
 # Reference
 
 - [Manifest schema](./reference/manifest.md)
-- [Native input types](./reference/input-types.md)
+- [Native node types](./reference/input-types.md)
 - [CLI](./reference/cli.md)
 - [Components](./reference/components.md)
 - [Output modes](./reference/output-modes.md)

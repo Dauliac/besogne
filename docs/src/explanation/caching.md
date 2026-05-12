@@ -86,9 +86,7 @@ Exit codes and stdout/stderr are explicit nodes too:
 type = "std"
 stream = "exit_code"
 parents = ["test"]
-
-[nodes.test-exit.content.int]
-expect = 0
+expect = "0"
 ```
 
 Terminal commands (no postcondition children) use their input hash for skip decisions — if all inputs are unchanged and the command is pure, memoization guarantees the same result.

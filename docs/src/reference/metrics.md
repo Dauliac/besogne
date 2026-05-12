@@ -15,25 +15,33 @@ Near-zero overhead. Uses `wait4` + `rusage` for the top-level command.
 | Voluntary ctx switches | `wait4` → `rusage.ru_nvcsw` | Linux |
 | Involuntary ctx switches | `wait4` → `rusage.ru_nivcsw` | Linux |
 
-## Future: subprocess tracing
+## LD_PRELOAD interposer
 
-Planned via netlink proc connector (`CAP_NET_ADMIN`) with ptrace fallback:
+besogne includes a shared memory LD_PRELOAD interposer (`besogne_preload.c`) for fast process telemetry with near-zero overhead (~10ns per event, zero syscalls). It uses `mmap(MAP_SHARED)` for a lock-free ring buffer.
 
-- Process tree (fork/exec/exit for every subprocess)
-- Per-subprocess CPU, memory, I/O
-- Container detection (docker run/podman)
-- Network bytes via `/proc/{pid}/net/dev`
+The interposer tracks:
+- `getenv()` calls — which env vars are actually accessed
+- `execve()` calls — which binaries are executed
+- `fork()` / `exit()` — process tree
+- `connect()` — network connections
+- `open()` / `unlink()` / `rename()` — file I/O
+- `getaddrinfo()` — DNS resolution
+- `dlopen()` — dynamic library loading
 
-## Future: deep mode
+This data feeds into undeclared dependency detection and process tree visualization.
 
-Filtered syscall-level interception via ptrace:
+## Process tree
 
-- `--deep=files` — openat, read, write per file
-- `--deep=memory` — mmap, brk, munmap
-- `--deep=network` — socket, connect, per-socket bytes
-- `--deep=signals` — signal handlers, delivery
-- `--deep=scheduling` — futex, nanosleep
-- `--deep=errors` — all syscalls returning -1
+Every command's subprocess tree is captured:
+
+| Field | Source |
+|---|---|
+| PID / PPID | `fork` / `wait4` |
+| Command line | `/proc/{pid}/cmdline` |
+| Exit code | `wait4` |
+| CPU user/sys per process | `wait4` → `rusage` |
+| Peak RSS per process | `wait4` → `rusage.ru_maxrss` |
+| Disk I/O bytes | `/proc/{pid}/io` |
 
 ## Metrics in JSON output
 
@@ -47,6 +55,9 @@ All metrics appear in `command_end` events:
   "wall_ms": 1234,
   "user_ms": 800,
   "sys_ms": 200,
-  "max_rss_kb": 45000
+  "max_rss_kb": 45000,
+  "disk_read_bytes": 1048576,
+  "disk_write_bytes": 524288,
+  "processes_spawned": 3
 }
 ```

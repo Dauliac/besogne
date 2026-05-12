@@ -1,11 +1,11 @@
 # Add seals
 
-Seals are inputs that must be valid before any command runs. If any fails, the besogne aborts immediately.
+Seals are nodes that must be valid before any command runs. If any fails, the besogne aborts immediately.
 
 ## Require an env var
 
 ```toml
-[inputs.API_TOKEN]
+[nodes.API_TOKEN]
 type = "env"
 secret = true
 ```
@@ -13,7 +13,7 @@ secret = true
 Set a computed value (not read from shell):
 
 ```toml
-[inputs.CACHE_DIR]
+[nodes.CACHE_DIR]
 type = "env"
 value = "/tmp/my-cache"
 ```
@@ -21,7 +21,7 @@ value = "/tmp/my-cache"
 ## Require a file
 
 ```toml
-[inputs.config]
+[nodes.config]
 type = "file"
 path = "config.yaml"
 ```
@@ -29,14 +29,14 @@ path = "config.yaml"
 ## Require a binary in PATH
 
 ```toml
-[inputs.docker]
+[nodes.docker]
 type = "binary"
 ```
 
 With version constraint:
 
 ```toml
-[inputs.go]
+[nodes.go]
 type = "binary"
 version = ">=1.22"
 ```
@@ -44,11 +44,11 @@ version = ">=1.22"
 ## Require a service
 
 ```toml
-[inputs.postgres]
+[nodes.postgres]
 type = "service"
 tcp = "localhost:5432"
 
-[inputs.api-health]
+[nodes.api-health]
 type = "service"
 http = "http://localhost:8080/health"
 ```
@@ -56,56 +56,49 @@ http = "http://localhost:8080/health"
 ## Check platform
 
 ```toml
-[inputs.platform]
+[nodes.platform]
 type = "platform"
 os = "linux"
 arch = "x86_64"
 ```
 
-## Check user/group
-
-```toml
-[inputs.docker-group]
-type = "user"
-in_group = "docker"
-```
-
 ## Check system resources
 
 ```toml
-[inputs.memory]
+[nodes.memory]
 type = "metric"
 metric = "memory.available_mb"
 
-[inputs.memory.validate.value]
-type = "float"
-min = 512
-
-[inputs.disk]
+[nodes.disk]
 type = "metric"
 metric = "disk.available_gb"
 path = "/"
-
-[inputs.disk.validate.value]
-type = "float"
-min = 10
 ```
 
 ## Check DNS
 
 ```toml
-[inputs.registry-dns]
+[nodes.registry-dns]
 type = "dns"
 host = "registry.internal.io"
+```
+
+## Load environment from file
+
+```toml
+[nodes.dev-env]
+type = "source"
+format = "dotenv"
+path = ".env"
 ```
 
 ## Run a probe command
 
 ```toml
-[inputs.git-clean]
+[nodes.git-clean]
 type = "command"
-phase = `seal`
+phase = "seal"
 run = ["git", "diff", "--quiet", "HEAD"]
 ```
 
-Note: commands default to `phase = "exec"`. Use `phase = `seal`` to make them seals.
+Note: commands default to `phase = "exec"`. Use `phase = "seal"` to make them seals.

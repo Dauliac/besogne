@@ -30,6 +30,7 @@ value = "/tmp/cache"
 | `value` | Set this value (don't read from shell) |
 | `from_env` | If true + value set: use value as default, shell overrides |
 | `secret` | Mask value in output |
+| `on_missing` | What to do if var is missing: `fail` (default) or `skip` |
 
 ## file
 
@@ -46,7 +47,7 @@ path = "/var/run/docker.sock"
 expect = "socket"
 ```
 
-As a **postcondition** (child of a command):
+As a **postcondition** (child of a command via `parents:`):
 
 ```toml
 [nodes.node-modules]
@@ -55,6 +56,13 @@ path = "node_modules"
 expect = "directory"
 parents = ["install"]       # postcondition of install command
 ```
+
+| Field | Description |
+|---|---|
+| `path` | File path (relative to manifest dir) |
+| `expect` | Expected type: `file`, `directory`, `socket` |
+| `permissions` | Expected permissions string |
+| `parents` | DAG parents |
 
 ## binary
 
@@ -68,6 +76,14 @@ type = "binary"
 type = "binary"
 parents = ["go"]            # toolchain internal, hash derived from parent
 ```
+
+| Field | Description |
+|---|---|
+| `name` | Binary name for PATH resolution (defaults to map key) |
+| `path` | Explicit path (skip PATH resolution) |
+| `version` | Expected version or semver constraint (e.g. `"22"`, `">=1.22"`) |
+| `parents` | Parent binary nodes (embedded binaries, e.g. Go's `compile` inside `go`) |
+| `sealed` | If true, resolve and embed at build time (Nix store paths) |
 
 ## service
 
@@ -83,6 +99,14 @@ type = "service"
 http = "http://localhost:8080/health"
 ```
 
+| Field | Description |
+|---|---|
+| `tcp` | TCP address to probe (e.g. `"localhost:5432"`) |
+| `http` | HTTP URL to probe (e.g. `"http://localhost:8080/health"`) |
+| `on_fail` | What to do on failure: `fail` (default), `skip`, or `warn` |
+| `retry` | Retry configuration (see below) |
+| `parents` | DAG parents |
+
 ## command
 
 Execute a command. The only **action** node type.
@@ -91,25 +115,27 @@ Execute a command. The only **action** node type.
 [nodes.test]
 type = "command"
 run = ["go", "test", "./..."]
-parents = ["mod-download-exit", "test-go"]
+parents = ["mod-download", "test-go"]
 force_args = ["-count=1"]
 debug_args = ["-v"]
 ```
 
 | Field | Description |
 |---|---|
-| `run` | Command to execute (array, string, pipe, or script) |
+| `run` | Command to execute (array, string, or script) |
 | `parents` | DAG parents (must complete before this runs) |
-| `stdin` | Single `std` node name to pipe as stdin |
 | `env` | Extra env vars for this command |
 | `workdir` | Working directory (relative to manifest dir) |
 | `side_effects` | If true, always run, never cache |
 | `force_args` | Extra args appended when `--force` is passed |
 | `debug_args` | Extra args appended when `--debug` is passed |
+| `on_fail` | What to do on failure: `fail` (default), `skip`, or `warn` |
+| `retry` | Retry configuration (see below) |
+| `description` | Human-readable description |
 
 ## std
 
-Probe on command I/O — stdout, stderr, exit code, or stdin. Replaces `output:`, `postconditions:`, and `pipe:`.
+Probe on command I/O — stdout, stderr, or exit code.
 
 ```toml
 # Exit code check
@@ -117,61 +143,22 @@ Probe on command I/O — stdout, stderr, exit code, or stdin. Replaces `output:`
 type = "std"
 stream = "exit_code"
 parents = ["test"]
-
-[nodes.test-exit.content.int]
-expect = 0
+expect = "0"
 
 # Stdout validation
 [nodes.test-stdout]
 type = "std"
 stream = "stdout"
 parents = ["test"]
-
-[nodes.test-stdout.content.text]
 contains = ["PASS"]
-
-# Structured output with extraction
-[nodes.test-json]
-type = "std"
-stream = "stdout"
-parents = ["test"]
-
-[nodes.test-json.content.jsonline]
-schema = "./schemas/go-test.schema.json"
-
-[nodes.test-json.content.jsonline.extract]
-status = ".Action"
-elapsed = ".Elapsed"
-
-# Piping: connect stdout to next command's stdin
-[nodes.generate-out]
-type = "std"
-stream = "stdout"
-parents = ["generate"]
-
-[nodes.format]
-type = "command"
-run = ["jq", ".data"]
-stdin = "generate-out"          # exactly one stdin source
-parents = ["generate-out"]
 ```
 
 | Field | Description |
 |---|---|
-| `stream` | `stdout`, `stderr`, `exit_code`, or `stdin` |
-| `parents` | The command this probes (for stdout/stderr/exit_code) |
-
-A command can have at most ONE `stdin` source — multiple is a compile error.
-
-## user
-
-Check user identity and group membership.
-
-```toml
-[nodes.docker-user]
-type = "user"
-in_group = "docker"
-```
+| `stream` | Which stream: `stdout`, `stderr`, or `exit_code` |
+| `parents` | The command whose output to probe |
+| `contains` | Assert content contains these strings (for stdout/stderr) |
+| `expect` | Assert exact match (for exit_code: `"0"`) |
 
 ## platform
 
@@ -184,6 +171,12 @@ os = "linux"
 arch = "x86_64"
 ```
 
+| Field | Description |
+|---|---|
+| `os` | Expected OS (e.g. `"linux"`, `"macos"`) |
+| `arch` | Expected architecture (e.g. `"x86_64"`, `"aarch64"`) |
+| `kernel_min` | Minimum kernel version |
+
 ## dns
 
 Resolve a hostname.
@@ -194,6 +187,13 @@ type = "dns"
 host = "registry.internal.io"
 ```
 
+| Field | Description |
+|---|---|
+| `host` | Hostname to resolve |
+| `expect` | Expected IP address |
+| `retry` | Retry configuration |
+| `parents` | DAG parents |
+
 ## metric
 
 Read system metrics from `/proc` or `statvfs()`.
@@ -203,24 +203,16 @@ Read system metrics from `/proc` or `statvfs()`.
 type = "metric"
 metric = "memory.available_mb"
 
-[nodes.memory.content.float]
-min = 512
+[nodes.disk]
+type = "metric"
+metric = "disk.available_gb"
+path = "/"
 ```
 
-## Content validation (all types)
-
-Any node can have typed content validation via `content.<format>`:
-
-```toml
-[nodes.config.content.json]
-schema = "./config.schema.json"
-has_fields = ["database"]
-
-[nodes.config.content.json.extract]
-db_host = ".database.host"
-```
-
-See [content types](./content-types.md) for the full format reference.
+| Field | Description |
+|---|---|
+| `metric` | Metric name (e.g. `"memory.available_mb"`, `"disk.available_gb"`, `"cpu.count"`) |
+| `path` | Filesystem path for disk metrics |
 
 ## source
 
@@ -255,30 +247,52 @@ select = ["GOPATH", "PATH", "CC"]
 | `select` | Only keep these env var names (filter) |
 | `parents` | DAG parents (file nodes, std nodes, etc.) |
 
-Source nodes are **probes** — they read environment state without executing anything. The parsed env vars flow into `all_variables` and are available to all commands.
+## component
 
-### Using plugins for common tools
-
-Instead of writing source nodes manually, use builtin `env/*` plugins:
+Reference a reusable manifest that expands into native nodes at build time. Not a runtime node.
 
 ```toml
-[nodes.dev-env]
-type = "plugin"
-plugin = "env/direnv"
+[nodes."coreutils/shell"]
+type = "component"
 
-[nodes.secrets]
-type = "plugin"
-plugin = "env/dotenv"
+[nodes."go/deps"]
+type = "component"
+
+[nodes."go/deps".overrides.download]
+description = "custom download step"
+
+[nodes."go/deps".patch.download.run]
+append = ["-x", "-v"]
 ```
 
-Available: `env/direnv`, `env/mise`, `env/nix`, `env/venv`, `env/dotenv`, `env/conda`.
+| Field | Description |
+|---|---|
+| `overrides` | Per-node field overrides (shallow merge) |
+| `patch` | Per-node array patches: `append`, `prepend`, `remove` |
 
-## plugin
+See [Components](./components.md) for the full component reference.
 
-Expands into native inputs at build time. Not a runtime node.
+## Retry configuration
+
+Services, DNS, and commands support retry:
 
 ```toml
-[nodes.coreutils]
-type = "plugin"
-plugin = "coreutils/shell"
+[nodes.db]
+type = "service"
+tcp = "localhost:5432"
+
+[nodes.db.retry]
+attempts = 5
+interval = "2s"
+backoff = "exponential"
+max_interval = "30s"
+timeout = "5m"
 ```
+
+| Field | Description |
+|---|---|
+| `attempts` | Maximum number of attempts (including first try) |
+| `interval` | Base interval between retries (e.g. `"1s"`, `"500ms"`) |
+| `backoff` | Strategy: `"fixed"` (default), `"linear"`, `"exponential"` |
+| `max_interval` | Maximum interval cap (e.g. `"30s"`) |
+| `timeout` | Total timeout for all attempts (e.g. `"5m"`) |

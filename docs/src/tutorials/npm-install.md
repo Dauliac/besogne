@@ -10,37 +10,37 @@ Create `besogne.toml`:
 name = "npm-install"
 description = "Install npm dependencies"
 
-[inputs.node]
+[nodes.node]
 type = "binary"
 version = ">=18"
 
-[inputs.npm]
+[nodes.npm]
 type = "binary"
 
-[inputs.package-json]
+[nodes.package-json]
 type = "file"
 path = "package.json"
 
-[inputs.lockfile]
+[nodes.lockfile]
 type = "file"
 path = "package-lock.json"
 
-[inputs.install]
+[nodes.install]
 type = "command"
 phase = "exec"
 run = ["npm", "install"]
 
-[[inputs.install.ensure]]
+[nodes.node-modules]
 type = "file"
 path = "node_modules"
 expect = "directory"
-required = true
+parents = ["install"]
 ```
 
 What this declares:
 - **Seals**: `node` (>= 18) and `npm` in PATH, `package.json` and lock file exist
 - **Execution**: run `npm install`
-- **Postcondition**: `node_modules/` must exist after
+- **Postcondition**: `node_modules/` must exist after (declared as a file node with `parents = ["install"]`)
 - **Memoization**: cached by default — skip if nothing changed
 
 ## Build and run

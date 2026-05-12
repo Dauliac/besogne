@@ -6,11 +6,11 @@ besogne is **not a task manager or orchestrator**. It produces a single self-con
 
 | Feature | besogne | Task | just | Mage | mise | Dagger |
 |---|---|---|---|---|---|---|
-| Declarative manifest | JSON | YAML | Justfile | Go code | TOML | SDK code |
+| Declarative manifest | TOML/YAML/JSON | YAML | Justfile | Go code | TOML | SDK code |
 | Build to single binary | Yes | No | No | Yes | No | No |
 | One task = one binary | Yes | No | No | No | No | No |
-| Typed seals | 9 native types | No | No | No | No | No |
-| Postconditions (ensure) | Yes | No | No | No | No | No |
+| Typed seals | 11 native types | No | No | No | No | No |
+| Postconditions (DAG nodes) | Yes | No | No | No | No | No |
 | Sandbox (env/fs/network) | Yes | No | No | No | No | Container |
 | Memoization (default) | Yes | Partial | No | No | No | Yes |
 | Process tracing | wait4/rusage | No | No | No | No | No |

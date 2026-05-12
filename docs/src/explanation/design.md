@@ -56,12 +56,10 @@ Command stdout, stderr, and exit code are explicit nodes:
 type = "std"
 stream = "stdout"
 parents = ["test"]
-
-[nodes.test-stdout.content.text]
 contains = ["PASS"]
 ```
 
-This replaces `output:`, `postconditions:`, and `pipe:` — all with one concept: a probe node on command I/O.
+This replaces the need for special `output:` or `postconditions:` fields — command I/O is just another probe node in the DAG.
 
 Piping is just a `std` node connecting two commands:
 
@@ -74,29 +72,8 @@ parents = ["generate"]
 [nodes.format]
 type = "command"
 run = ["jq", ".data"]
-stdin = "generate-out"
 parents = ["generate-out"]
 ```
-
-## Typed content: `content.<format>`
-
-Every node's content can be parsed, validated, and extracted from — uniformly:
-
-```toml
-[nodes.config.content.json]
-schema = "./config.schema.json"
-has_fields = ["database"]
-
-[nodes.config.content.json.extract]
-db_host = ".database.host"
-```
-
-The format IS the section key. Each format scopes its own constraints. You can't use `scheme` (url) with `min` (int) — structurally impossible.
-
-Three validation layers:
-1. **Inline constraints** — native, no deps (`expect`, `contains`, `matches`, `min`, `max`)
-2. **Schema files** — detected by extension (`.schema.json`, `.cue`, `.ncl`)
-3. **Custom validators** — any executable (`check = ["./validate.sh"]`)
 
 ## The formal model
 
@@ -111,8 +88,7 @@ Three validation layers:
 | Stable output shortcut | Output-addressed caching | Content-addressed storage |
 | `side_effects: true` | IO monad (opt-out of purity) | Type theory |
 | Sandbox | Effect handler | Algebraic effects |
-| `content.<format>` | Tagged union + existential type | Type theory |
-| Plugin expansion | Monadic bind (List monad) | Category theory |
+| Component expansion | Composition (manifests compose manifests) | Category theory |
 | Probes | Lenses (getters) | Optics |
 
 ## Purity in an impure world
