@@ -62,6 +62,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, Stri
     pin_result?;
 
     // 3. Check content-addressed store
+    // IR is fully deterministic (no timestamps) — same manifest + same binaries = same hash.
     let ir_json = serde_json::to_vec(&ir)
         .map_err(|e| format!("cannot serialize IR for cache key: {e}"))?;
     let cache_hash = compile_cache_key(&ir_json);
@@ -236,7 +237,6 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
                     input.sealed = Some(SealedSnapshot {
                         hash: resolved.hash,
                         size,
-                        verified_at: chrono::Utc::now().to_rfc3339(),
                     });
 
                     if !quiet {
@@ -349,7 +349,6 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
                 input.sealed = Some(SealedSnapshot {
                     hash: derived_hash,
                     size: None,
-                    verified_at: chrono::Utc::now().to_rfc3339(),
                 });
 
                 if !quiet {

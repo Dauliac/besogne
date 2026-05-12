@@ -121,7 +121,6 @@ pub struct ResolvedNode {
 pub struct SealedSnapshot {
     pub hash: String,
     pub size: Option<u64>,
-    pub verified_at: String,
 }
 
 /// Detected source of a binary — compile-time variant polymorphism.
