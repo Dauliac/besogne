@@ -450,6 +450,10 @@ fn resolve_ordering(
                     let key = i.id.0.split(':').nth(1).unwrap_or("").to_string();
                     Some((key, i.id.clone()))
                 }
+                ResolvedNativeNode::File { .. } if i.phase == Phase::Exec => {
+                    let key = i.id.0.split(':').nth(1).unwrap_or("").to_string();
+                    Some((key, i.id.clone()))
+                }
                 _ => None,
             }
         })
@@ -482,6 +486,10 @@ fn resolve_ordering(
             manifest::Node::File(f) => {
                 if let Some(parents) = &f.parents {
                     parents_by_name.insert(key.clone(), parents.clone());
+                    // Also index by path (content ID uses path, not manifest key)
+                    if f.path != *key {
+                        parents_by_name.insert(f.path.clone(), parents.clone());
+                    }
                 }
             }
             manifest::Node::Dns(d) => {
@@ -503,7 +511,7 @@ fn resolve_ordering(
                 ResolvedNativeNode::Command { name, .. } => Some(name.as_str()),
                 ResolvedNativeNode::Service { name: Some(name), .. } => Some(name.as_str()),
                 ResolvedNativeNode::Source { .. } | ResolvedNativeNode::Std { .. }
-                | ResolvedNativeNode::Dns { .. } => {
+                | ResolvedNativeNode::Dns { .. } | ResolvedNativeNode::File { .. } => {
                     Some(input.id.0.split(':').nth(1).unwrap_or(""))
                 }
                 _ => None,

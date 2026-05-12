@@ -21,3 +21,10 @@ run = ["npm", "ci"]
 parents = ["gen-lockfile"]
 force_args = ["--force"]
 debug_args = ["--verbose"]
+
+[nodes.node-modules]
+type = "file"
+path = "node_modules"
+expect = "directory"
+phase = "exec"
+parents = ["install"]

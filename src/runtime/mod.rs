@@ -99,11 +99,26 @@ pub fn run(ir: BesogneIR) -> ExitCode {
             .to_string();
 
         if !has_side_effects(&ir) && context.can_skip(&input_hash) {
-            let total_nodes = ir.nodes.len();
-            if let Some(lr) = context.get_last_run() {
-                renderer.on_skip(total_nodes, &lr.ran_at, lr.duration_ms);
+            // Backward check: re-probe persistent exec-phase children that
+            // have cache entries. If a previously-cached file is now missing
+            // (e.g., user deleted node_modules/), fall through to re-execute.
+            let outputs_valid = ir.nodes.iter()
+                .filter(|n| n.phase == Phase::Exec && n.node.is_persistent())
+                .filter(|n| context.get_probe(&n.id.0).is_some())
+                .all(|n| {
+                    let fresh = probe::probe_input(&n.node);
+                    fresh.success && context.get_probe(&n.id.0)
+                        .map_or(false, |c| c.hash == fresh.hash)
+                });
+
+            if outputs_valid {
+                let total_nodes = ir.nodes.len();
+                if let Some(lr) = context.get_last_run() {
+                    renderer.on_skip(total_nodes, &lr.ran_at, lr.duration_ms);
+                }
+                return ExitCode::SUCCESS;
             }
-            return ExitCode::SUCCESS;
+            // Persistent output drifted → fall through to re-execute
         }
 
         // Cache valid but inputs changed → need to re-execute
@@ -767,14 +782,24 @@ fn execute_dag(
 
                 _ => {
                     let result = probe::probe_input(&input.node);
-                    let status = if result.success {
-                        output::ProbeStatus::Probed
+                    if result.success {
+                        // Probe succeeded — cache the hash
+                        context.set_probe(input.id.0.clone(), result.hash.clone(), result.variables.clone());
+                        renderer.on_probe_result(input, &result, output::ProbeStatus::Probed);
                     } else {
-                        output::ProbeStatus::Failed
-                    };
-                    renderer.on_probe_result(input, &result, status);
-                    if !result.success {
-                        last_exit_code = 2;
+                        // Probe failed — check if this is a postcondition (has command parent)
+                        let is_postcondition = input.parents.iter().any(|pid| {
+                            input_by_id.get(pid).map_or(false, |p|
+                                matches!(&p.node, ResolvedNativeNode::Command { .. }))
+                        });
+                        if is_postcondition && context.get_probe(&input.id.0).is_none() {
+                            // First run: postcondition file not yet created — skip silently
+                            // (parent command should have created it; if it didn't, that's
+                            // a command failure, not a probe failure)
+                        } else {
+                            renderer.on_probe_result(input, &result, output::ProbeStatus::Failed);
+                            last_exit_code = 2;
+                        }
                     }
                 }
             }
