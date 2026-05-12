@@ -235,14 +235,20 @@ pub fn run(ir: BesogneIR) -> ExitCode {
 
 /// Compute the forward hash for a command: BLAKE3 of its parents' hashes.
 /// For command parents → use their child_hash. For probe parents → use probe hash.
+/// Also includes the global seal input_hash so seal-phase changes invalidate
+/// commands that implicitly depend on seal probes (env vars, file nodes, etc.).
 fn compute_parent_hash(
     node: &ResolvedNode,
     ir: &BesogneIR,
     context: &ContextCache,
+    seal_input_hash: &str,
 ) -> String {
     let mut hashes = Vec::new();
+
+    // Always include the seal input hash — any seal-phase change affects all commands
+    hashes.push(seal_input_hash.to_string());
+
     for parent_id in &node.parents {
-        // Try to find parent in IR and get its hash
         if let Some(parent) = ir.nodes.iter().find(|n| n.id == *parent_id) {
             match &parent.node {
                 ResolvedNativeNode::Command { name, .. } => {
@@ -311,6 +317,7 @@ fn determine_command_mode(
     context: &ContextCache,
     forced_dirty: bool,
     force_flag: bool,
+    seal_input_hash: &str,
 ) -> cache::CommandMode {
     // side_effects → always run
     if let ResolvedNativeNode::Command { side_effects: true, .. } = &node.node {
@@ -339,7 +346,7 @@ fn determine_command_mode(
     };
 
     // Forward check: parent hash changed?
-    let current_parent_hash = compute_parent_hash(node, ir, context);
+    let current_parent_hash = compute_parent_hash(node, ir, context, seal_input_hash);
     if cached.parent_hash != current_parent_hash {
         // Inputs changed — need detection. Also re-verify if never verified for this hash.
         return if context.verified_hash.as_deref() != Some(&current_parent_hash) {
@@ -470,7 +477,7 @@ fn execute_dag(
 
                     // Per-command skip decision (forward + backward checks)
                     let forced_dirty = dirty_set.contains(&node_idx);
-                    let cmd_mode = determine_command_mode(input, ir, context, forced_dirty, force);
+                    let cmd_mode = determine_command_mode(input, ir, context, forced_dirty, force, &input_hash);
 
                     if cmd_mode == cache::CommandMode::Skip {
                         if let Some(cached) = context.get_command(name) {
@@ -600,13 +607,32 @@ fn execute_dag(
                                 processes_spawned: result.processes_spawned,
                                 process_tree: result.process_tree.clone(),
                                 ran_at: chrono::Utc::now().to_rfc3339(),
-                                parent_hash: compute_parent_hash(input, ir, context),
+                                parent_hash: compute_parent_hash(input, ir, context, &input_hash),
                                 child_hash: {
                                     let (_, ch) = compute_child_hash(content_id, ir, context);
                                     ch
                                 },
                             },
                         );
+                    }
+
+                    // Dirty propagation: if persistent child hashes changed,
+                    // all downstream nodes must re-run.
+                    if let Some(old_cached) = context.get_command(name) {
+                        let (_, new_child_hash) = compute_child_hash(content_id, ir, context);
+                        if old_cached.child_hash != new_child_hash {
+                            // Outputs changed → propagate dirty to all descendants
+                            for neighbor in graph.neighbors_directed(node_idx, petgraph::Direction::Outgoing) {
+                                let mut stack = vec![neighbor];
+                                while let Some(idx) = stack.pop() {
+                                    if dirty_set.insert(idx) {
+                                        for next in graph.neighbors_directed(idx, petgraph::Direction::Outgoing) {
+                                            stack.push(next);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     if result.exit_code != 0 {

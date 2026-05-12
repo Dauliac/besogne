@@ -25,9 +25,10 @@ pub struct ContextCache {
     /// Per-command cached output from the last successful run
     #[serde(default)]
     pub commands: HashMap<String, CachedCommand>,
-    /// Whether idempotency verification has been performed on this besogne
+    /// Input hash when idempotency verification was last performed.
+    /// Re-verify only when inputs change (different parent_hash).
     #[serde(default)]
-    pub verified: bool,
+    pub verified_hash: Option<String>,
     /// Command names found non-idempotent during verification
     #[serde(default)]
     pub non_idempotent: Vec<String>,
@@ -56,6 +57,29 @@ pub struct CachedCommand {
     #[serde(default)]
     pub process_tree: Vec<crate::tracer::ProcessMetrics>,
     pub ran_at: String,
+    /// Forward hash: BLAKE3 of sorted parent probe hashes.
+    /// If this differs from current, inputs changed → must re-run.
+    #[serde(default)]
+    pub parent_hash: String,
+    /// Backward hash: BLAKE3 of persistent child probe hashes.
+    /// If persistent children drifted externally → must re-run to restore.
+    #[serde(default)]
+    pub child_hash: String,
+}
+
+/// Per-command execution decision based on forward/backward cache checks.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CommandMode {
+    /// Inputs clean + persistent outputs valid → replay from cache
+    Skip,
+    /// Inputs clean but persistent output drifted → re-run without preload/verify
+    Lightweight,
+    /// Inputs changed → re-run with preload detection, no verify
+    Detection,
+    /// First run or --force → full preload + idempotency verification
+    FullDetection,
+    /// side_effects = true → always run, no detection overhead
+    AlwaysRun,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,6 +332,8 @@ fn cache_schema_hash() -> String {
         processes_spawned: 0,
         process_tree: vec![],
         ran_at: "x".into(),
+        parent_hash: "x".into(),
+        child_hash: "x".into(),
     });
     let json = serde_json::to_string(&canary).unwrap_or_default();
     blake3::hash(json.as_bytes()).to_hex()[..8].to_string()

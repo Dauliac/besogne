@@ -153,6 +153,9 @@ pub enum ResolvedNativeNode {
         value: Option<String>,
         #[serde(default)]
         secret: bool,
+        /// How to handle missing env var: fail (default), skip (propagate), continue (null hash).
+        #[serde(default)]
+        on_missing: OnMissingResolved,
     },
     File {
         path: String,
@@ -252,6 +255,14 @@ pub enum ResolvedNativeNode {
     },
 }
 
+impl ResolvedNativeNode {
+    /// Persistent nodes exist in the real world and CAN drift externally.
+    /// Ephemeral nodes (std) exist only in besogne's cache and cannot drift.
+    pub fn is_persistent(&self) -> bool {
+        !matches!(self, ResolvedNativeNode::Std { .. })
+    }
+}
+
 /// Resolved retry configuration — durations parsed from strings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetryResolved {
@@ -265,6 +276,20 @@ pub struct RetryResolved {
     /// Total timeout in milliseconds (None = unlimited)
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+}
+
+/// How to handle a missing resource at probe time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OnMissingResolved {
+    /// Resource MUST exist. Probe fails → execution aborts.
+    #[default]
+    Fail,
+    /// Skip this node AND all children transitively. Sub-DAG disabled.
+    Skip,
+    /// Succeed with null hash. Children execute normally.
+    /// Cache invalidates if value appears in future run.
+    Continue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
