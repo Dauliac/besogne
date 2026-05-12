@@ -94,30 +94,16 @@ impl Drop for EnvTracker {
     }
 }
 
-/// Compare accessed env vars against declared ones.
-/// Returns the set of env vars that were accessed but not declared.
+/// Compare accessed env vars against declared ones, filtered by static analysis.
+/// Only flags vars that were both accessed at runtime AND referenced in scripts.
 pub fn find_undeclared(
     accessed: &HashSet<String>,
     declared: &HashSet<String>,
+    statically_referenced: &HashSet<String>,
 ) -> Vec<String> {
-    // Essential vars that don't need declaration
-    let essential: HashSet<&str> = [
-        "PATH", "HOME", "USER", "SHELL", "TERM", "TMPDIR", "LANG", "LC_ALL",
-        "LC_CTYPE", "LC_MESSAGES", "TZ", "PWD", "OLDPWD", "SHLVL", "LOGNAME",
-        "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR",
-        "HOSTNAME", "DISPLAY", "COLORTERM", "TERM_PROGRAM",
-        // Nix-specific
-        "NIX_PATH", "NIX_PROFILES", "NIX_SSL_CERT_FILE",
-        // Common runtime vars
-        "EDITOR", "VISUAL", "PAGER", "LESS", "LESSOPEN",
-        // Besogne internal
-        "BESOGNE_ENVTRACK_FD", "BESOGNE_RUN_MODE", "BESOGNE_COMPONENTS_DIR",
-    ].into_iter().collect();
-
     let mut undeclared: Vec<String> = accessed.iter()
         .filter(|v| !declared.contains(v.as_str()))
-        .filter(|v| !essential.contains(v.as_str()))
-        // Skip vars starting with _ (internal/private)
+        .filter(|v| statically_referenced.contains(v.as_str()))
         .filter(|v| !v.starts_with('_'))
         .cloned()
         .collect();

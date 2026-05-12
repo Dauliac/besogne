@@ -1,6 +1,6 @@
 //! Shared memory preload interposer — fast process telemetry.
 //!
-//! Uses mmap(MAP_SHARED|MAP_ANONYMOUS) for a lock-free ring buffer.
+//! Uses mmap(MAP_SHARED) for a lock-free ring buffer.
 //! The LD_PRELOAD interposer writes events (~10ns each, zero syscalls).
 //! After wait4(), the parent reads all events from the shared mapping.
 
@@ -10,32 +10,26 @@ use std::path::PathBuf;
 /// Compiled interposer library path (set by build.rs).
 const PRELOAD_LIB_PATH: &str = env!("BESOGNE_PRELOAD_LIB");
 
-/// Default shared memory buffer size (64KB — holds ~6000 events).
-const SHM_SIZE: usize = 64 * 1024;
+/// Shared memory buffer size (256KB — holds ~20K events with file tracking).
+const SHM_SIZE: usize = 256 * 1024;
 
-/// Header at the start of the shared memory region.
 #[repr(C)]
 struct ShmHeader {
     write_pos: u32,
     buf_size: u32,
 }
 
-/// Event tags matching the C interposer.
+// Event tags — must match besogne_preload.c
 const TAG_ENV: u8 = b'E';
 const TAG_EXEC: u8 = b'X';
 const TAG_FORK: u8 = b'F';
 const TAG_EXIT: u8 = b'Q';
 const TAG_CONNECT: u8 = b'C';
-
-/// A parsed event from the ring buffer.
-#[derive(Debug)]
-pub enum PreloadEvent {
-    Env { pid: u32, name: String },
-    Exec { pid: u32, path: String },
-    Fork { pid: u32, child_pid: u32 },
-    Exit { pid: u32, code: i32 },
-    Connect { pid: u32, addr: String },
-}
+const TAG_OPEN: u8 = b'O';
+const TAG_DNS: u8 = b'D';
+const TAG_UNLINK: u8 = b'U';
+const TAG_RENAME: u8 = b'R';
+const TAG_DLOPEN: u8 = b'L';
 
 /// Collected results from the preload interposer.
 #[derive(Debug, Default, Clone)]
@@ -48,64 +42,55 @@ pub struct PreloadResults {
     pub forks: Vec<(u32, u32)>,
     /// Network connect targets (ip:port)
     pub connections: HashSet<String>,
+    /// Files opened for reading
+    pub read_files: HashSet<String>,
+    /// Files opened for writing (created/truncated/appended)
+    pub written_files: HashSet<String>,
+    /// Files deleted (unlink)
+    pub deleted_files: HashSet<String>,
+    /// Files renamed (old → new)
+    pub renamed_files: Vec<(String, String)>,
+    /// DNS hostnames resolved via getaddrinfo()
+    pub dns_lookups: HashSet<String>,
+    /// Shared libraries loaded via dlopen()
+    pub loaded_libraries: HashSet<String>,
 }
 
-/// Check if the preload interposer is available.
 pub fn is_available() -> bool {
     !PRELOAD_LIB_PATH.is_empty() && std::path::Path::new(PRELOAD_LIB_PATH).exists()
 }
 
 /// Preload context — manages the shared memory mapping.
 pub struct Preload {
-    /// Pointer to the shared memory region
     shm_ptr: *mut u8,
-    /// Total size of the mapping
     shm_size: usize,
-    /// File descriptor for the memfd (child inherits this)
     pub shm_fd: i32,
-    /// Path to the interposer library
     pub lib_path: PathBuf,
 }
 
-// SAFETY: the shared memory is used via atomic operations in C,
-// and only read from Rust after the child process exits.
 unsafe impl Send for Preload {}
 
 impl Preload {
-    /// Set up shared memory and prepare the interposer.
     pub fn setup() -> Option<Self> {
-        if !is_available() {
-            return None;
-        }
+        if !is_available() { return None; }
 
-        // Create anonymous shared memory via memfd_create (Linux) or shm_open (macOS)
         let fd = create_shm_fd()?;
-
-        // Set size
         let size = SHM_SIZE;
+
         if unsafe { libc::ftruncate(fd, size as libc::off_t) } != 0 {
             unsafe { libc::close(fd); }
             return None;
         }
 
-        // Map it
         let ptr = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                size,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                fd,
-                0,
-            )
+            libc::mmap(std::ptr::null_mut(), size,
+                libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0)
         };
-
         if ptr == libc::MAP_FAILED {
             unsafe { libc::close(fd); }
             return None;
         }
 
-        // Initialize header
         let header = ptr as *mut ShmHeader;
         unsafe {
             (*header).write_pos = 0;
@@ -120,27 +105,20 @@ impl Preload {
         })
     }
 
-    /// Get the preload env var name for the current platform.
     pub fn preload_env_var() -> &'static str {
-        if cfg!(target_os = "macos") {
-            "DYLD_INSERT_LIBRARIES"
-        } else {
-            "LD_PRELOAD"
-        }
+        if cfg!(target_os = "macos") { "DYLD_INSERT_LIBRARIES" } else { "LD_PRELOAD" }
     }
 
-    /// Collect all events from the shared memory after the child exits.
+    /// Parse all events from shared memory after child exits.
     pub fn collect(self) -> PreloadResults {
         let header = self.shm_ptr as *const ShmHeader;
         let write_pos = unsafe { (*header).write_pos } as usize;
         let buf_size = unsafe { (*header).buf_size } as usize;
         let used = write_pos.min(buf_size);
 
-        let buf = unsafe {
-            std::slice::from_raw_parts(self.shm_ptr.add(8), used)
-        };
+        let buf = unsafe { std::slice::from_raw_parts(self.shm_ptr.add(8), used) };
 
-        let mut results = PreloadResults::default();
+        let mut r = PreloadResults::default();
         let mut pos = 0;
 
         while pos + 7 <= used {
@@ -155,44 +133,74 @@ impl Preload {
 
             match tag {
                 TAG_ENV => {
-                    if let Ok(name) = std::str::from_utf8(payload) {
-                        results.accessed_env.insert(name.to_string());
+                    if let Ok(s) = std::str::from_utf8(payload) {
+                        r.accessed_env.insert(s.to_string());
                     }
                 }
                 TAG_EXEC => {
-                    if let Ok(path) = std::str::from_utf8(payload) {
-                        results.executed_binaries.insert(path.to_string());
+                    if let Ok(s) = std::str::from_utf8(payload) {
+                        r.executed_binaries.insert(s.to_string());
                     }
                 }
                 TAG_FORK if payload_len >= 4 => {
-                    let child_pid = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
-                    results.forks.push((pid, child_pid));
+                    let child = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                    r.forks.push((pid, child));
                 }
-                TAG_EXIT if payload_len >= 4 => {
-                    let _code = i32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
-                    // Exit events tracked for completeness; process tree uses wait4 rusage
-                }
+                TAG_EXIT => { /* tracked for completeness */ }
                 TAG_CONNECT if payload_len >= 8 => {
                     let af = u16::from_le_bytes([payload[0], payload[1]]);
-                    let port = u16::from_be_bytes([payload[2], payload[3]]); // network byte order
+                    let port = u16::from_be_bytes([payload[2], payload[3]]);
                     match af as i32 {
                         libc::AF_INET if payload_len >= 8 => {
-                            let addr = format!("{}.{}.{}.{}:{}",
-                                payload[4], payload[5], payload[6], payload[7], port);
-                            results.connections.insert(addr);
+                            r.connections.insert(format!("{}.{}.{}.{}:{}",
+                                payload[4], payload[5], payload[6], payload[7], port));
                         }
                         libc::AF_INET6 if payload_len >= 20 => {
-                            // Simplified: just show port for IPv6
-                            results.connections.insert(format!("[::]:{}",  port));
+                            r.connections.insert(format!("[::]:{}",  port));
                         }
                         _ => {}
                     }
                 }
-                _ => {} // Unknown tag — skip
+                TAG_OPEN if payload_len >= 2 => {
+                    let flags = payload[0];
+                    if let Ok(path) = std::str::from_utf8(&payload[1..]) {
+                        if flags & 1 != 0 {
+                            r.written_files.insert(path.to_string());
+                        } else {
+                            r.read_files.insert(path.to_string());
+                        }
+                    }
+                }
+                TAG_DNS => {
+                    if let Ok(s) = std::str::from_utf8(payload) {
+                        r.dns_lookups.insert(s.to_string());
+                    }
+                }
+                TAG_UNLINK => {
+                    if let Ok(s) = std::str::from_utf8(payload) {
+                        r.deleted_files.insert(s.to_string());
+                    }
+                }
+                TAG_RENAME if payload_len >= 3 => {
+                    let old_len = u16::from_le_bytes([payload[0], payload[1]]) as usize;
+                    if old_len + 2 <= payload_len {
+                        let old = std::str::from_utf8(&payload[2..2+old_len]).unwrap_or("");
+                        let new = std::str::from_utf8(&payload[2+old_len..]).unwrap_or("");
+                        if !old.is_empty() {
+                            r.renamed_files.push((old.to_string(), new.to_string()));
+                        }
+                    }
+                }
+                TAG_DLOPEN => {
+                    if let Ok(s) = std::str::from_utf8(payload) {
+                        r.loaded_libraries.insert(s.to_string());
+                    }
+                }
+                _ => {}
             }
         }
 
-        results
+        r
     }
 }
 
@@ -207,14 +215,12 @@ impl Drop for Preload {
     }
 }
 
-/// Create an anonymous shared memory file descriptor.
 fn create_shm_fd() -> Option<i32> {
     #[cfg(target_os = "linux")]
     {
         let name = std::ffi::CString::new("besogne_preload").ok()?;
         let fd = unsafe { libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC) };
         if fd < 0 { return None; }
-        // Clear CLOEXEC so child inherits it
         unsafe {
             let flags = libc::fcntl(fd, libc::F_GETFD);
             libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
@@ -224,42 +230,36 @@ fn create_shm_fd() -> Option<i32> {
 
     #[cfg(target_os = "macos")]
     {
-        // macOS: use shm_open with a unique name
         let name = format!("/besogne_{}", std::process::id());
         let c_name = std::ffi::CString::new(name.as_str()).ok()?;
         let fd = unsafe {
             libc::shm_open(c_name.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600)
         };
         if fd < 0 { return None; }
-        // Unlink immediately — fd keeps it alive
         unsafe { libc::shm_unlink(c_name.as_ptr()); }
         Some(fd)
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        None
-    }
+    { None }
 }
 
-/// Compare accessed env vars against declared ones.
+/// Compare accessed env vars against declared ones, filtered by static analysis.
+///
+/// Only flags env vars that are BOTH:
+/// 1. Accessed at runtime (via getenv() interposition)
+/// 2. Referenced in `run:` scripts ($VAR patterns from static analysis)
+///
+/// This eliminates false positives from shell/runtime initialization that
+/// eagerly reads all env vars (bash environ iteration, Node.js process.env, etc.).
 pub fn find_undeclared_env(
     accessed: &HashSet<String>,
     declared: &HashSet<String>,
+    statically_referenced: &HashSet<String>,
 ) -> Vec<String> {
-    let essential: HashSet<&str> = [
-        "PATH", "HOME", "USER", "SHELL", "TERM", "TMPDIR", "LANG", "LC_ALL",
-        "LC_CTYPE", "LC_MESSAGES", "TZ", "PWD", "OLDPWD", "SHLVL", "LOGNAME",
-        "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR",
-        "HOSTNAME", "DISPLAY", "COLORTERM", "TERM_PROGRAM",
-        "NIX_PATH", "NIX_PROFILES", "NIX_SSL_CERT_FILE",
-        "EDITOR", "VISUAL", "PAGER", "LESS", "LESSOPEN",
-        "BESOGNE_PRELOAD_FD", "BESOGNE_RUN_MODE", "BESOGNE_COMPONENTS_DIR",
-    ].into_iter().collect();
-
     let mut undeclared: Vec<String> = accessed.iter()
         .filter(|v| !declared.contains(v.as_str()))
-        .filter(|v| !essential.contains(v.as_str()))
+        .filter(|v| statically_referenced.contains(v.as_str()))
         .filter(|v| !v.starts_with('_'))
         .cloned()
         .collect();

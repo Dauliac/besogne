@@ -442,6 +442,17 @@ fn execute_dag(
         })
         .collect();
 
+    // Static analysis: extract $VAR references from all command run: fields.
+    // Only env vars that appear here AND are accessed at runtime will be flagged.
+    // This eliminates noise from shell/runtime init reading all env vars.
+    let statically_referenced_env: std::collections::HashSet<String> = ir.nodes.iter()
+        .filter_map(|i| match &i.node {
+            ResolvedNativeNode::Command { run, .. } => Some(run),
+            _ => None,
+        })
+        .flat_map(|run| run.iter().flat_map(|arg| extract_env_refs(arg)))
+        .collect();
+
     let mut undeclared_binaries: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Idempotency verification: on first run, re-run each command (except side_effects)
@@ -565,9 +576,9 @@ fn execute_dag(
 
                     // Detect undeclared deps via preload interposer
                     if let Some(ref preload) = result.preload {
-                        // Undeclared env vars
+                        // Undeclared env vars (intersected with static $VAR analysis)
                         let undeclared_env = tracer::preload::find_undeclared_env(
-                            &preload.accessed_env, &declared_env,
+                            &preload.accessed_env, &declared_env, &statically_referenced_env,
                         );
                         // Undeclared binaries (from execve tracking — more precise than /proc comm)
                         let undeclared_bins = tracer::preload::find_undeclared_binaries(
@@ -577,9 +588,9 @@ fn execute_dag(
                             renderer.on_undeclared_deps(&undeclared_bins, &undeclared_env);
                         }
                     } else if !result.accessed_env.is_empty() {
-                        // Fallback to pipe-based env tracking
+                        // Fallback to pipe-based env tracking (intersected with static analysis)
                         let undeclared = tracer::envtrack::find_undeclared(
-                            &result.accessed_env, &declared_env,
+                            &result.accessed_env, &declared_env, &statically_referenced_env,
                         );
                         if !undeclared.is_empty() {
                             renderer.on_undeclared_deps(&[], &undeclared);
@@ -938,4 +949,36 @@ fn has_side_effects(ir: &BesogneIR) -> bool {
 fn compute_besogne_hash(ir: &BesogneIR) -> String {
     let content = serde_json::to_string(ir).unwrap_or_default();
     blake3::hash(content.as_bytes()).to_hex()[..16].to_string()
+}
+
+/// Extract $VAR and ${VAR} references from a string (command arg, script body).
+/// Returns variable names only — no $, no braces, no special vars ($?, $$, $0, etc.).
+fn extract_env_refs(s: &str) -> Vec<String> {
+    let mut vars = Vec::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '$' {
+            if chars.peek() == Some(&'{') {
+                chars.next();
+                let var: String = chars.by_ref()
+                    .take_while(|&c| c != '}')
+                    .collect();
+                // Skip parameter expansion operators: ${VAR:-default}, ${VAR%%pattern}, etc.
+                let name = var.split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
+                    .unwrap_or("");
+                if !name.is_empty() && name.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) {
+                    vars.push(name.to_string());
+                }
+            } else {
+                let var: String = chars.by_ref()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if !var.is_empty() && var.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) {
+                    vars.push(var);
+                }
+            }
+        }
+    }
+    vars
 }
