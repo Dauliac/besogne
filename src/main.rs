@@ -139,12 +139,13 @@ fn resolve_single_input_quiet<'a>(
 #[cfg(unix)]
 fn exec_binary(path: &PathBuf, args: &[String]) -> std::io::Error {
     use std::os::unix::process::CommandExt;
-    std::process::Command::new(path).args(args).exec()
+    // BESOGNE_RUN_MODE tells the binary to skip build phase display (compiler already showed it)
+    std::process::Command::new(path).args(args).env("BESOGNE_RUN_MODE", "1").exec()
 }
 
 #[cfg(not(unix))]
 fn exec_binary(path: &PathBuf, args: &[String]) -> std::io::Error {
-    match std::process::Command::new(path).args(args).status() {
+    match std::process::Command::new(path).args(args).env("BESOGNE_RUN_MODE", "1").status() {
         Ok(status) => std::process::exit(status.code().unwrap_or(1)),
         Err(e) => e,
     }
@@ -310,11 +311,7 @@ fn main() -> ExitCode {
                 (w[0] == "-l" || w[0] == "--log-format") && w[1] == "json"
             });
 
-            let cache_dir = std::env::var("XDG_CACHE_HOME").unwrap_or_else(|_| {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                format!("{home}/.cache")
-            });
-            let run_dir = PathBuf::from(&cache_dir).join("besogne").join("run");
+            let run_dir = runtime::cache::cache_base_dir().join("run");
             let _ = std::fs::create_dir_all(&run_dir);
 
             // Cache key: H(manifest_content + besogne_compiler_hash)

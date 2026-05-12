@@ -55,7 +55,13 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    renderer.on_start(&ir);
+    // When launched via `besogne run`, the compiler already displayed build info.
+    // Skip the build phase display to avoid redundancy.
+    let run_mode = std::env::var("BESOGNE_RUN_MODE").is_ok();
+
+    if !run_mode {
+        renderer.on_start(&ir);
+    }
 
     // Partition inputs by phase
     let build_nodes: Vec<&ResolvedNode> = ir.nodes.iter().filter(|i| i.phase == Phase::Build).collect();
@@ -81,53 +87,16 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         }
     });
 
-    // 1. Show build-sealed inputs — use Cached status on subsequent runs
-    let build_status = if warmup_cached {
-        output::ProbeStatus::Cached
-    } else {
-        output::ProbeStatus::Sealed
-    };
-    if !build_nodes.is_empty() {
-        renderer.on_phase_start("build", build_nodes.len());
-        for input in &build_nodes {
-            let result = if let Some(snapshot) = &input.sealed {
-                probe::ProbeResult {
-                    success: true,
-                    hash: snapshot.hash.clone(),
-                    variables: HashMap::new(),
-                    error: None,
-                }
-            } else {
-                probe::ProbeResult {
-                    success: true,
-                    hash: String::new(),
-                    variables: HashMap::new(),
-                    error: None,
-                }
-            };
-            renderer.on_probe_result(input, &result, build_status);
-        }
-        renderer.on_phase_end("build");
-    }
-
+    // Fast path: all probes cached → check if we can skip entirely
     if warmup_cached {
-        renderer.on_phase_start("seal", pre_nodes.len());
         let mut all_vars = flag_vars;
         let mut hash_parts = Vec::new();
         for input in &pre_nodes {
             if let Some(cached) = context.get_probe(&input.id.0) {
-                let result = probe::ProbeResult {
-                    success: true,
-                    hash: cached.hash.clone(),
-                    variables: cached.variables.clone(),
-                    error: None,
-                };
-                renderer.on_probe_result(input, &result, output::ProbeStatus::Cached);
                 all_vars.extend(cached.variables.clone());
                 hash_parts.push(cached.hash.clone());
             }
         }
-        renderer.on_phase_end("seal");
 
         hash_parts.sort();
         let input_hash = blake3::hash(hash_parts.join(":").as_bytes())
@@ -135,13 +104,45 @@ pub fn run(ir: BesogneIR) -> ExitCode {
             .to_string();
 
         if !has_side_effects(&ir) && context.can_skip(&input_hash) {
-            replay_cached_commands(&ir, &context, &mut *renderer, &all_vars);
-            let wall_ms = start.elapsed().as_millis() as u64;
-            renderer.on_summary(0, wall_ms);
+            let total_nodes = ir.nodes.len();
+            if let Some(lr) = context.get_last_run() {
+                renderer.on_skip(total_nodes, &lr.ran_at, lr.duration_ms);
+            }
             return ExitCode::SUCCESS;
         }
 
+        // Cache valid but inputs changed → need to re-execute
+        // Show build phase only when not in run mode (compiler already showed it)
+        if !run_mode && !build_nodes.is_empty() {
+            renderer.on_phase_start("build", build_nodes.len());
+            renderer.on_build_pinned_summary(&build_nodes);
+            renderer.on_phase_end("build");
+        }
+
+        if !pre_nodes.is_empty() {
+            renderer.on_phase_start("seal", pre_nodes.len());
+            for input in &pre_nodes {
+                if let Some(cached) = context.get_probe(&input.id.0) {
+                    let result = probe::ProbeResult {
+                        success: true,
+                        hash: cached.hash.clone(),
+                        variables: cached.variables.clone(),
+                        error: None,
+                    };
+                    renderer.on_probe_result(input, &result, output::ProbeStatus::Sealed);
+                }
+            }
+            renderer.on_phase_end("seal");
+        }
+
         return execute_dag(&ir, all_vars, input_hash, &mut *renderer, &mut context, start, args.force, args.debug);
+    }
+
+    // First run: show build phase (skip in run mode — compiler already showed it)
+    if !run_mode && !build_nodes.is_empty() {
+        renderer.on_phase_start("build", build_nodes.len());
+        renderer.on_build_pinned_summary(&build_nodes);
+        renderer.on_phase_end("build");
     }
 
     // Full warmup: probe all seals in parallel
@@ -180,7 +181,12 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     let mut results = probe_results.into_inner().unwrap();
     results.sort_by(|a, b| a.0.id.0.cmp(&b.0.id.0));
     for (input, result) in &results {
-        renderer.on_probe_result(input, result, output::ProbeStatus::Fresh);
+        let status = if result.success {
+            output::ProbeStatus::Probed
+        } else {
+            output::ProbeStatus::Failed
+        };
+        renderer.on_probe_result(input, result, status);
     }
     renderer.on_phase_end("seal");
 
@@ -203,6 +209,23 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         let wall_ms = start.elapsed().as_millis() as u64;
         renderer.on_summary(0, wall_ms);
         return ExitCode::SUCCESS;
+    }
+
+    // Detect which probes changed (compare fresh vs cached)
+    let mut changed: Vec<String> = Vec::new();
+    for (input, result) in &results {
+        if !result.success { continue; }
+        if let Some(cached) = context.get_probe(&input.id.0) {
+            if cached.hash != result.hash {
+                changed.push(crate::output::input_label(input));
+            }
+        } else {
+            // New probe, not cached before
+            changed.push(crate::output::input_label(input));
+        }
+    }
+    if !changed.is_empty() {
+        renderer.on_changed_probes(&changed);
     }
 
     // Update cache with fresh probe results
@@ -302,6 +325,9 @@ fn execute_dag(
         .map(|i| (i.id.clone(), i))
         .collect();
 
+    let exec_count = ir.nodes.iter().filter(|n| n.phase == Phase::Exec).count();
+    renderer.on_phase_start("exec", exec_count);
+
     for tier in &tiers {
         for &node_idx in tier {
             let content_id = &graph[node_idx];
@@ -312,7 +338,7 @@ fn execute_dag(
 
             match &input.node {
                 ResolvedNativeNode::Command {
-                    name, run, env, side_effects, workdir, force_args, debug_args, ..
+                    name, run, env, side_effects, workdir, force_args, debug_args, retry, ..
                 } => {
                     if last_exit_code != 0 && !side_effects {
                         continue;
@@ -338,17 +364,18 @@ fn execute_dag(
                     };
                     renderer.on_command_start(name, &effective_run, &ctx);
 
-                    let result = match tracer::execute_traced(&effective_run, &cmd_env, &ir.sandbox.env, workdir.as_deref()) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            eprintln!("{}", crate::output::style::error_diag(&e.to_string()));
+                    let (result, stdout, cmd_stderr) = execute_command_with_retry(
+                        name, &effective_run, &cmd_env, &ir.sandbox.env, workdir.as_deref(),
+                        retry.as_ref(), renderer,
+                    );
+                    let result = match result {
+                        Some(r) => r,
+                        None => {
                             last_exit_code = 126;
                             continue;
                         }
                     };
 
-                    let stdout = String::from_utf8_lossy(&result.stdout).to_string();
-                    let cmd_stderr = String::from_utf8_lossy(&result.stderr).to_string();
                     renderer.on_command_output(name, &stdout, &cmd_stderr);
                     renderer.on_command_end(name, &result);
 
@@ -358,13 +385,14 @@ fn execute_dag(
                             output::style::verify::VERIFYING,
                             output::style::message::VERIFY_RUN2,
                         ));
-                        let mismatches = verify::verify_command(
-                            &effective_run, &cmd_env, &ir.sandbox.env, workdir.as_deref(), &result,
+                        let vresult = verify::verify_command(
+                            name, content_id,
+                            &effective_run, &cmd_env, &ir.sandbox.env, workdir.as_deref(),
+                            &result, &ir.nodes,
                         );
-                        eprintln!("{}", verify::format_verify_human(name, mismatches.as_deref()));
-                        if let Some(reasons) = mismatches {
+                        verify::format_verify_human(&vresult);
+                        if !vresult.idempotent {
                             non_idempotent.push(name.clone());
-                            let _ = reasons; // reasons already printed
                         }
                     }
 
@@ -415,18 +443,17 @@ fn execute_dag(
                     }
                 }
 
-                ResolvedNativeNode::Service { name, tcp, http, .. } => {
-                    let label = name.as_deref().unwrap_or("service");
-                    let target = tcp.as_deref().or(http.as_deref()).unwrap_or("?");
-                    eprintln!("  waiting for {label} ({target})...");
-
+                ResolvedNativeNode::Service { .. }
+                | ResolvedNativeNode::Dns { .. }
+                | ResolvedNativeNode::Metric { .. } => {
                     let result = probe::probe_input(&input.node);
+                    let status = if result.success {
+                        output::ProbeStatus::Probed
+                    } else {
+                        output::ProbeStatus::Failed
+                    };
+                    renderer.on_probe_result(input, &result, status);
                     if !result.success {
-                        eprintln!(
-                            "  {} {label}: {}",
-                            output::style::styled(output::style::status::FAILED, "✗"),
-                            result.error.as_deref().unwrap_or("unreachable")
-                        );
                         last_exit_code = 1;
                     }
                 }
@@ -477,7 +504,7 @@ fn execute_dag(
                         let hash = blake3::hash(content.as_bytes()).to_hex().to_string();
                         context.set_probe(input.id.0.clone(), hash, HashMap::new());
                         eprintln!("  {} {label}",
-                            output::style::styled(output::style::status::FRESH, output::style::label::FRESH));
+                            output::style::styled(output::style::status::PROBED, output::style::label::PROBED));
                     } else {
                         last_exit_code = 3;
                     }
@@ -485,6 +512,12 @@ fn execute_dag(
 
                 _ => {
                     let result = probe::probe_input(&input.node);
+                    let status = if result.success {
+                        output::ProbeStatus::Probed
+                    } else {
+                        output::ProbeStatus::Failed
+                    };
+                    renderer.on_probe_result(input, &result, status);
                     if !result.success {
                         last_exit_code = 2;
                     }
@@ -520,8 +553,87 @@ fn execute_dag(
         }
         let _ = context.save();
     }
+    renderer.on_phase_end("exec");
     renderer.on_summary(last_exit_code, wall_ms);
     ExitCode::from(last_exit_code as u8)
+}
+
+/// Execute a command with optional retry logic.
+fn execute_command_with_retry(
+    name: &str,
+    run: &[String],
+    env: &HashMap<String, String>,
+    sandbox_env: &crate::ir::EnvSandboxResolved,
+    workdir: Option<&str>,
+    retry: Option<&crate::ir::RetryResolved>,
+    _renderer: &mut dyn output::OutputRenderer,
+) -> (Option<tracer::CommandResult>, String, String) {
+    let max_attempts = retry.map(|r| r.attempts).unwrap_or(1);
+    let deadline = retry.and_then(|r| r.timeout_ms.map(|t| {
+        std::time::Instant::now() + std::time::Duration::from_millis(t)
+    }));
+
+    let mut last_result = None;
+    let mut last_stdout = String::new();
+    let mut last_stderr = String::new();
+
+    for attempt in 0..max_attempts {
+        if let Some(dl) = deadline {
+            if std::time::Instant::now() >= dl {
+                eprintln!("  {} retry timeout for '{name}' after {attempt} attempts",
+                    output::style::styled(output::style::status::FAILED, output::style::label::FAILED));
+                break;
+            }
+        }
+
+        match tracer::execute_traced(run, env, sandbox_env, workdir) {
+            Ok(result) => {
+                let stdout = String::from_utf8_lossy(&result.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&result.stderr).to_string();
+
+                if result.exit_code == 0 || retry.is_none() || attempt + 1 >= max_attempts {
+                    return (Some(result), stdout, stderr);
+                }
+
+                last_stdout = stdout;
+                last_stderr = stderr;
+                last_result = Some(result);
+            }
+            Err(e) => {
+                eprintln!("{}", crate::output::style::error_diag(&e.to_string()));
+                if retry.is_none() || attempt + 1 >= max_attempts {
+                    return (None, String::new(), String::new());
+                }
+            }
+        }
+
+        if let Some(r) = retry {
+            if attempt + 1 < max_attempts {
+                let delay = r.delay_for_attempt(attempt);
+                let delay = if let Some(dl) = deadline {
+                    delay.min(dl.saturating_duration_since(std::time::Instant::now()))
+                } else {
+                    delay
+                };
+
+                if !delay.is_zero() {
+                    let ms = delay.as_millis();
+                    let dur_str = if ms < 1000 { format!("{}ms", ms) }
+                        else if ms < 60_000 { format!("{:.1}s", ms as f64 / 1000.0) }
+                        else { format!("{:.1}m", ms as f64 / 60_000.0) };
+                    eprintln!("  {} '{name}' retry {}/{} in {dur_str}",
+                        output::style::styled(output::style::status::PENDING, "retry"),
+                        attempt + 1, max_attempts);
+                    std::thread::sleep(delay);
+                }
+            }
+        }
+    }
+
+    match last_result {
+        Some(r) => (Some(r), last_stdout, last_stderr),
+        None => (None, String::new(), String::new()),
+    }
 }
 
 fn handle_dump(ir: &BesogneIR, mode: &DumpMode) -> ExitCode {
