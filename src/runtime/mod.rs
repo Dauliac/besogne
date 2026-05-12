@@ -3,7 +3,7 @@ pub mod cli;
 pub mod config;
 mod verify;
 
-use crate::ir::{BesogneIR, ResolvedNode, ResolvedNativeNode};
+use crate::ir::{BesogneIR, ContentId, ResolvedNode, ResolvedNativeNode};
 use crate::ir::dag;
 use crate::manifest::Phase;
 use crate::output;
@@ -44,14 +44,9 @@ pub fn run(ir: BesogneIR) -> ExitCode {
 
     let mut context = ContextCache::load(&besogne_hash);
 
-    // --status: show DAG tree + cached command replays, then exit
+    // --status: unified execution tree + diagnostics, then exit
     if args.status {
-        output::render_status_tree(&ir, &context);
-        eprintln!();
-        let all_vars = flag_vars;
-        replay_cached_commands(&ir, &context, &mut *renderer, &all_vars);
-        let wall_ms = start.elapsed().as_millis() as u64;
-        renderer.on_summary(0, wall_ms);
+        output::views::status::render(&ir, &context);
         return ExitCode::SUCCESS;
     }
 
@@ -238,6 +233,131 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     execute_dag(&ir, all_variables, input_hash, &mut *renderer, &mut context, start, args.force, args.debug)
 }
 
+/// Compute the forward hash for a command: BLAKE3 of its parents' hashes.
+/// For command parents → use their child_hash. For probe parents → use probe hash.
+fn compute_parent_hash(
+    node: &ResolvedNode,
+    ir: &BesogneIR,
+    context: &ContextCache,
+) -> String {
+    let mut hashes = Vec::new();
+    for parent_id in &node.parents {
+        // Try to find parent in IR and get its hash
+        if let Some(parent) = ir.nodes.iter().find(|n| n.id == *parent_id) {
+            match &parent.node {
+                ResolvedNativeNode::Command { name, .. } => {
+                    if let Some(cached) = context.get_command(name) {
+                        hashes.push(cached.child_hash.clone());
+                    }
+                }
+                _ => {
+                    if let Some(cached) = context.get_probe(&parent_id.0) {
+                        hashes.push(cached.hash.clone());
+                    }
+                }
+            }
+        }
+    }
+    hashes.sort();
+    blake3::hash(hashes.join(":").as_bytes()).to_hex().to_string()
+}
+
+/// Compute the backward hash: BLAKE3 of persistent child node hashes.
+/// Re-probes persistent children from reality. Std children use cache (ephemeral).
+fn compute_child_hash(
+    node_id: &ContentId,
+    ir: &BesogneIR,
+    context: &ContextCache,
+) -> (bool, String) {
+    let children: Vec<&ResolvedNode> = ir.nodes.iter()
+        .filter(|n| n.parents.contains(node_id))
+        .collect();
+
+    let mut hashes = Vec::new();
+    let mut drifted = false;
+
+    for child in &children {
+        if child.node.is_persistent() {
+            // Persistent: re-probe from reality
+            let fresh = probe::probe_input(&child.node);
+            if fresh.success {
+                let cached_hash = context.get_probe(&child.id.0).map(|c| c.hash.as_str());
+                if cached_hash.is_some() && cached_hash != Some(fresh.hash.as_str()) {
+                    drifted = true;
+                }
+                hashes.push(fresh.hash);
+            } else {
+                // Persistent child is gone/broken
+                drifted = true;
+                hashes.push(String::new());
+            }
+        } else {
+            // Ephemeral (std): trust cache — cannot drift externally
+            if let Some(cached) = context.get_probe(&child.id.0) {
+                hashes.push(cached.hash.clone());
+            }
+        }
+    }
+
+    hashes.sort();
+    let hash = blake3::hash(hashes.join(":").as_bytes()).to_hex().to_string();
+    (drifted, hash)
+}
+
+/// Determine the execution mode for a command based on cache state.
+fn determine_command_mode(
+    node: &ResolvedNode,
+    ir: &BesogneIR,
+    context: &ContextCache,
+    forced_dirty: bool,
+    force_flag: bool,
+) -> cache::CommandMode {
+    // side_effects → always run
+    if let ResolvedNativeNode::Command { side_effects: true, .. } = &node.node {
+        return cache::CommandMode::AlwaysRun;
+    }
+
+    // --force → full detection
+    if force_flag {
+        return cache::CommandMode::FullDetection;
+    }
+
+    // Forced dirty by upstream propagation
+    if forced_dirty {
+        return cache::CommandMode::Detection;
+    }
+
+    // Check if we have a cached entry
+    let cmd_name = match &node.node {
+        ResolvedNativeNode::Command { name, .. } => name,
+        _ => return cache::CommandMode::FullDetection, // non-command in DAG
+    };
+
+    let cached = match context.get_command(cmd_name) {
+        Some(c) => c,
+        None => return cache::CommandMode::FullDetection, // first run
+    };
+
+    // Forward check: parent hash changed?
+    let current_parent_hash = compute_parent_hash(node, ir, context);
+    if cached.parent_hash != current_parent_hash {
+        // Inputs changed — need detection. Also re-verify if never verified for this hash.
+        return if context.verified_hash.as_deref() != Some(&current_parent_hash) {
+            cache::CommandMode::FullDetection
+        } else {
+            cache::CommandMode::Detection
+        };
+    }
+
+    // Backward check: persistent children drifted?
+    let (drifted, _current_child_hash) = compute_child_hash(&node.id, ir, context);
+    if drifted {
+        return cache::CommandMode::Lightweight;
+    }
+
+    cache::CommandMode::Skip
+}
+
 /// Execute the exec-phase DAG
 fn execute_dag(
     ir: &BesogneIR,
@@ -266,6 +386,10 @@ fn execute_dag(
     };
 
     let mut last_exit_code = 0;
+
+    // Per-command dirty propagation: nodes in this set are forced to re-run
+    // because an upstream command's persistent outputs changed.
+    let mut dirty_set: std::collections::HashSet<petgraph::graph::NodeIndex> = std::collections::HashSet::new();
 
     // Build binary name → resolved path map from build-phase inputs
     let binary_paths: HashMap<String, String> = ir.nodes.iter()
@@ -315,7 +439,7 @@ fn execute_dag(
 
     // Idempotency verification: on first run, re-run each command (except side_effects)
     // to check whether outputs are deterministic.
-    let first_run = !context.verified;
+    let first_run = context.verified_hash.is_none();
     let mut non_idempotent: Vec<String> = Vec::new();
 
     let input_by_id: HashMap<_, _> = ir
@@ -341,6 +465,25 @@ fn execute_dag(
                     name, run, env, side_effects, workdir, force_args, debug_args, retry, ..
                 } => {
                     if last_exit_code != 0 && !side_effects {
+                        continue;
+                    }
+
+                    // Per-command skip decision (forward + backward checks)
+                    let forced_dirty = dirty_set.contains(&node_idx);
+                    let cmd_mode = determine_command_mode(input, ir, context, forced_dirty, force);
+
+                    if cmd_mode == cache::CommandMode::Skip {
+                        if let Some(cached) = context.get_command(name) {
+                            let mut cmd_env = all_variables.clone();
+                            cmd_env.extend(env.clone());
+                            let ctx = output::CommandContext {
+                                binary_paths: &binary_paths,
+                                binary_versions: &binary_versions,
+                                env_vars: &cmd_env,
+                                secret_vars: &secret_vars,
+                            };
+                            renderer.on_command_cached(name, run, cached, &ctx);
+                        }
                         continue;
                     }
 
@@ -457,6 +600,11 @@ fn execute_dag(
                                 processes_spawned: result.processes_spawned,
                                 process_tree: result.process_tree.clone(),
                                 ran_at: chrono::Utc::now().to_rfc3339(),
+                                parent_hash: compute_parent_hash(input, ir, context),
+                                child_hash: {
+                                    let (_, ch) = compute_child_hash(content_id, ir, context);
+                                    ch
+                                },
                             },
                         );
                     }
@@ -557,7 +705,7 @@ fn execute_dag(
 
     // Store idempotency verification results
     if first_run && !debug {
-        context.verified = true;
+        context.verified_hash = Some(input_hash.clone());
         context.non_idempotent = non_idempotent.clone();
         if !non_idempotent.is_empty() {
             eprintln!("\n  {} {}",

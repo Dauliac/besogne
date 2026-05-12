@@ -281,17 +281,22 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
         return Err(errors.join("\n\n"));
     }
 
-    // Collect resolved hashes by binary name (for parent lookups)
-    let resolved_hashes: std::collections::HashMap<String, String> = ir.nodes.iter()
-        .filter_map(|i| {
-            if let ResolvedNativeNode::Binary { name, binary_hash: Some(h), parents, .. } = &i.node {
-                if parents.is_empty() {
-                    return Some((name.clone(), h.clone()));
+    // Collect resolved hashes by binary name AND qualified key (for parent lookups).
+    // Component-expanded nodes have parents like "node/toolchain.node" (qualified key)
+    // while the binary name is just "node". Index by both so either reference works.
+    let mut resolved_hashes: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for i in ir.nodes.iter() {
+        if let ResolvedNativeNode::Binary { name, binary_hash: Some(h), parents, .. } = &i.node {
+            if parents.is_empty() {
+                resolved_hashes.insert(name.clone(), h.clone());
+                // Also index by the qualified key from ContentId (e.g., "node/toolchain.node")
+                let qualified = i.id.0.split(':').nth(1).unwrap_or("");
+                if qualified != name {
+                    resolved_hashes.insert(qualified.to_string(), h.clone());
                 }
             }
-            None
-        })
-        .collect();
+        }
+    }
 
     // Second pass: resolve binaries WITH parents (derive hash from parent hashes)
     for input in ir.nodes.iter_mut() {

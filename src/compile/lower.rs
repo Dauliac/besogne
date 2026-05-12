@@ -43,6 +43,7 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
                     })
                 }),
                 secret: false,
+                on_missing: crate::ir::types::OnMissingResolved::Fail,
             },
             parents: vec![],
             from_component: Some("flag".to_string()),
@@ -84,10 +85,16 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
     let (native, phase, id) = match input {
         Node::Env(e) => {
             let env_name = e.name.clone().unwrap_or_else(|| key.to_string());
+            let on_missing = match e.on_missing.as_ref() {
+                Some(crate::manifest::OnMissing::Skip) => crate::ir::types::OnMissingResolved::Skip,
+                Some(crate::manifest::OnMissing::Continue) => crate::ir::types::OnMissingResolved::Continue,
+                _ => crate::ir::types::OnMissingResolved::Fail,
+            };
             let native = ResolvedNativeNode::Env {
                 name: env_name.clone(),
                 value: e.value.clone(),
                 secret: e.secret.unwrap_or(false),
+                on_missing,
             };
             let phase = e.phase.clone().unwrap_or(Phase::Seal);
             let id = ContentId::from_content("env", &env_name, env_name.as_bytes());
@@ -120,7 +127,9 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
                 binary_hash: None,
             };
             let phase = b.phase.clone().unwrap_or(Phase::Build);
-            let id = ContentId::from_content("binary", &bin_name, bin_name.as_bytes());
+            // Use the manifest key (not bin_name) as identifier — preserves qualified
+            // component paths like "node/toolchain.node" for parent resolution.
+            let id = ContentId::from_content("binary", key, key.as_bytes());
             (native, phase, id)
         }
 
@@ -832,4 +841,62 @@ fn lower_retry(retry: &Option<manifest::RetryConfig>) -> Result<Option<RetryReso
         max_interval_ms,
         timeout_ms,
     }))
+}
+
+/// Validate node compositions: reject invalid parent→child relationships.
+///
+/// Rule: **Only `Command` nodes can have `Std` children.**
+/// A `std` node probes command stdout/stderr/exit_code — it makes no sense
+/// as a child of env, file, binary, service, etc.
+fn validate_node_compositions(nodes: &[ResolvedNode]) -> Result<(), String> {
+    let node_by_id: HashMap<&ContentId, &ResolvedNode> = nodes.iter()
+        .map(|n| (&n.id, n)).collect();
+
+    let mut errors = Vec::new();
+
+    for node in nodes {
+        if let ResolvedNativeNode::Std { stream, .. } = &node.node {
+            let node_key = node.id.0.split(':').nth(1).unwrap_or("?");
+
+            for parent_id in &node.parents {
+                if let Some(parent) = node_by_id.get(parent_id) {
+                    if !matches!(&parent.node, ResolvedNativeNode::Command { .. }) {
+                        let parent_type = match &parent.node {
+                            ResolvedNativeNode::Env { .. } => "env",
+                            ResolvedNativeNode::File { .. } => "file",
+                            ResolvedNativeNode::Binary { .. } => "binary",
+                            ResolvedNativeNode::Service { .. } => "service",
+                            ResolvedNativeNode::Dns { .. } => "dns",
+                            ResolvedNativeNode::Metric { .. } => "metric",
+                            ResolvedNativeNode::Platform { .. } => "platform",
+                            ResolvedNativeNode::Source { .. } => "source",
+                            ResolvedNativeNode::Std { .. } => "std",
+                            ResolvedNativeNode::Command { .. } => unreachable!(),
+                        };
+                        let parent_key = parent.id.0.split(':').nth(1).unwrap_or("?");
+                        let header = style::error_diag(&format!(
+                            "std node '{}' cannot be child of {} node '{}'",
+                            node_key, parent_type, parent_key,
+                        ));
+                        let body = DiagBuilder::new()
+                            .location(&format!("manifest [nodes.{node_key}]"))
+                            .blank()
+                            .code(&format!("stream = \"{stream}\""))
+                            .code(&format!("parents = [\"{parent_key}\"]"))
+                            .blank()
+                            .note(&format!("'{parent_type}' nodes do not produce stdout/stderr/exit_code"))
+                            .hint("std nodes can only be children of command nodes")
+                            .build();
+                        errors.push(format!("{header}\n{body}"));
+                    }
+                }
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n\n"))
+    }
 }
