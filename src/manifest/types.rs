@@ -247,9 +247,6 @@ pub struct ServiceInput {
     pub phase: Option<Phase>,
 
     #[serde(default)]
-    pub on_fail: Option<OnFail>,
-
-    #[serde(default)]
     pub retry: Option<RetryConfig>,
 
     #[serde(default)]
@@ -269,9 +266,6 @@ pub struct CommandInput {
 
     #[serde(default)]
     pub phase: Option<Phase>,
-
-    #[serde(default)]
-    pub on_fail: Option<OnFail>,
 
     /// Opt out of caching: always run, never skip (deploy, notify, etc.)
     #[serde(default)]
@@ -452,14 +446,16 @@ pub struct RetryConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OnMissing {
+    /// Default: resource MUST exist, abort if missing.
     Fail,
+    /// Skip this node AND all children transitively.
+    /// The sub-DAG rooted here is disabled.
+    /// Use for: CI-only steps, platform-specific features.
     Skip,
+    /// Succeed with null value, children execute normally.
+    /// Absent value is part of cache key — if value appears later, cache invalidates.
+    /// Use for: system env vars (POSIXLY_CORRECT, LANG, TERM).
+    Continue,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OnFail {
-    Fail,
-    Skip,
-    Warn,
-}
+

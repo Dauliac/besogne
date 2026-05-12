@@ -45,6 +45,18 @@
     "gzip": { "type": "binary" },
     "curl": { "type": "binary" },
     "jq": { "type": "binary" },
-    "seq": { "type": "binary" }
+    "seq": { "type": "binary" },
+
+    "POSIXLY_CORRECT": { "type": "env", "on_missing": "continue", "phase": "build" },
+    "LANG": { "type": "env", "on_missing": "continue", "phase": "build" },
+    "LC_ALL": { "type": "env", "on_missing": "continue", "phase": "build" },
+    "LC_CTYPE": { "type": "env", "on_missing": "continue", "phase": "build" },
+    "TERM": { "type": "env", "on_missing": "continue", "phase": "build" },
+    "HOME": { "type": "env", "on_missing": "continue", "phase": "build" },
+    "USER": { "type": "env", "on_missing": "continue", "phase": "build" },
+    "LOGNAME": { "type": "env", "on_missing": "continue", "phase": "build" },
+    "SHELL": { "type": "env", "on_missing": "continue", "phase": "build" },
+    "TMPDIR": { "type": "env", "on_missing": "continue", "phase": "build" },
+    "TZ": { "type": "env", "on_missing": "continue", "phase": "build" }
   }
 }

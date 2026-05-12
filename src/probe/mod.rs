@@ -32,11 +32,12 @@ pub fn probe_input(input: &ResolvedNativeNode) -> ProbeResult {
             name,
             value,
             secret,
-            ..
+            on_missing,
         } => env::EnvProbe {
             name,
             value: value.as_deref(),
             secret: *secret,
+            on_missing: *on_missing,
         }
         .probe(),
 
@@ -203,6 +204,7 @@ mod tests {
             name: "BESOGNE_TEST_VAR",
             value: None,
             secret: false,
+            on_missing: crate::ir::types::OnMissingResolved::Fail,
         }
         .probe();
         assert!(result.success);
@@ -221,6 +223,7 @@ mod tests {
             name: "BESOGNE_NONEXISTENT_VAR",
             value: None,
             secret: false,
+            on_missing: crate::ir::types::OnMissingResolved::Fail,
         }
         .probe();
         assert!(!result.success);
@@ -233,6 +236,7 @@ mod tests {
             name: "BESOGNE_COMPUTED_VAR",
             value: Some("/custom/path"),
             secret: false,
+            on_missing: crate::ir::types::OnMissingResolved::Fail,
         }
         .probe();
         assert!(result.success);
@@ -251,6 +255,7 @@ mod tests {
             name: "BESOGNE_SECRET_VAR",
             value: None,
             secret: true,
+            on_missing: crate::ir::types::OnMissingResolved::Fail,
         }
         .probe();
         assert!(result.success);
@@ -469,6 +474,7 @@ mod tests {
                 name: "HOME".into(),
                 value: None,
                 secret: false,
+                on_missing: crate::ir::types::OnMissingResolved::Fail,
             },
             ResolvedNativeNode::File {
                 path: "/tmp".into(),

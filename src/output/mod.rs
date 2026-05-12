@@ -1,4 +1,5 @@
 pub mod style;
+pub mod views;
 
 use std::collections::{HashMap, HashSet};
 use crate::ir::{BesogneIR, ResolvedNode, ResolvedNativeNode, ContentId};
@@ -10,7 +11,7 @@ use crate::tracer::{CommandResult, ProcessMetrics};
 use termtree::Tree;
 
 use style::{styled, dim, bold, exit_code as fmt_exit, palette::RESET};
-use style::{status, node, metric, phase, exit, emphasis, structure};
+use style::{status, node, telemetry, phase, outcome, weight, diagnostic};
 use style::{label, badge, phase_label, metric_label, message};
 
 /// Why a probe result is being reported
@@ -24,6 +25,8 @@ pub enum ProbeStatus {
     Probed,
     /// Probe failed
     Failed,
+    /// Node skipped (on_missing: skip) — children will be skipped too
+    Skipped,
 }
 
 /// Context passed alongside command start — resolved paths and env values
@@ -195,6 +198,7 @@ fn status_label(s: ProbeStatus) -> &'static str {
         ProbeStatus::Sealed => label::SEALED,
         ProbeStatus::Probed => label::PROBED,
         ProbeStatus::Failed => label::FAILED,
+        ProbeStatus::Skipped => label::SKIPPED,
     }
 }
 
@@ -204,6 +208,7 @@ fn probe_status_token(s: ProbeStatus) -> &'static str {
         ProbeStatus::Sealed => status::SEALED,
         ProbeStatus::Probed => status::PROBED,
         ProbeStatus::Failed => status::FAILED,
+        ProbeStatus::Skipped => status::SKIP,
     }
 }
 
@@ -267,7 +272,7 @@ impl From<&ProcessMetrics> for Metrics {
 }
 
 fn format_metrics_human(m: &Metrics) -> String {
-    use metric::*;
+    use telemetry::*;
     use metric_label as ml;
     let mut parts = Vec::new();
     parts.push(format!("{TIME}{TIME_ICON} {}:{:.3}s{RESET}", ml::TIME, m.wall_ms as f64 / 1000.0));
@@ -300,7 +305,7 @@ fn format_metrics_human(m: &Metrics) -> String {
 }
 
 fn format_metrics_ci(m: &Metrics) -> String {
-    use metric::*;
+    use telemetry::*;
     use metric_label as ml;
     let mut parts = vec![format!("{:.3}s", m.wall_ms as f64 / 1000.0)];
     if m.user_ms > 0 || m.sys_ms > 0 {
@@ -340,7 +345,7 @@ fn format_metrics_json(m: &Metrics) -> serde_json::Value {
 
 // ── Path helpers ────────────────────────────────────────────────────
 
-fn crop_path(path: &str, max_len: usize) -> String {
+pub(crate) fn crop_path(path: &str, max_len: usize) -> String {
     if path.starts_with("/nix/store/") {
         let after_store = &path["/nix/store/".len()..];
         let hash_end = after_store.find('-').unwrap_or(8).min(8);
@@ -367,7 +372,7 @@ fn resolve_exec_display(exec: &[String], ctx: &CommandContext) -> String {
     }).collect::<Vec<_>>().join(" ")
 }
 
-fn process_label(p: &ProcessMetrics) -> String {
+pub(crate) fn process_label(p: &ProcessMetrics) -> String {
     if !p.cmdline.is_empty() { crop_cmdline(&p.cmdline, 80) }
     else if !p.comm.is_empty() { p.comm.clone() }
     else { format!("pid:{}", p.pid) }
@@ -377,7 +382,7 @@ fn process_label(p: &ProcessMetrics) -> String {
 /// Returns " (subshell)" tag if the child has the same cmdline as its parent.
 fn subshell_tag(child: &ProcessMetrics, parent_cmdline: &str) -> String {
     if !child.cmdline.is_empty() && !parent_cmdline.is_empty() && child.cmdline == parent_cmdline {
-        format!(" {}(subshell){RESET}", emphasis::SECONDARY)
+        format!(" {}(subshell){RESET}", weight::L3)
     } else {
         String::new()
     }
@@ -391,10 +396,10 @@ fn format_command_context_human(exec: &[String], ctx: &CommandContext) {
             if path != arg {
                 let display_path = crop_path(path, 60);
                 let version = ctx.binary_versions.get(arg.as_str())
-                    .map(|v| format!(" {}v{v}{RESET}", emphasis::ACCENT))
+                    .map(|v| format!(" {}v{v}{RESET}", style::palette::CYAN))
                     .unwrap_or_default();
                 eprintln!("    {}{arg} {RESET}{}→ {display_path}{RESET}{version}",
-                    style::palette::DIM_BLUE, emphasis::SECONDARY);
+                    style::palette::DIM_BLUE, weight::L3);
             }
         }
     }
@@ -403,10 +408,10 @@ fn format_command_context_human(exec: &[String], ctx: &CommandContext) {
         vars.sort_by_key(|(k, _)| *k);
         let parts: Vec<String> = vars.iter().map(|(k, v)| {
             if ctx.secret_vars.contains(k.as_str()) {
-                format!("{}{k}{}=*****{RESET}", status::CACHED, emphasis::SECONDARY)
+                format!("{}{k}{}=*****{RESET}", status::CACHED, weight::L3)
             } else {
                 let display = if v.len() > 50 { format!("{}...", &v[..47]) } else { v.to_string() };
-                format!("{}{k}={display}{RESET}", emphasis::SECONDARY)
+                format!("{}{k}={display}{RESET}", weight::L3)
             }
         }).collect();
         let mut line = String::from("    ");
@@ -425,7 +430,7 @@ fn format_process_tree_human(tree: &[ProcessMetrics]) {
     use metric_label as ml;
     if tree.len() <= 1 { return; }
     eprintln!("    {}\u{250c} {}{RESET} {}({} {}){RESET}",
-        structure::TREE_HEADER, message::PROCESS_TREE, emphasis::ACCENT, tree.len(), ml::PROCESSES);
+        phase::EXEC_DIM, message::PROCESS_TREE, style::palette::CYAN, tree.len(), ml::PROCESSES);
     let mut children: HashMap<u32, Vec<usize>> = HashMap::new();
     for (i, p) in tree.iter().enumerate() {
         if i > 0 { children.entry(p.ppid).or_default().push(i); }
@@ -441,7 +446,7 @@ fn print_process_node(
     let label = process_label(p);
     let metrics = format_metrics_human(&Metrics::from(p));
     let exit_tag = fmt_exit(p.exit_code);
-    let label_style = if is_root { node::COMMAND } else { style::palette::WHITE };
+    let label_style = if is_root { style::ptree::ROOT } else { style::ptree::CHILD };
     eprintln!("{prefix}{label_style}{label}{RESET} [{exit_tag}]  {metrics}");
 
     let parent_cmdline = &p.cmdline;
@@ -455,7 +460,7 @@ fn print_process_node(
         let kid_metrics = format_metrics_human(&Metrics::from(kp));
         let kid_exit = fmt_exit(kp.exit_code);
         let ss_tag = subshell_tag(kp, parent_cmdline);
-        eprintln!("{prefix}{connector}{}{kid_label}{RESET}{ss_tag} [{kid_exit}]  {kid_metrics}", style::palette::WHITE);
+        eprintln!("{prefix}{connector}{}{kid_label}{RESET}{ss_tag} [{kid_exit}]  {kid_metrics}", style::ptree::CHILD);
 
         if let Some(grandkids) = children.get(&kp.pid) {
             for (j, &gk_idx) in grandkids.iter().enumerate() {
@@ -478,7 +483,7 @@ fn print_process_node_recursive(
     let metrics = format_metrics_human(&Metrics::from(p));
     let exit_tag = fmt_exit(p.exit_code);
     let ss_tag = subshell_tag(p, parent_cmdline);
-    eprintln!("{parent_prefix}{connector}{}{label}{RESET}{ss_tag} [{exit_tag}]  {metrics}", style::palette::WHITE);
+    eprintln!("{parent_prefix}{connector}{}{label}{RESET}{ss_tag} [{exit_tag}]  {metrics}", style::ptree::CHILD);
 
     if let Some(kids) = children.get(&p.pid) {
         for (i, &kid_idx) in kids.iter().enumerate() {
@@ -652,7 +657,7 @@ impl OutputRenderer for HumanRenderer {
 
     fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]) {
         if binaries.is_empty() && env_vars.is_empty() { return; }
-        eprintln!("\n{}", styled(structure::WARNING, message::UNDECLARED_DEPS));
+        eprintln!("\n{}", styled(diagnostic::WARN, message::UNDECLARED_DEPS));
         eprintln!("  {}", dim(message::CACHE_DISABLED));
         if !binaries.is_empty() {
             eprintln!("  {} {}", styled(status::CACHED, "binaries:"), binaries.join(", "));
@@ -680,7 +685,7 @@ impl OutputRenderer for HumanRenderer {
     }
 }
 
-fn format_relative_time(iso_time: &str) -> String {
+pub(crate) fn format_relative_time(iso_time: &str) -> String {
     let Ok(then) = chrono::DateTime::parse_from_rfc3339(iso_time) else {
         return iso_time.to_string();
     };
@@ -813,6 +818,7 @@ impl OutputRenderer for CiRenderer {
             ProbeStatus::Sealed => "[SEAL]",
             ProbeStatus::Probed => "[PROBE]",
             ProbeStatus::Failed => "[FAIL]",
+            ProbeStatus::Skipped => "[SKIP]",
         };
         if result.success { eprintln!("  {tag} {detail}"); }
         else { eprintln!("  {tag} {detail} — {}", result.error.as_deref().unwrap_or(label::FAILED)); }
@@ -889,9 +895,9 @@ impl OutputRenderer for CiRenderer {
 
 // ── Status tree (--status) ──────────────────────────────────────────
 
-enum NodeStatus { Pinned, Sealed, Cached, Unknown }
+pub(crate) enum NodeStatus { Pinned, Sealed, Cached, Unknown }
 
-fn node_status_badge(s: &NodeStatus) -> String {
+pub(crate) fn node_status_badge(s: &NodeStatus) -> String {
     match s {
         NodeStatus::Pinned => style::status_badge(label::PINNED, status::PINNED),
         NodeStatus::Sealed => style::status_badge(label::SEALED, status::SEALED),
@@ -900,7 +906,7 @@ fn node_status_badge(s: &NodeStatus) -> String {
     }
 }
 
-fn node_type_badge(n: &ResolvedNode) -> String {
+pub(crate) fn node_type_badge(n: &ResolvedNode) -> String {
     let (token, text) = match &n.node {
         ResolvedNativeNode::Binary { .. }   => (node::BINARY, badge::BINARY),
         ResolvedNativeNode::File { .. }     => (node::FILE, badge::FILE),
@@ -917,18 +923,18 @@ fn node_type_badge(n: &ResolvedNode) -> String {
     styled(token, text)
 }
 
-fn node_short_label(n: &ResolvedNode) -> String {
+pub(crate) fn node_short_label(n: &ResolvedNode) -> String {
     match &n.node {
         ResolvedNativeNode::Binary { name, resolved_version, source, .. } => {
             let ver = resolved_version.as_deref()
-                .map(|v| format!(" {}v{v}{RESET}", emphasis::SECONDARY)).unwrap_or_default();
+                .map(|v| format!(" {}v{v}{RESET}", weight::L3)).unwrap_or_default();
             let src = match source {
                 Some(crate::ir::types::BinarySourceResolved::Nix { pname, .. }) =>
-                    format!(" {}[nix:{}]{RESET}", emphasis::SECONDARY, pname.as_deref().unwrap_or("?")),
+                    format!(" {}[nix:{}]{RESET}", weight::L3, pname.as_deref().unwrap_or("?")),
                 Some(crate::ir::types::BinarySourceResolved::Mise { tool }) =>
-                    format!(" {}[mise:{tool}]{RESET}", emphasis::SECONDARY),
+                    format!(" {}[mise:{tool}]{RESET}", weight::L3),
                 Some(crate::ir::types::BinarySourceResolved::System) =>
-                    format!(" {}[system]{RESET}", emphasis::SECONDARY),
+                    format!(" {}[system]{RESET}", weight::L3),
                 None => String::new(),
             };
             format!("{name}{ver}{src}")
@@ -960,7 +966,7 @@ fn node_short_label(n: &ResolvedNode) -> String {
     }
 }
 
-fn get_node_status(n: &ResolvedNode, cache: &ContextCache) -> NodeStatus {
+pub(crate) fn get_node_status(n: &ResolvedNode, cache: &ContextCache) -> NodeStatus {
     if n.sealed.is_some() { return NodeStatus::Pinned; }
     if cache.get_probe(&n.id.0).is_some() {
         // Seal-phase probes → "sealed", exec-phase probes → "cached"
@@ -1020,7 +1026,7 @@ pub fn render_status_tree(ir: &BesogneIR, cache: &ContextCache) {
                         format!(" {}", dim(&format!("({} parallel)", tier.len())))
                     } else { String::new() };
                     let mut tier_tree = Tree::new(format!("{}tier {tier_idx}{RESET}{parallel}",
-                        structure::TREE_HEADER));
+                        phase::EXEC_DIM));
 
                     for &node_idx in tier {
                         let content_id = &graph[node_idx];

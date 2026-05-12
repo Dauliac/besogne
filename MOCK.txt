@@ -1,0 +1,1003 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  BESOGNE OUTPUT DESIGN SYSTEM — v3                                         ║
+║  Methodology: Information → Axes → L1 Palette → L2 Semantic → L3 Component║
+║  Edit this file, add # comments. Status: DRAFT                             ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ 1. INFORMATION CATALOG — every atom besogne displays
+═══════════════════════════════════════════════════════════════════════════════
+
+# Before designing tokens, we catalog EVERYTHING the UI renders.
+# Each atom is tagged with its axes values. This is the ground truth.
+
+┌──────────────────────────┬───────────┬──────────┬─────────┬──────────┬────────┐
+│ Atom                     │ Domain    │ Phase    │ Outcome │ Temporal │ Weight │
+├──────────────────────────┼───────────┼──────────┼─────────┼──────────┼────────┤
+│ IDENTITY                 │           │          │         │          │        │
+│ manifest name            │ identity  │ —        │ —       │ static   │ L1     │
+│ manifest version         │ identity  │ —        │ —       │ static   │ L3     │
+│ manifest description     │ identity  │ —        │ —       │ static   │ L3     │
+│ manifest hash            │ identity  │ —        │ —       │ static   │ L3     │
+│ node type (binary/env..) │ identity  │ varies   │ —       │ —        │ L2     │
+│ node name                │ identity  │ varies   │ —       │ —        │ L2     │
+│ binary name              │ identity  │ build    │ —       │ static   │ L2     │
+│ binary path (resolved)   │ identity  │ build    │ —       │ static   │ L3     │
+│ binary version           │ identity  │ build    │ —       │ static   │ L3     │
+│ binary source [sys/nix]  │ identity  │ build    │ —       │ static   │ L3     │
+│ env var name             │ identity  │ seal     │ —       │ —        │ L2     │
+│ file path                │ identity  │ seal     │ —       │ —        │ L2     │
+│ command name             │ identity  │ exec     │ —       │ —        │ L1     │
+│ command exec args        │ identity  │ exec     │ —       │ —        │ L2     │
+│ content hash / ID        │ identity  │ —        │ —       │ static   │ L3     │
+│ store path               │ identity  │ —        │ —       │ static   │ L3     │
+│ component origin         │ identity  │ build    │ —       │ static   │ L3     │
+│ secret mask "*****"      │ identity  │ seal     │ —       │ —        │ L3     │
+│ service endpoint         │ identity  │ exec     │ —       │ —        │ L2     │
+│ dns host                 │ identity  │ exec     │ —       │ —        │ L2     │
+│ metric name              │ identity  │ exec     │ —       │ —        │ L2     │
+│ source path/format       │ identity  │ seal     │ —       │ —        │ L2     │
+│ std stream name          │ identity  │ exec     │ —       │ —        │ L2     │
+├──────────────────────────┼───────────┼──────────┼─────────┼──────────┼────────┤
+│ STATE                    │           │          │         │          │        │
+│ status: pinned           │ state     │ build    │ ok      │ static   │ L2     │
+│ status: sealed           │ state     │ seal     │ ok      │ cached   │ L2     │
+│ status: probed           │ state     │ seal     │ ok      │ live     │ L2     │
+│ status: ok               │ state     │ exec     │ ok      │ live     │ L2     │
+│ status: cached           │ state     │ exec     │ ok      │ cached   │ L3     │
+│ status: fail             │ state     │ varies   │ fail    │ live     │ L1 ↑   │
+│ status: changed          │ state     │ seal     │ warn    │ live     │ L2     │
+│ status: skip             │ state     │ —        │ warn    │ cached   │ L2     │
+│ status: pending          │ state     │ varies   │ —       │ —        │ L2     │
+│ status: verify           │ state     │ exec     │ —       │ live     │ L3     │
+│ status icon (✓/✗/∎/△/○)  │ state     │ varies   │ varies  │ varies   │ =parent│
+│ retry "1/3 in 500ms"     │ state     │ exec     │ warn    │ live     │ L2     │
+├──────────────────────────┼───────────┼──────────┼─────────┼──────────┼────────┤
+│ OUTPUT                   │           │          │         │          │        │
+│ stdout (live)            │ output    │ exec     │ —       │ live     │ L2     │
+│ stdout (cached/replay)   │ output    │ exec     │ —       │ cached   │ L3     │
+│ stderr (live)            │ output    │ exec     │ —       │ live     │ L2     │
+│ stderr (cached/replay)   │ output    │ exec     │ —       │ cached   │ L3     │
+│ exit code 0              │ output    │ exec     │ ok      │ —        │ L3     │
+│ exit code != 0           │ output    │ exec     │ fail    │ —        │ L1 ↑   │
+│ env var value (fresh)    │ output    │ seal     │ ok      │ live     │ L2     │
+│ env var value (cached)   │ output    │ seal     │ ok      │ cached   │ L3     │
+│ probe hash               │ output    │ varies   │ —       │ —        │ L3     │
+│ probe error message      │ output    │ varies   │ fail    │ live     │ L1 ↑   │
+├──────────────────────────┼───────────┼──────────┼─────────┼──────────┼────────┤
+│ TELEMETRY                │           │          │         │          │        │
+│ wall time                │ telemetry │ —        │ —       │ —        │ L3     │
+│ cpu time (user)          │ telemetry │ —        │ —       │ —        │ L3     │
+│ cpu time (kernel)        │ telemetry │ —        │ —       │ —        │ L3     │
+│ cpu cores                │ telemetry │ —        │ —       │ —        │ L3     │
+│ memory RSS               │ telemetry │ —        │ —       │ —        │ L3     │
+│ disk read bytes          │ telemetry │ —        │ —       │ —        │ L3     │
+│ disk write bytes         │ telemetry │ —        │ —       │ —        │ L3     │
+│ net download bytes       │ telemetry │ —        │ —       │ —        │ L3     │
+│ net upload bytes         │ telemetry │ —        │ —       │ —        │ L3     │
+│ process count            │ telemetry │ —        │ —       │ —        │ L3     │
+│ metric icon (⏱⚡🧠💾🌐🔀)│ telemetry │ —        │ —       │ —        │ L3     │
+│ metric label "time:"     │ telemetry │ —        │ —       │ —        │ L3     │
+│ metric value "0.003s"    │ telemetry │ —        │ —       │ —        │ L3     │
+│ metric unit "user"       │ telemetry │ —        │ —       │ —        │ L3     │
+│ timestamp "ran 22s ago"  │ telemetry │ —        │ —       │ cached   │ L3     │
+│ duration "(124ms)"       │ telemetry │ —        │ —       │ —        │ L3     │
+│ ptree: root process      │ telemetry │ exec     │ —       │ —        │ L2     │
+│ ptree: child process     │ telemetry │ exec     │ —       │ —        │ L3     │
+│ ptree: failed child      │ telemetry │ exec     │ fail    │ —        │ L1 ↑   │
+│ ptree: subshell tag      │ telemetry │ exec     │ —       │ —        │ L3     │
+│ ptree: per-proc metrics  │ telemetry │ exec     │ —       │ —        │ L3     │
+├──────────────────────────┼───────────┼──────────┼─────────┼──────────┼────────┤
+│ STRUCTURE                │           │          │         │          │        │
+│ phase header "▸ build"   │ structure │ varies   │ —       │ —        │ L1     │
+│ section header "── X ──" │ structure │ —        │ —       │ —        │ L1     │
+│ node count "(44 nodes)"  │ structure │ varies   │ —       │ —        │ L3     │
+│ tree connector ├── └──   │ structure │ —        │ —       │ —        │ L3     │
+│ DAG tier "tier 0"        │ structure │ exec     │ —       │ —        │ L3     │
+│ DAG parent edge "← X"   │ structure │ exec     │ —       │ —        │ L3     │
+│ indentation              │ structure │ —        │ —       │ —        │ —      │
+│ bullet ▸/▹/•             │ structure │ varies   │ —       │ —        │ =parent│
+│ footer "done"/"fail"     │ structure │ —        │ varies  │ —        │ L1     │
+│ "--status" hint          │ structure │ —        │ —       │ —        │ L3     │
+├──────────────────────────┼───────────┼──────────┼─────────┼──────────┼────────┤
+│ DIAGNOSTIC               │           │          │         │          │        │
+│ error prefix "error:"    │ diagnostic│ —        │ fail    │ live     │ L1     │
+│ error message body       │ diagnostic│ varies   │ fail    │ live     │ L1     │
+│ warning prefix "warning:"│ diagnostic│ —        │ warn    │ live     │ L1     │
+│ warning message body     │ diagnostic│ varies   │ warn    │ live     │ L2     │
+│ hint text                │ diagnostic│ —        │ —       │ —        │ L3     │
+│ gutter "-->", "|", "="   │ diagnostic│ —        │ —       │ —        │ L2     │
+│ code line in diagnostic  │ diagnostic│ —        │ —       │ —        │ L2     │
+│ idempotent "✓ idempotent"│ diagnostic│ exec     │ ok      │ live     │ L2     │
+│ NOT idempotent           │ diagnostic│ exec     │ fail    │ live     │ L1 ↑   │
+│ idempotency diff lines   │ diagnostic│ exec     │ —       │ live     │ L2     │
+│ changed probe "△ chgd"   │ diagnostic│ seal     │ warn    │ live     │ L2     │
+│ undeclared deps list     │ diagnostic│ exec     │ warn    │ live     │ L2     │
+│ undeclared hint          │ diagnostic│ —        │ —       │ —        │ L3     │
+└──────────────────────────┴───────────┴──────────┴─────────┴──────────┴────────┘
+
+# "↑" = escalated from default (failure always promotes)
+# "=parent" = inherits weight from containing element
+# "—" = not applicable / no value on this axis
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ 2. ORTHOGONAL AXES — five independent dimensions
+═══════════════════════════════════════════════════════════════════════════════
+
+# An axis is orthogonal if: any value on axis A can combine with any value
+# on axis B. If two things are always correlated, they're the SAME axis.
+
+ AXIS 1: DOMAIN — what KIND of information is it?
+ ─────────────────────────────────────────────────
+   identity     names, types, paths, versions, hashes — WHAT is it
+   state        lifecycle status, phase position      — WHERE is it
+   output       stdout, stderr, exit codes, values    — WHAT did it produce
+   telemetry    timing, CPU, memory, I/O, processes   — HOW did it perform
+   structure    headers, connectors, edges, layout     — HOW does it fit together
+   diagnostic   errors, warnings, hints, verification — WHAT needs attention
+
+   WHY IT'S AN AXIS: a binary name (identity) can be in any phase, any
+   outcome, any temporality. A metric (telemetry) exists regardless of
+   outcome. Domain drives WHICH token family you pick.
+
+ AXIS 2: PHASE — where in the pipeline?
+ ─────────────────────────────────────────────────
+   build        compilation, freezing, static pinning  → MAGENTA
+   seal         validation, precondition checking      → BLUE
+   exec         action, running commands               → CYAN
+   (global)     not phase-specific                     → no phase hue
+
+   WHY IT'S AN AXIS: phase is about pipeline POSITION, not result.
+   A seal probe can succeed or fail. An exec command can be cached or live.
+   Phase drives the STRUCTURAL HUE.
+
+ AXIS 3: OUTCOME — what was the result?
+ ─────────────────────────────────────────────────
+   ok           success, verified, valid               → GREEN
+   warn         attention needed, changed, degraded    → YELLOW
+   fail         failure, error, crash                  → RED
+   (none)       no outcome — structural/identity only  → no outcome hue
+
+   WHY IT'S AN AXIS: outcome is about RESULT, not position or timing.
+   A build-phase node can fail. An exec command can succeed.
+   A telemetry value has no outcome (unless anomaly).
+   Outcome drives the RESULT HUE (traffic light).
+
+ AXIS 4: TEMPORALITY — when did it happen?
+ ─────────────────────────────────────────────────
+   live         happening RIGHT NOW in this execution
+   cached       from a PREVIOUS run, replayed
+   static       FROZEN at build time, immutable
+
+   WHY IT'S AN AXIS: temporality is about TIME, not result.
+   A sealed probe (cached) can be ok or changed.
+   Live stdout is L2, cached stdout is L3 — same data, different time.
+   Temporality drives the DEFAULT WEIGHT.
+
+   TEMPORALITY → WEIGHT mapping (defaults):
+     live   → L2  (you want to see what's happening now)
+     cached → L3  (it's old news, dim it)
+     static → L3  (it's immutable context, dim it)
+
+ AXIS 5: WEIGHT — how visually important?
+ ─────────────────────────────────────────────────
+   L1 bold      structural landmarks, errors, final verdict
+   L2 normal    active content, current action
+   L3 dim       background, cached, context, metadata
+
+   WHY IT'S AN AXIS: weight is the final RENDERING decision.
+   It's influenced by temporality (cached → L3) and outcome (fail → L1),
+   but it's the axis that maps to TYPOGRAPHY (bold/normal/dim).
+
+   ESCALATION: outcome::fail always promotes weight toward L1.
+   Nothing ever de-escalates below its default weight.
+
+
+# ─── Axis independence proof ────────────────────
+
+# Can every combination exist? Yes:
+#
+#   identity × build × ok × static × L3   = binary path (resolved, pinned)
+#   identity × exec × fail × live × L1    = command name (failed command)
+#   output × seal × ok × live × L2        = fresh env var value
+#   output × exec × ok × cached × L3      = cached stdout
+#   telemetry × — × — × — × L3            = wall time (no phase, no outcome)
+#   telemetry × exec × fail × live × L1   = failed child process (escalated)
+#   diagnostic × seal × warn × live × L2  = changed probe notification
+#   structure × — × — × — × L1            = section header
+#   state × build × ok × static × L2      = "pinned" status label
+#   state × exec × ok × cached × L3       = "cached" status label
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ 3. L1 PALETTE — raw ANSI codes (no semantics)
+═══════════════════════════════════════════════════════════════════════════════
+
+# Named by VISUAL APPEARANCE only. No meaning attached here.
+
+  RESET             \x1b[0m
+  BOLD              \x1b[1m
+  DIM               \x1b[2m
+
+  RED               \x1b[31m
+  GREEN             \x1b[32m
+  YELLOW            \x1b[33m
+  BLUE              \x1b[34m
+  MAGENTA           \x1b[35m
+  CYAN              \x1b[36m
+  WHITE             \x1b[37m
+
+  BOLD_RED          \x1b[1;31m
+  BOLD_GREEN        \x1b[1;32m
+  BOLD_YELLOW       \x1b[1;33m
+  BOLD_BLUE         \x1b[1;34m
+  BOLD_MAGENTA      \x1b[1;35m
+  BOLD_CYAN         \x1b[1;36m
+  BOLD_WHITE        \x1b[1;37m
+
+  DIM_RED           \x1b[2;31m
+  DIM_GREEN         \x1b[2;32m
+  DIM_YELLOW        \x1b[2;33m
+  DIM_BLUE          \x1b[2;34m
+  DIM_MAGENTA       \x1b[2;35m
+  DIM_CYAN          \x1b[2;36m
+  DIM_WHITE         \x1b[2;37m
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ 4. L2 SEMANTIC TOKENS — axes mapped to palette
+═══════════════════════════════════════════════════════════════════════════════
+
+# Each axis gets its own token namespace.
+# L2 tokens point to L1 palette entries.
+# This is the ONLY place where palette → meaning mapping lives.
+
+# ─── Axis 1: DOMAIN ────────────────────────────
+
+  # Domain doesn't map to a single color — it selects a TOKEN FAMILY.
+  # Each domain has its own sub-namespace with internal color logic.
+  # This is defined per-domain below.
+
+  # domain::identity  — uses node-type colors (see node:: below)
+  # domain::state     — uses phase × outcome composite (see status:: below)
+  # domain::output    — uses weight only (L2 live, L3 cached)
+  # domain::telemetry — uses its own muted palette (see telemetry:: below)
+  # domain::structure — uses weight only (L1 headers, L3 connectors)
+  # domain::diagnostic— uses outcome colors (fail=RED, warn=YELLOW)
+
+# ─── Axis 2: PHASE ─────────────────────────────
+
+  phase::BUILD       = BOLD_MAGENTA    # compilation, pinning
+  phase::SEAL        = BOLD_BLUE       # validation, checking
+  phase::EXEC        = BOLD_CYAN       # action, running
+
+  # Dim variants for phase-colored content at L3
+  phase::BUILD_DIM   = DIM_MAGENTA
+  phase::SEAL_DIM    = DIM_BLUE
+  phase::EXEC_DIM    = DIM_CYAN
+
+# ─── Axis 3: OUTCOME ───────────────────────────
+
+  outcome::OK        = GREEN           # success
+  outcome::WARN      = YELLOW          # attention
+  outcome::FAIL      = RED             # failure
+
+  outcome::OK_BOLD   = BOLD_GREEN      # escalated success (rare)
+  outcome::WARN_BOLD = BOLD_YELLOW     # escalated warning
+  outcome::FAIL_BOLD = BOLD_RED        # escalated failure
+
+  outcome::OK_DIM    = DIM_GREEN       # dim success (exit code 0)
+  outcome::WARN_DIM  = DIM_YELLOW      # dim warning
+  outcome::FAIL_DIM  = DIM_RED         # dim failure (rare)
+
+# ─── Axis 4: TEMPORALITY ───────────────────────
+
+  # Temporality doesn't have its own colors — it MODIFIES weight.
+  # live   → use the base weight (L2 default)
+  # cached → shift weight toward L3 (dim)
+  # static → shift weight toward L3 (dim)
+  #
+  # Implementation: temporality is a weight modifier, not a color.
+  # The rendering function checks temporality and applies DIM if cached/static.
+
+# ─── Axis 5: WEIGHT ────────────────────────────
+
+  weight::L1         = BOLD            # demands attention
+  weight::L2         = (none)          # normal text — no modifier
+  weight::L3         = DIM             # recedes
+
+# ─── Cross-axis composites ──────────────────────
+
+  # STATUS = phase × outcome (state domain)
+  # The status label color tells you BOTH where and what.
+
+  status::PINNED     = MAGENTA         # build × ok → phase color
+  status::SEALED     = BLUE            # seal × ok → phase color
+  status::PROBED     = GREEN           # seal × ok × live → outcome color
+  status::OK         = GREEN           # exec × ok × live → outcome color
+  status::CACHED     = DIM             # exec × ok × cached → temporality dims it
+  status::FAIL       = RED             # varies × fail → outcome overrides
+  status::CHANGED    = YELLOW          # seal × warn → outcome color
+  status::SKIP       = YELLOW          # global × warn → outcome color
+  status::PENDING    = BLUE            # varies × none → neutral
+  status::VERIFY     = DIM             # exec × none × live → meta-action
+
+  # NODE TYPE = identity domain sub-colors
+  # Each node type has a hue that LOOSELY maps to its typical phase.
+
+  node::BINARY       = CYAN            # build/exec adjacent
+  node::FILE         = MAGENTA         # build/seal adjacent
+  node::ENV          = YELLOW          # seal — warm, environment
+  node::COMMAND      = WHITE           # exec — neutral, main actor
+  node::SERVICE      = GREEN           # exec — alive, running
+  node::PLATFORM     = CYAN            # build — system info
+  node::DNS          = GREEN           # exec — network, alive
+  node::METRIC       = YELLOW          # exec — measurement
+  node::SOURCE       = CYAN            # seal — data source
+  node::STD          = GREEN           # exec — stream
+
+  # TELEMETRY = domain::telemetry sub-colors
+  # Muted (DIM) variants — NEVER compete with pipeline output.
+  # Color = CATEGORY, not outcome. Icons do the heavy lifting.
+
+  telemetry::TIME    = DIM_CYAN        # exec-adjacent (action duration)
+  telemetry::CPU     = DIM_YELLOW      # warm = computation
+  telemetry::MEMORY  = DIM_MAGENTA     # build-adjacent (resource weight)
+  telemetry::DISK    = DIM_BLUE        # seal-adjacent (I/O, persistence)
+  telemetry::NETWORK = DIM_GREEN       # connectivity
+  telemetry::PROCESS = DIM             # structural, neutral
+  telemetry::ANOMALY = YELLOW          # escalated! breaks out of L3
+
+  # PROCESS TREE = domain::telemetry sub-sub-colors
+
+  ptree::CONNECTOR   = DIM             # structural lines
+  ptree::ROOT        = WHITE           # root process — L2 brightness
+  ptree::CHILD       = DIM             # child processes — L3
+  ptree::SUBSHELL    = DIM             # "(subshell)" tag
+  ptree::EXIT_OK     = DIM_GREEN       # [0] — boring
+  ptree::EXIT_FAIL   = RED             # [1] — escalated!
+
+  # DIAGNOSTIC = domain::diagnostic sub-colors
+
+  diagnostic::ERROR  = BOLD_RED        # always L1
+  diagnostic::WARN   = BOLD_YELLOW     # always L1
+  diagnostic::HINT   = DIM             # always L3
+  diagnostic::GUTTER = BOLD_BLUE       # rustc-style | and --> (structural)
+  diagnostic::CODE   = WHITE           # code lines in diagnostic
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ 5. L2 TEXT TOKENS — canonical wording
+═══════════════════════════════════════════════════════════════════════════════
+
+# Every user-facing string is defined here. Zero hardcoded text elsewhere.
+
+  # Status labels
+  label::PINNED     = "pinned"
+  label::SEALED     = "sealed"
+  label::PROBED     = "probed"
+  label::OK         = "ok"
+  label::CACHED     = "cached"
+  label::FAIL       = "fail"
+  label::CHANGED    = "changed"
+  label::SKIP       = "nothing to do"
+  label::DONE       = "done"
+  label::PENDING    = "pending"
+  label::VERIFY     = "verifying"
+
+  # Node type badges
+  badge::BINARY     = " bin "
+  badge::FILE       = "file"
+  badge::ENV        = " env "
+  badge::COMMAND    = " cmd "
+  badge::SERVICE    = " svc "
+  badge::PLATFORM   = "plat"
+  badge::DNS        = " dns "
+  badge::METRIC     = " met "
+  badge::SOURCE     = " src "
+  badge::STD        = " std "
+
+  # Phase names
+  phase_label::BUILD = "build"
+  phase_label::SEAL  = "seal"
+  phase_label::EXEC  = "exec"
+
+  # Telemetry labels
+  tel_label::TIME    = "time"
+  tel_label::CPU     = "cpu"
+  tel_label::MEMORY  = "memory"
+  tel_label::READ    = "read"
+  tel_label::WRITE   = "write"
+  tel_label::DOWNLOAD= "download"
+  tel_label::UPLOAD  = "upload"
+  tel_label::PROCS   = "processes"
+  tel_label::USER    = "user"
+  tel_label::KERNEL  = "kernel"
+  tel_label::CORES   = "cores"
+
+  # Icons
+  icon::OK           = "✓"
+  icon::FAIL         = "✗"
+  icon::PINNED       = "∎"
+  icon::CACHED       = "∎"
+  icon::CHANGED      = "△"
+  icon::SKIP         = "⊘"
+  icon::PENDING      = "○"
+  icon::VERIFY       = "↻"
+
+  # Telemetry icons
+  tel_icon::TIME     = "⏱"
+  tel_icon::CPU      = "⚡"
+  tel_icon::MEMORY   = "🧠"
+  tel_icon::DISK     = "💾"
+  tel_icon::NETWORK  = "🌐"
+  tel_icon::PROCESS  = "🔀"
+
+  # Layout
+  layout::INDENT_1   = "  "
+  layout::INDENT_2   = "    "
+  layout::INDENT_3   = "      "
+  layout::PHASE_BUL  = "▸"
+  layout::ITEM_BUL   = "▹"
+  layout::STEP_BUL   = "•"
+  layout::SECTION    = "── {name} ─────────────────────...─"
+
+  # Messages
+  msg::STATUS_HINT   = "use --status to show last run"
+  msg::CACHE_DISABLED= "cache disabled until manifest is updated"
+  msg::UNDECLARED    = "undeclared dependencies detected"
+  msg::SIDE_EFFECTS  = "(side_effects)"
+  msg::SECRET        = "(secret)"
+  msg::IDEMPOTENT    = "idempotent"
+  msg::NOT_IDEMPOTENT= "NOT idempotent"
+  msg::PROCESS_TREE  = "process tree"
+  msg::LAST_RUN      = "last run:"
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ 6. L3 COMPONENT TOKENS — compositions of L2
+═══════════════════════════════════════════════════════════════════════════════
+
+# A component = a rendering function that resolves L2 axes into styled text.
+# Each component documents WHICH L2 tokens it consumes and HOW it composes them.
+
+# ─── PhaseBanner ────────────────────────────────
+# Renders: ▸ build (44 nodes)
+# Axes: structure × phase × weight::L1
+#
+#   layout::PHASE_BUL           → literal "▸"
+#   phase::{BUILD|SEAL|EXEC}    → hue of the phase name
+#   weight::L1                  → BOLD on name
+#   structure node count        → weight::L3 (dim parenthetical)
+
+  PhaseBanner.bullet       = layout::PHASE_BUL
+  PhaseBanner.name         = phase::{BUILD|SEAL|EXEC}       # L1 bold
+  PhaseBanner.detail       = weight::L3                      # "(44 nodes in 89ms)"
+
+# ─── ProgressStep ───────────────────────────────
+# Renders: • parsed besogne.toml (12ms)
+# Axes: structure × weight::L3
+# Used by compiler. Everything is dim — mechanical steps.
+
+  ProgressStep.bullet      = layout::STEP_BUL
+  ProgressStep.text        = weight::L3                      # all dim
+  ProgressStep.timing      = weight::L3                      # "(12ms)"
+
+# ─── ProbeItem ──────────────────────────────────
+# Renders: ✓ probed  env  HOME=/home/user
+# Axes: state × identity × output × phase × outcome × temporality → weight
+#
+# The HARDEST component — every axis participates.
+# Resolution logic:
+#   1. Pick status color from status:: (encodes phase × outcome)
+#   2. Pick icon from icon:: (encodes outcome)
+#   3. Pick weight from temporality:
+#      - live → L2 (status+badge+value all normal)
+#      - cached → L3 (everything dim)
+#      - static → L3 (everything dim)
+#   4. On fail → escalate entire line to L1
+
+  ProbeItem.icon           = icon::{OK|FAIL|PINNED|CACHED|CHANGED}
+  ProbeItem.status_label   = status::{PINNED|SEALED|PROBED|FAIL|...}
+  ProbeItem.node_badge     = node::{BINARY|FILE|ENV|...}
+  ProbeItem.detail         = weight::{L2|L3}  # L2 if live, L3 if cached/static
+  ProbeItem.error          = outcome::FAIL + weight::L1     # escalated on fail
+
+# Examples of ProbeItem resolution:
+#   ✓ probed  env  HOME=/home/user
+#   │ │       │    │
+#   │ │       │    └─ L2 WHITE (identity, live → L2)
+#   │ │       └─ node::ENV YELLOW (identity)
+#   │ └─ status::PROBED GREEN (seal × ok × live)
+#   └─ icon::OK GREEN
+#
+#   ∎ pinned  bin  bash v5.2.21 [system]
+#   │ │       │    │    │       │
+#   │ │       │    │    │       └─ L3 DIM (identity, static)
+#   │ │       │    │    └─ L3 DIM (identity, static)
+#   │ │       │    └─ L2→L3 DIM (identity, static → temporality dims)
+#   │ │       └─ node::BINARY CYAN (identity) — but at L3 → DIM_CYAN
+#   │ └─ status::PINNED MAGENTA (build × ok × static)
+#   └─ icon::PINNED MAGENTA
+#
+#   ✗ fail    file  go.mod — file not found
+#   │ │       │     │        │
+#   │ │       │     │        └─ L1 RED (output, fail → escalated)
+#   │ │       │     └─ L2→L1 (identity, fail escalates)
+#   │ │       └─ node::FILE (identity) — escalated context
+#   │ └─ status::FAIL RED (varies × fail)
+#   └─ icon::FAIL RED
+
+# ─── CommandBlock ───────────────────────────────
+# Renders:
+#   ▹ compile: echo compiling project
+#     echo → /usr/bin/echo v9.4
+#     compiling project
+#   ✓ ok
+# Axes: identity × output × state × phase::exec × temporality → weight
+
+  CommandBlock.bullet      = layout::ITEM_BUL
+  CommandBlock.name        = weight::L1                      # command name — BOLD
+  CommandBlock.exec_args   = weight::L2                      # args — normal text
+  CommandBlock.stdout_live = weight::L2                      # happening now — readable
+  CommandBlock.stdout_cache= weight::L3                      # from before — dim
+  CommandBlock.stderr_live = weight::L2
+  CommandBlock.stderr_cache= weight::L3
+  CommandBlock.status      = status::{OK|FAIL|CACHED}        # outcome icon + label
+  CommandBlock.exit_ok     = outcome::OK_DIM + weight::L3    # exit 0 — boring
+  CommandBlock.exit_fail   = outcome::FAIL_BOLD + weight::L1 # exit N — screaming
+
+# ─── BinaryRef ──────────────────────────────────
+# Renders: echo → /usr/bin/echo v9.4
+# Axes: identity × phase::build × temporality::static → weight::L3 path
+
+  BinaryRef.name           = weight::L2                      # binary name readable
+  BinaryRef.arrow          = weight::L3                      # "→" dim
+  BinaryRef.path           = weight::L3                      # resolved path dim
+  BinaryRef.version        = weight::L3                      # version dim
+
+# ─── MetricLine ─────────────────────────────────
+# Renders: ⏱ 0.088s  ⚡ 0.01s user + 0.01s kernel  🧠 7.6MB  💾 4KB
+# Axes: telemetry × weight::L3
+# Uses its OWN scoped token system. Never competes with pipeline.
+
+  MetricLine.time_icon     = tel_icon::TIME
+  MetricLine.time_value    = telemetry::TIME                 # DIM_CYAN
+  MetricLine.cpu_icon      = tel_icon::CPU
+  MetricLine.cpu_value     = telemetry::CPU                  # DIM_YELLOW
+  MetricLine.cpu_label     = telemetry::CPU                  # "user", "kernel"
+  MetricLine.mem_icon      = tel_icon::MEMORY
+  MetricLine.mem_value     = telemetry::MEMORY               # DIM_MAGENTA
+  MetricLine.disk_icon     = tel_icon::DISK
+  MetricLine.disk_value    = telemetry::DISK                 # DIM_BLUE
+  MetricLine.net_icon      = tel_icon::NETWORK
+  MetricLine.net_value     = telemetry::NETWORK              # DIM_GREEN
+  MetricLine.anomaly       = telemetry::ANOMALY              # YELLOW (escalated)
+
+  # MetricLine is ALWAYS L3 except anomaly values → L2.
+
+# ─── ProcessTree ────────────────────────────────
+# Renders:
+#   ┌ process tree (3 processes)
+#   bash -c 'go build' [0]  ⏱ 2.1s  🧠 180MB
+#   ├─ go build [0]  ⏱ 1.8s
+#   └─ compile [0]  ⏱ 1.5s
+# Axes: telemetry × structure × phase::exec × weight::L3
+
+  ProcessTree.header       = ptree::CONNECTOR + weight::L3   # "┌ process tree"
+  ProcessTree.connector    = ptree::CONNECTOR                 # ├── └── │ — DIM
+  ProcessTree.root_name    = ptree::ROOT                      # WHITE (L2 exception)
+  ProcessTree.child_name   = ptree::CHILD                     # DIM (L3)
+  ProcessTree.subshell     = ptree::SUBSHELL                  # DIM "(subshell)"
+  ProcessTree.exit_ok      = ptree::EXIT_OK                   # DIM_GREEN [0]
+  ProcessTree.exit_fail    = ptree::EXIT_FAIL                 # RED [1] (escalated!)
+  ProcessTree.metrics      = ptree::METRICS (= telemetry::*)  # DIM per-process
+
+# ─── StatusBadge ────────────────────────────────
+# Renders: ✓ probed  or  ✗ fail  or  ∎ cached
+# Pure composition of icon + status label color.
+
+  StatusBadge.icon         = icon::{varies}
+  StatusBadge.label        = label::{varies}
+  StatusBadge.color        = status::{varies}
+
+# ─── NodeBadge ──────────────────────────────────
+# Renders: bin  or  env  or  cmd
+  NodeBadge.text           = badge::{varies}
+  NodeBadge.color          = node::{varies}
+  # At L3, NodeBadge uses DIM variant of node color.
+
+# ─── DiagBlock ──────────────────────────────────
+# Renders rustc-style:
+#   error: binary 'foo' not found
+#     --> manifest [nodes.foo]
+#      |
+#      |  [nodes.foo]
+#      |  type = "binary"
+#      = hint: add it to PATH
+# Axes: diagnostic × outcome::{FAIL|WARN}
+
+  DiagBlock.prefix         = diagnostic::{ERROR|WARN}        # "error:"/"warning:" L1
+  DiagBlock.message        = weight::L1                       # error body bold
+  DiagBlock.gutter         = diagnostic::GUTTER               # "-->", "|" BOLD_BLUE
+  DiagBlock.code           = diagnostic::CODE                 # code lines WHITE
+  DiagBlock.note           = weight::L2                       # "= note:"
+  DiagBlock.hint           = diagnostic::HINT                 # "= hint:" DIM
+
+# ─── VerifyResult ───────────────────────────────
+# Renders: ✓ idempotent  or  ✗ NOT idempotent [diff]
+# Axes: diagnostic × outcome × phase::exec
+
+  VerifyResult.ok          = outcome::OK + label::IDEMPOTENT  # GREEN "✓ idempotent"
+  VerifyResult.fail        = outcome::FAIL_BOLD + label::NOT_IDEMPOTENT  # L1 RED
+  VerifyResult.diff_add    = outcome::OK                      # "+" lines green
+  VerifyResult.diff_remove = outcome::FAIL                    # "-" lines red
+
+# ─── SectionHeader ──────────────────────────────
+# Renders: ── tree ──────────────────────
+# Axes: structure × weight::L1
+
+  SectionHeader.rule       = weight::L3                       # dim "────"
+  SectionHeader.name       = weight::L1                       # BOLD name
+
+# ─── FooterLine ─────────────────────────────────
+# Renders: done 0.088s  or  fail exit 1  0.234s
+# Axes: structure × outcome × weight::L1
+
+  FooterLine.status_ok     = outcome::OK_BOLD                 # BOLD_GREEN "done"
+  FooterLine.status_fail   = outcome::FAIL_BOLD               # BOLD_RED "fail"
+  FooterLine.exit_code     = outcome::FAIL_BOLD               # RED "exit 1"
+  FooterLine.timing        = weight::L3                       # DIM "0.088s"
+
+# ─── SkipBanner ─────────────────────────────────
+# Renders: nothing to do (52 nodes cached, ...)
+# Axes: state × outcome::warn × temporality::cached
+
+  SkipBanner.label         = status::SKIP                     # YELLOW "nothing to do"
+  SkipBanner.detail        = weight::L3                       # DIM "(52 nodes...)"
+
+# ─── ChangedProbes ──────────────────────────────
+# Renders: △ 1 probe changed → re-executing
+# Axes: diagnostic × outcome::warn × state
+
+  ChangedProbes.icon       = icon::CHANGED
+  ChangedProbes.message    = status::CHANGED                  # YELLOW
+  ChangedProbes.detail     = weight::L2
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ 7. ESCALATION RULES — when weight shifts
+═══════════════════════════════════════════════════════════════════════════════
+
+# Default weight comes from: domain + temporality (see §1 catalog).
+# Escalation OVERRIDES the default weight upward. Never downward.
+
+┌──────────────────────────────────┬──────────┬──────────────────────────────┐
+│ Condition                        │ From → To│ Rationale                    │
+├──────────────────────────────────┼──────────┼──────────────────────────────┤
+│ outcome = fail                   │ L2 → L1  │ failures demand attention    │
+│ outcome = fail (from L3)         │ L3 → L1  │ even background items pop    │
+│ exit code != 0                   │ L3 → L1  │ non-zero exit is news        │
+│ ptree child exit != 0            │ L3 → L1  │ subprocess failure matters   │
+│ telemetry anomaly                │ L3 → L2  │ unusual value, not error     │
+│ warning prefix                   │ — → L1   │ warnings are structural      │
+│ error prefix                     │ — → L1   │ errors are structural        │
+│ NOT idempotent                   │ L2 → L1  │ idempotency breach is loud   │
+├──────────────────────────────────┼──────────┼──────────────────────────────┤
+│ temporality = cached             │ base→ L3 │ old data recedes (default)   │
+│ temporality = static             │ base→ L3 │ immutable context recedes    │
+│ temporality = live               │ base→ L2 │ happening now = readable     │
+└──────────────────────────────────┴──────────┴──────────────────────────────┘
+
+# Precedence: escalation > temporality default > domain default.
+# fail always wins. A cached stdout that somehow fails → L1 not L3.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ 8. ANNOTATED MOCKS — showing all 5 axes per element
+═══════════════════════════════════════════════════════════════════════════════
+
+# Each line annotated: [Domain, Phase, Outcome, Temporal, Weight]
+# This proves the system is complete — every element is resolvable.
+
+────────────────────────────────────────────────────────────────────────────
+ 8a. `besogne build` (store miss)
+────────────────────────────────────────────────────────────────────────────
+
+▸ build                     # [structure, build, —, —, L1] BOLD_MAGENTA
+  • parsed besogne.toml     # [structure, build, —, —, L3] DIM
+    (12ms)                  # [telemetry, —, —, —, L3] DIM
+  • expanded 2 → 38 nodes   # [structure, build, —, —, L3]
+    (8ms)                   # [telemetry, —, —, —, L3]
+  • lowered 44b 3s 5e       # [structure, build, —, —, L3]
+    (15ms)                  # [telemetry, —, —, —, L3]
+  • pinned 44 binaries      # [structure, build, —, —, L3]
+    (32 system, 1 nix)      # [identity, build, —, static, L3]
+    (89ms)                  # [telemetry, —, —, —, L3]
+  • emitted a1b2c3d4        # [structure, build, ok, —, L3]
+    (1.2MB, 45ms)           # [telemetry, —, —, —, L3]
+
+done 0.169s                 # [structure, —, ok, —, L1] BOLD_GREEN + [telemetry L3]
+
+────────────────────────────────────────────────────────────────────────────
+ 8b. `besogne run` — first run
+────────────────────────────────────────────────────────────────────────────
+
+▸ seal (3 nodes)                        # [structure, seal, —, —, L1] BOLD_BLUE
+  ✓ probed  env  HOME=/home/user        # [state, seal, ok, live, L2] GREEN icon
+                                        # [identity, seal, —, —, L2] YELLOW badge
+                                        # [output, seal, ok, live, L2] WHITE value
+  ✓ probed  file go.mod                 # [state, seal, ok, live, L2]
+                                        # [identity, seal, —, —, L2]
+  ✓ probed  src  .env (4 vars)          # [state, seal, ok, live, L2]
+                                        # [identity, seal, —, —, L2]
+
+▸ exec (2 nodes)                        # [structure, exec, —, —, L1] BOLD_CYAN
+  ▹ compile: echo compiling project     # [identity, exec, —, —, L1] name BOLD
+                                        # [identity, exec, —, —, L2] args WHITE
+    echo → /usr/bin/echo v9.4           # [identity, build, —, static, L2→L3] name L2, rest L3
+    compiling project                   # [output, exec, —, live, L2] WHITE
+  ✓ ok                                  # [state, exec, ok, live, L2] GREEN
+    ✓ idempotent                        # [diagnostic, exec, ok, live, L2] GREEN
+
+  ▹ link: echo linking artifacts        # [identity, exec, —, —, L1] + [L2]
+    echo → /usr/bin/echo v9.4           # [identity, build, —, static, L2→L3]
+    linking artifacts                   # [output, exec, —, live, L2]
+  ✓ ok                                  # [state, exec, ok, live, L2]
+    ✓ idempotent                        # [diagnostic, exec, ok, live, L2]
+
+done 0.088s                             # [structure, —, ok, —, L1] BOLD_GREEN
+  ⏱ 0.088s  ⚡ 0.01s user + 0.01s kernel  🧠 7.6MB  💾 4KB
+                                        # [telemetry, —, —, —, L3] all DIM_*
+
+────────────────────────────────────────────────────────────────────────────
+ 8c. `besogne run` — seal changed
+────────────────────────────────────────────────────────────────────────────
+
+▸ seal (3 nodes)                        # [structure, seal, —, —, L1] BOLD_BLUE
+  ∎ sealed  env  HOME=/home/user        # [state, seal, ok, cached, L3] BLUE→DIM_BLUE
+                                        # [identity, seal, —, cached, L3] DIM
+                                        # [output, seal, ok, cached, L3] DIM
+  △ changed file go.mod                 # [state, seal, warn, live, L2] YELLOW
+                                        # [identity, seal, —, live, L2] normal
+  ∎ sealed  src  .env (4 vars)          # [state, seal, ok, cached, L3] DIM_BLUE
+
+  △ 1 probe changed → re-executing     # [diagnostic, seal, warn, live, L2] YELLOW
+
+▸ exec (2 nodes)                        # [structure, exec, —, —, L1] BOLD_CYAN
+  ...                                   # (same as 8b)
+
+done 0.092s                             # [structure, —, ok, —, L1]
+
+# NOTE: sealed probes are [temporality=cached] → L3 (dim).
+# Changed probe is [temporality=live, outcome=warn] → L2 (visible).
+# This is the temporality axis at work!
+
+────────────────────────────────────────────────────────────────────────────
+ 8d. `besogne run` — command failure
+────────────────────────────────────────────────────────────────────────────
+
+▸ exec (2 nodes)                        # [structure, exec, —, —, L1] BOLD_CYAN
+  ▹ compile: go build ./...             # [identity, exec, —, —, L1] + [L2]
+    go → /nix/store/.../go v1.22        # [identity, build, —, static, L3]
+    main.go:42: undefined: foo          # [output, exec, —, live, L2] stderr
+  ✗ fail exit 1                         # [state, exec, fail, live, L1] RED BOLD ← escalated!
+                                        # [output, exec, fail, live, L1] exit code RED BOLD
+
+  ── diagnostic ──────────────────      # [structure, —, —, —, L1] SectionHeader
+  1 command failed: compile             # [diagnostic, exec, fail, live, L1] RED BOLD
+
+fail exit 1  0.234s                     # [structure, —, fail, —, L1] BOLD_RED
+  ⏱ 0.234s  ⚡ ...  🧠 42MB            # [telemetry, —, —, —, L3]
+
+# NOTE: exit code was L3 by default, but outcome=fail → escalation to L1.
+# stderr stays L2 (not escalated — it's output, user needs to read it).
+# The "fail" footer is L1 BOLD_RED — worst outcome colors everything.
+
+────────────────────────────────────────────────────────────────────────────
+ 8e. `besogne run --status`
+────────────────────────────────────────────────────────────────────────────
+
+# EVERYTHING in status view is [temporality=cached/static] → default L3.
+# Only section headers (L1) and exceptions break out of dim.
+
+build v58da61ed — Build the project     # [identity, —, —, static, L1] name BOLD
+                                        # [identity, —, —, static, L3] hash+desc DIM
+
+── execution ───────────────────────    # [structure, —, —, —, L1] BOLD
+                                        # Unified trace: DAG + processes + metrics
+├── build (44 nodes: 32 sys, 1 nix)     # [structure, build, —, static, L3] DIM_MAGENTA
+├── seal (3 nodes)                      # [structure, seal, —, cached, L3] DIM_BLUE
+│   ├── ∎ sealed  env  HOME            # [state, seal, ok, cached, L3] DIM_BLUE
+│   ├── ∎ sealed  file go.mod          # [state, seal, ok, cached, L3]
+│   └── ∎ sealed  src  .env            # [state, seal, ok, cached, L3]
+└── exec (2 nodes)  ⏱ 0.088s  🧠 7.6MB # [structure+telemetry, exec, cached, L3] aggregate on phase node
+    ├── tier 0
+    │   └── ∎ cached  cmd  compile  ✓ 0.003s  🧠 3.8MB  # [state+telemetry, exec, ok, cached, L3]
+    │       ├─ echo compiling project [0]  ⏱ 0.001s      # [telemetry, exec, ok, cached, L3] process
+    │       └─ echo (subshell) [0]  ⏱ 0.000s             # [telemetry, exec, —, cached, L3] process
+    └── tier 1
+        └── ∎ cached  cmd  link  ✓ 0.001s  🧠 3.8MB  ← compile  # [state+telemetry, cached, L3]
+            └─ echo linking artifacts [0]  ⏱ 0.001s              # [telemetry, cached, L3]
+
+  last run: passed 22s ago (0.088s)     # [state, —, ok, cached, L2] GREEN "passed"
+
+# KEY INSIGHT: DAG nodes, process children, and metrics are ONE tree.
+# Phase → Node → Process → Metrics at every depth. No separate sections.
+
+── resume ──────────────────────────    # [structure, —, —, —, L1] BOLD
+
+  ▹ compile: echo compiling project     # [identity, exec, —, cached, L1→L1] name stays BOLD
+    (ran 22s ago)                       # [telemetry, —, —, cached, L3] DIM
+    echo → /usr/bin/echo v9.4          # [identity, build, —, static, L3] DIM
+    compiling project                   # [output, exec, —, cached, L3] DIM ← cached!
+    ✓ idempotent                        # [diagnostic, exec, ok, cached, L2] GREEN (outcome keeps color)
+    ⏱ 0.003s  ⚡ ...  🧠 3.8MB         # [telemetry, —, —, —, L3] DIM
+
+  ▹ link: echo linking artifacts        # same pattern
+    (ran 22s ago)
+    echo → /usr/bin/echo v9.4
+    linking artifacts                   # [output, exec, —, cached, L3] DIM
+    ✓ idempotent                        # [diagnostic, exec, ok, cached, L2]
+    ⏱ 0.001s  ⚡ ...  🧠 3.8MB
+
+# KEY: stdout in resume is [temporality=cached] → L3 DIM.
+# In 8b (live run), same stdout is [temporality=live] → L2 WHITE.
+# SAME data, different temporality axis → different weight. That's the system.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ 9. AXIS RESOLUTION ALGORITHM
+═══════════════════════════════════════════════════════════════════════════════
+
+# Given an information atom, the renderer resolves its final appearance:
+
+  fn resolve(atom) → StyledString:
+    1. domain    = atom.domain        → selects TOKEN FAMILY
+    2. phase     = atom.phase         → selects PHASE HUE (or none)
+    3. outcome   = atom.outcome       → selects OUTCOME HUE (or none)
+    4. temporal  = atom.temporality   → sets DEFAULT WEIGHT
+    5. base_wt   = atom.base_weight   → from §1 catalog
+    6. esc_wt    = escalate(outcome, base_wt)  → apply §7 rules
+    7. final_wt  = max(esc_wt, temporal_default)  → final weight
+    8. color     = pick_color(domain, phase, outcome, final_wt)
+    9. text      = pick_text(domain, atom)
+    return styled(color + weight_modifier(final_wt), text)
+
+  fn pick_color(domain, phase, outcome, weight):
+    match domain:
+      identity  → node::{type} color, dimmed if weight=L3
+      state     → status::{status} composite color
+      output    → no color (just weight modifier)
+      telemetry → telemetry::{category} scoped color
+      structure → no color (just weight)
+      diagnostic→ outcome::{FAIL|WARN} color
+
+  fn weight_modifier(weight):
+    L1 → BOLD
+    L2 → (none)
+    L3 → DIM
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ 10. IMPLEMENTED ARCHITECTURE
+═══════════════════════════════════════════════════════════════════════════════
+
+  src/output/
+    mod.rs                          # OutputRenderer trait (legacy, being replaced by views)
+    style/
+      mod.rs                        # re-exports, utilities (styled/dim/bold), L3 delegates
+      l1/
+        palette.rs                  # raw ANSI codes (no semantics)
+      l2/
+        phase.rs                    # axis: Phase enum + MAGENTA/BLUE/CYAN
+        outcome.rs                  # axis: Outcome enum + GREEN/YELLOW/RED
+        weight.rs                   # axis: Weight enum + BOLD/normal/DIM
+        temporality.rs              # axis: Temporality enum (live/cached/static → weight)
+        status.rs                   # composite: phase × outcome × temporality
+        node.rs                     # domain: identity — node type colors
+        telemetry.rs                # domain: telemetry — DIM_* scoped + icons
+        ptree.rs                    # domain: telemetry — process tree
+        diagnostic.rs               # domain: diagnostic — error/warn/hint/verify
+        label.rs                    # text: status labels
+        badge.rs                    # text: node type badges
+        phase_label.rs              # text: phase names
+        metric_label.rs             # text: metric labels
+        icon.rs                     # text: icons
+        layout.rs                   # text: indentation, bullets
+        message.rs                  # text: messages and hints
+      l3/
+        atoms/                      # L2 → String (no children)
+          status_badge.rs           #  " pinned " in status color
+          node_badge.rs             #  "bin" in node type color
+          exit_code.rs              #  "0" dim green / "1" bold red
+          binary_ref.rs             #  echo → /usr/bin/echo v9.4
+        items/                      # atoms → row/card (one line of content)
+          probe_item.rs             #  ✓ probed  env  HOME=/home/user
+          command_block.rs          #  ▹ compile: echo ... [stdout] ✓ ok
+          progress_step.rs          #  • parsed besogne.toml (12ms)
+          verify_result.rs          #  ✓ idempotent / ✗ NOT idempotent
+          changed_probes.rs         #  △ 1 probe changed → re-executing
+        sections/                   # items → structural frame
+          phase_banner.rs           #  ▸ build (44 nodes)
+          section_header.rs         #  ── tree ──────────────
+          footer_line.rs            #  done 0.088s / fail exit 1
+          skip_banner.rs            #  nothing to do (52 nodes cached, ...)
+          diag_block.rs             #  error: ... --> ... | ... = hint:
+        telemetry/                  # own visual subsystem (traces + metrics)
+          metric_line.rs            #  ⏱ 0.088s  ⚡ ...  🧠 7.6MB
+          execution_tree.rs         #  unified DAG + process tree + per-node metrics
+    views/
+      mod.rs                        # view module root
+      build.rs                      # BuildView: besogne build (single + multi)
+      run.rs                        # RunView: live execution (skip/first-run/changed/fail)
+      status.rs                     # StatusView: --status (execution + diagnostic)
+      list.rs                       # ListView: besogne list
+      check.rs                      # CheckView: besogne check
+      dump.rs                       # DumpView: --dump / --dump-internal
+
+# DEPENDENCY RULE (strict, never violated):
+#   Views → L3 only
+#   L3 sections → L3 items → L3 atoms, L3 telemetry → L3 atoms
+#   L3 → L2 only
+#   L2 → L1 only
+#   Views NEVER import L1 or L2 directly
+#   L3 NEVER imports L1 directly
+
+# VIEWS:
+#   build.rs   — PhaseBanner(build) → ProgressStep* → FooterLine
+#   run.rs     — Header? → Build? → Seal(ProbeItem*) → Exec(CommandBlock*) → Diag? → Footer+MetricLine
+#   status.rs  — Header → SectionHeader(execution) → ExecutionTree (DAG + output + processes + metrics) → SectionHeader(diagnostic)?
+#   list.rs    — manifest entries (name + description)
+#   check.rs   — validation results (DiagBlock on error)
+#   dump.rs    — IR dump (human or JSON)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ 11. VERBOSITY TABLE
+═══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────┬──────────┬───────────┬─────────────┐
+│ Component            │ Default  │ --verbose │ --status    │
+├──────────────────────┼──────────┼───────────┼─────────────┤
+│ Header               │ no*      │ yes       │ yes         │
+│ Build nodes          │ summary  │ all (L3)  │ collapsed   │
+│ Seal probes (cached) │ hidden   │ L3        │ in tree L3  │
+│ Seal probes (live)   │ L2       │ L2        │ in tree L3  │
+│ Command stdout live  │ L2       │ L2        │ —           │
+│ Command stdout cache │ hidden   │ L3        │ L3          │
+│ BinaryRef            │ L2+L3   │ L2+L3     │ L3          │
+│ EnvContext           │ hidden   │ L3        │ hidden      │
+│ VerifyResult         │ L2       │ L2        │ L2          │
+│ MetricLine per-cmd   │ hidden   │ L3        │ L3          │
+│ MetricLine aggregate │ footer   │ footer    │ telemetry   │
+│ ProcessTree          │ hidden   │ L3        │ hidden**    │
+│ DiagBlock            │ inline   │ inline    │ section     │
+│ FooterLine           │ L1       │ L1        │ hidden      │
+│ SectionHeaders       │ no       │ no        │ L1          │
+└──────────────────────┴──────────┴───────────┴─────────────┘
+
+* Hidden in BESOGNE_RUN_MODE  ** shown with --status --verbose
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ 12. OPEN QUESTIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+Q1. Build collapse threshold: >10 → count only?
+Q2. Telemetry anomaly thresholds: memory>500MB, time>30s?
+Q3. Emoji vs ASCII for metric icons?
+Q4. Should L3 node badges use DIM_* variant of node color, or just DIM?
+    (DIM_CYAN vs DIM for a binary badge at L3)
+    Proposal: DIM_* — preserves type hue even when receding.
+Q5. Diagnostic section: always present or only when non-empty?
+Q6. Retry display format?
+Q7. Should command name in resume (--status) stay L1 bold even though
+    temporality=cached? Currently: yes (name is structural, always L1).
+    The content dims, the heading doesn't.
+
+═══════════════════════════════════════════════════════════════════════════════
+ END OF MOCK v3
+═══════════════════════════════════════════════════════════════════════════════

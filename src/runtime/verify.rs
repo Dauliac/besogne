@@ -135,16 +135,16 @@ pub fn verify_command(
 pub fn format_verify_human(result: &VerifyResult) {
     if result.idempotent {
         eprintln!("  {} {} {}",
-            style::styled(style::verify::IDEMPOTENT, "\u{2713}"),
+            style::styled(style::diagnostic::IDEMPOTENT, "\u{2713}"),
             result.command_name,
-            style::styled(style::verify::IDEMPOTENT, style::message::IDEMPOTENT));
+            style::styled(style::diagnostic::IDEMPOTENT, style::message::IDEMPOTENT));
         return;
     }
 
     eprintln!("  {} {} {}",
-        style::styled(style::verify::NOT_IDEMPOTENT, "\u{2717}"),
+        style::styled(style::diagnostic::NOT_IDEMPOTENT, "\u{2717}"),
         result.command_name,
-        style::styled(style::verify::NOT_IDEMPOTENT, style::message::NOT_IDEMPOTENT));
+        style::styled(style::diagnostic::NOT_IDEMPOTENT, style::message::NOT_IDEMPOTENT));
 
     for diff in &result.diffs {
         match &diff.kind {
@@ -154,15 +154,15 @@ pub fn format_verify_human(result: &VerifyResult) {
             DiffKind::FileHash { run1, run2 } => {
                 eprintln!("    {} {} hash: {} → {}",
                     style::dim("~"), diff.label,
-                    style::styled(style::verify::NOT_IDEMPOTENT, run1),
-                    style::styled(style::verify::IDEMPOTENT, run2));
+                    style::styled(style::diagnostic::NOT_IDEMPOTENT, run1),
+                    style::styled(style::diagnostic::IDEMPOTENT, run2));
             }
             DiffKind::StdContent { run1, run2 } => {
                 eprintln!("    {} {}", style::dim("~"), diff.label);
                 format_line_diff(run1, run2);
             }
             DiffKind::ExecFailed { error } => {
-                eprintln!("    {} {} {}", style::styled(style::verify::NOT_IDEMPOTENT, "!"), diff.label, error);
+                eprintln!("    {} {} {}", style::styled(style::diagnostic::NOT_IDEMPOTENT, "!"), diff.label, error);
             }
         }
     }
@@ -183,10 +183,10 @@ fn format_line_diff(run1: &str, run2: &str) {
         total += 1;
         if shown >= MAX_DIFF_LINES { continue; }
         if !l1.is_empty() {
-            eprintln!("      {}", style::styled(style::verify::NOT_IDEMPOTENT, &format!("- {l1}")));
+            eprintln!("      {}", style::styled(style::diagnostic::NOT_IDEMPOTENT, &format!("- {l1}")));
         }
         if !l2.is_empty() {
-            eprintln!("      {}", style::styled(style::verify::IDEMPOTENT, &format!("+ {l2}")));
+            eprintln!("      {}", style::styled(style::diagnostic::IDEMPOTENT, &format!("+ {l2}")));
         }
         shown += 1;
     }

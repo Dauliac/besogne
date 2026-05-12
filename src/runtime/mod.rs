@@ -130,7 +130,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
             renderer.on_phase_end("seal");
         }
 
-        return execute_dag(&ir, all_vars, input_hash, &mut *renderer, &mut context, start, args.force, args.debug);
+        return execute_dag(&ir, all_vars, input_hash, &mut *renderer, &mut context, start, args.force, args.debug, &std::collections::HashSet::new());
     }
 
     // First run: show build phase (skip in run mode — compiler already showed it)
@@ -145,7 +145,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
 
     let all_variables = Mutex::new(flag_vars);
     let pre_hashes = Mutex::new(Vec::<String>::new());
-    let pre_failed = Mutex::new(false);
+    let pre_hard_failed = Mutex::new(false);
     let probe_results = Mutex::new(Vec::new());
 
     crossbeam::scope(|s| {
@@ -154,7 +154,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
             .map(|input| {
                 let all_vars = &all_variables;
                 let hashes = &pre_hashes;
-                let failed = &pre_failed;
+                let hard_failed = &pre_hard_failed;
                 let results = &probe_results;
 
                 s.spawn(move |_| {
@@ -164,7 +164,11 @@ pub fn run(ir: BesogneIR) -> ExitCode {
                         all_vars.lock().unwrap().extend(result.variables.clone());
                         hashes.lock().unwrap().push(result.hash.clone());
                     } else {
-                        *failed.lock().unwrap() = true;
+                        // Distinguish skip (on_missing=skip) from hard fail
+                        let is_skip = is_skip_on_missing(&input.node);
+                        if !is_skip {
+                            *hard_failed.lock().unwrap() = true;
+                        }
                     }
                 })
             })
@@ -175,9 +179,16 @@ pub fn run(ir: BesogneIR) -> ExitCode {
 
     let mut results = probe_results.into_inner().unwrap();
     results.sort_by(|a, b| a.0.id.0.cmp(&b.0.id.0));
+
+    // Collect skipped node IDs (on_missing=skip probes that failed)
+    let mut skipped_node_ids: std::collections::HashSet<ContentId> = std::collections::HashSet::new();
+
     for (input, result) in &results {
         let status = if result.success {
             output::ProbeStatus::Probed
+        } else if is_skip_on_missing(&input.node) {
+            skipped_node_ids.insert(input.id.clone());
+            output::ProbeStatus::Skipped
         } else {
             output::ProbeStatus::Failed
         };
@@ -185,7 +196,8 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     }
     renderer.on_phase_end("seal");
 
-    if *pre_failed.lock().unwrap() {
+    // Hard failures abort. Skips don't.
+    if *pre_hard_failed.lock().unwrap() {
         let wall_ms = start.elapsed().as_millis() as u64;
         renderer.on_summary(2, wall_ms);
         return ExitCode::from(2);
@@ -215,7 +227,6 @@ pub fn run(ir: BesogneIR) -> ExitCode {
                 changed.push(crate::output::input_label(input));
             }
         } else {
-            // New probe, not cached before
             changed.push(crate::output::input_label(input));
         }
     }
@@ -230,7 +241,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         }
     }
 
-    execute_dag(&ir, all_variables, input_hash, &mut *renderer, &mut context, start, args.force, args.debug)
+    execute_dag(&ir, all_variables, input_hash, &mut *renderer, &mut context, start, args.force, args.debug, &skipped_node_ids)
 }
 
 /// Compute the forward hash for a command: BLAKE3 of its parents' hashes.
@@ -375,6 +386,7 @@ fn execute_dag(
     start: Instant,
     force: bool,
     debug: bool,
+    skipped_seal_ids: &std::collections::HashSet<ContentId>,
 ) -> ExitCode {
     let (graph, _) = match dag::build_exec_dag(ir) {
         Ok(d) => d,
@@ -397,6 +409,36 @@ fn execute_dag(
     // Per-command dirty propagation: nodes in this set are forced to re-run
     // because an upstream command's persistent outputs changed.
     let mut dirty_set: std::collections::HashSet<petgraph::graph::NodeIndex> = std::collections::HashSet::new();
+
+    // Skip propagation: exec nodes whose seal-phase parents were skipped (on_missing: skip).
+    // Propagates transitively — if a parent is skipped, all descendants are skipped too.
+    let skip_set: std::collections::HashSet<petgraph::graph::NodeIndex> = {
+        let mut set = std::collections::HashSet::new();
+        if !skipped_seal_ids.is_empty() {
+            // Find exec nodes that have a skipped seal node as a parent
+            let input_by_id: HashMap<&ContentId, &ResolvedNode> = ir.nodes.iter()
+                .map(|n| (&n.id, n)).collect();
+            for node_idx in graph.node_indices() {
+                let content_id = &graph[node_idx];
+                if let Some(node) = input_by_id.get(content_id) {
+                    let has_skipped_parent = node.parents.iter()
+                        .any(|pid| skipped_seal_ids.contains(pid));
+                    if has_skipped_parent {
+                        // BFS: mark this node and all descendants as skipped
+                        let mut stack = vec![node_idx];
+                        while let Some(idx) = stack.pop() {
+                            if set.insert(idx) {
+                                for neighbor in graph.neighbors_directed(idx, petgraph::Direction::Outgoing) {
+                                    stack.push(neighbor);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        set
+    };
 
     // Build binary name → resolved path map from build-phase inputs
     let binary_paths: HashMap<String, String> = ir.nodes.iter()
@@ -472,6 +514,11 @@ fn execute_dag(
 
     for tier in &tiers {
         for &node_idx in tier {
+            // Skip propagation: if this node is in the skip set, don't execute
+            if skip_set.contains(&node_idx) {
+                continue;
+            }
+
             let content_id = &graph[node_idx];
             let input = match input_by_id.get(content_id) {
                 Some(i) => i,
@@ -944,6 +991,13 @@ fn has_side_effects(ir: &BesogneIR) -> bool {
     ir.nodes.iter().any(|i| matches!(&i.node,
         ResolvedNativeNode::Command { side_effects: true, .. }
     ))
+}
+
+/// Check if a node has on_missing: skip (meaning probe failure = skip, not abort).
+fn is_skip_on_missing(node: &ResolvedNativeNode) -> bool {
+    matches!(node, ResolvedNativeNode::Env {
+        on_missing: crate::ir::types::OnMissingResolved::Skip, ..
+    })
 }
 
 fn compute_besogne_hash(ir: &BesogneIR) -> String {
