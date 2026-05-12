@@ -642,7 +642,7 @@ impl OutputRenderer for HumanRenderer {
     }
 
     fn on_skip(&mut self, total_nodes: usize, ran_at: &str, duration_ms: u64) {
-        eprintln!("\n{} ({} nodes cached, ran {}, {:.3}s, use {} to show last run)",
+        eprintln!("{} ({} nodes cached, ran {}, {:.3}s, use {} to show last run)",
             styled(status::FRESH, label::NOTHING_TO_DO),
             total_nodes,
             format_relative_time(ran_at),
