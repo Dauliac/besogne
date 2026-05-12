@@ -121,42 +121,14 @@ pub fn run(ir: BesogneIR) -> ExitCode {
             // Persistent output drifted → fall through to re-execute
         }
 
-        // Cache valid but inputs changed → need to re-execute
-        // Show build phase only when not in run mode (compiler already showed it)
-        if !run_mode && !build_nodes.is_empty() {
-            renderer.on_phase_start("build", build_nodes.len());
-            renderer.on_build_pinned_summary(&build_nodes);
-            renderer.on_phase_end("build");
-        }
-
-        if !pre_nodes.is_empty() {
-            renderer.on_phase_start("seal", pre_nodes.len());
-            for input in &pre_nodes {
-                if let Some(cached) = context.get_probe(&input.id.0) {
-                    let result = probe::ProbeResult {
-                        success: true,
-                        hash: cached.hash.clone(),
-                        variables: cached.variables.clone(),
-                        error: None,
-                    };
-                    renderer.on_probe_result(input, &result, output::ProbeStatus::Sealed);
-                }
-            }
-            renderer.on_phase_end("seal");
-        }
-
+        // Build phase: never shown by runtime — compiler already showed it.
+        // Seal phase: all probes cached → skip display entirely.
+        // Go straight to exec DAG.
         return execute_dag(&ir, all_vars, input_hash, &mut *renderer, &mut context, start, args.force, args.debug, &std::collections::HashSet::new());
     }
 
-    // First run: show build phase (skip in run mode — compiler already showed it)
-    if !run_mode && !build_nodes.is_empty() {
-        renderer.on_phase_start("build", build_nodes.len());
-        renderer.on_build_pinned_summary(&build_nodes);
-        renderer.on_phase_end("build");
-    }
-
     // Full warmup: probe all seals in parallel
-    renderer.on_phase_start("seal", pre_nodes.len());
+    // Build phase never shown by runtime — compiler already showed it.
 
     let all_variables = Mutex::new(flag_vars);
     let pre_hashes = Mutex::new(Vec::<String>::new());
@@ -198,18 +170,32 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     // Collect skipped node IDs (on_missing=skip probes that failed)
     let mut skipped_node_ids: std::collections::HashSet<ContentId> = std::collections::HashSet::new();
 
-    for (input, result) in &results {
-        let status = if result.success {
-            output::ProbeStatus::Probed
-        } else if is_skip_on_missing(&input.node) {
-            skipped_node_ids.insert(input.id.clone());
-            output::ProbeStatus::Skipped
-        } else {
-            output::ProbeStatus::Failed
-        };
-        renderer.on_probe_result(input, result, status);
+    // Only show seal phase if there are fresh (non-cached) probes
+    let has_fresh_probes = results.iter().any(|(input, _)| {
+        context.get_probe(&input.id.0).is_none()
+    }) || results.iter().any(|(_, r)| !r.success);
+
+    if has_fresh_probes && !pre_nodes.is_empty() {
+        renderer.on_phase_start("seal", pre_nodes.len());
+        for (input, result) in &results {
+            let status = if result.success {
+                output::ProbeStatus::Probed
+            } else if is_skip_on_missing(&input.node) {
+                output::ProbeStatus::Skipped
+            } else {
+                output::ProbeStatus::Failed
+            };
+            renderer.on_probe_result(input, result, status);
+        }
+        renderer.on_phase_end("seal");
     }
-    renderer.on_phase_end("seal");
+
+    // Collect skipped node IDs regardless of display
+    for (input, result) in &results {
+        if !result.success && is_skip_on_missing(&input.node) {
+            skipped_node_ids.insert(input.id.clone());
+        }
+    }
 
     // Hard failures abort. Skips don't.
     if *pre_hard_failed.lock().unwrap() {
