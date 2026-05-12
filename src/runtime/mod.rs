@@ -382,7 +382,7 @@ fn execute_dag(
                     // Idempotency verification: re-run if first run + not side_effects + succeeded
                     if first_run && !side_effects && result.exit_code == 0 {
                         eprintln!("    {}", output::style::styled(
-                            output::style::verify::VERIFYING,
+                            output::style::diagnostic::VERIFYING,
                             output::style::message::VERIFY_RUN2,
                         ));
                         let vresult = verify::verify_command(
@@ -411,6 +411,29 @@ fn execute_dag(
                         if comm.chars().all(|c| c.is_ascii_hexdigit()) { continue; }
                         if proc.cmdline.contains("besogne") { continue; }
                         undeclared_binaries.insert(comm.clone());
+                    }
+
+                    // Detect undeclared deps via preload interposer
+                    if let Some(ref preload) = result.preload {
+                        // Undeclared env vars
+                        let undeclared_env = tracer::preload::find_undeclared_env(
+                            &preload.accessed_env, &declared_env,
+                        );
+                        // Undeclared binaries (from execve tracking — more precise than /proc comm)
+                        let undeclared_bins = tracer::preload::find_undeclared_binaries(
+                            &preload.executed_binaries, &declared_binaries,
+                        );
+                        if !undeclared_bins.is_empty() || !undeclared_env.is_empty() {
+                            renderer.on_undeclared_deps(&undeclared_bins, &undeclared_env);
+                        }
+                    } else if !result.accessed_env.is_empty() {
+                        // Fallback to pipe-based env tracking
+                        let undeclared = tracer::envtrack::find_undeclared(
+                            &result.accessed_env, &declared_env,
+                        );
+                        if !undeclared.is_empty() {
+                            renderer.on_undeclared_deps(&[], &undeclared);
+                        }
                     }
 
                     // Cache command output for replay on future skips.
@@ -538,7 +561,7 @@ fn execute_dag(
         context.non_idempotent = non_idempotent.clone();
         if !non_idempotent.is_empty() {
             eprintln!("\n  {} {}",
-                output::style::styled(output::style::verify::NOT_IDEMPOTENT, output::style::message::NOT_IDEMPOTENT),
+                output::style::styled(output::style::diagnostic::NOT_IDEMPOTENT, output::style::message::NOT_IDEMPOTENT),
                 output::style::dim(&non_idempotent.join(", ")));
             eprintln!("  {}", output::style::dim("add side_effects = true to these commands if intentional"));
         }

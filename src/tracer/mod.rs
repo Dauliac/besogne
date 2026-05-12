@@ -5,7 +5,10 @@
 /// then reaps each one individually with wait4(-1) to get per-process rusage.
 /// A background /proc scanner captures command names and ppid for tree structure.
 
-use std::collections::HashMap;
+pub mod envtrack;
+pub mod preload;
+
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 
 /// Per-process metrics collected via wait4 rusage + /proc scanning
@@ -65,6 +68,10 @@ pub struct CommandResult {
     pub events: Vec<TraceEvent>,
     /// Per-process metrics for the entire process tree (root + all descendants)
     pub process_tree: Vec<ProcessMetrics>,
+    /// Env vars accessed by the command (via LD_PRELOAD tracking). Empty if tracking unavailable.
+    pub accessed_env: HashSet<String>,
+    /// Full preload results (exec'd binaries, connections, etc.)
+    pub preload: Option<preload::PreloadResults>,
 }
 
 /// Execute a command with wait4 for rusage metrics collection
@@ -271,6 +278,12 @@ fn execute_with_wait4(
     // so we can wait4 them and collect their rusage.
     unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); }
 
+    // Set up env tracking (LD_PRELOAD interposer)
+    let env_tracker = envtrack::EnvTracker::setup();
+
+    // Set up shared memory preload (fast telemetry: exec, env, connect)
+    let preload_ctx = preload::Preload::setup();
+
     // Create pipes for stdout and stderr
     let (stdout_read, stdout_write) = pipe().map_err(|e| format!("pipe failed: {e}"))?;
     let (stderr_read, stderr_write) = pipe().map_err(|e| format!("pipe failed: {e}"))?;
@@ -315,6 +328,16 @@ fn execute_with_wait4(
 
             for (key, val) in env {
                 std::env::set_var(key, val);
+            }
+
+            // Set up preload interposer (shared memory ring buffer)
+            if let Some(ref ctx) = preload_ctx {
+                std::env::set_var(preload::Preload::preload_env_var(), &ctx.lib_path);
+                std::env::set_var("BESOGNE_PRELOAD_FD", ctx.shm_fd.to_string());
+            } else if let Some(ref tracker) = env_tracker {
+                // Fallback to pipe-based env tracking if preload unavailable
+                std::env::set_var(envtrack::EnvTracker::preload_var(), &tracker.lib_path);
+                std::env::set_var("BESOGNE_ENVTRACK_FD", tracker.write_fd.to_string());
             }
 
             let c_args: Vec<std::ffi::CString> = args
@@ -520,6 +543,12 @@ fn execute_with_wait4(
             },
         ],
         process_tree,
+        accessed_env: if preload_ctx.is_some() {
+            HashSet::new() // preload results have env data
+        } else {
+            env_tracker.map(|t| t.collect()).unwrap_or_default()
+        },
+        preload: preload_ctx.map(|p| p.collect()),
     })
 }
 
@@ -583,6 +612,10 @@ fn execute_simple(
         cmd.current_dir(dir);
     }
 
+    // Set up tracking
+    let env_tracker = envtrack::EnvTracker::setup();
+    let preload_ctx = preload::Preload::setup();
+
     match env_isolation {
         crate::ir::EnvSandboxResolved::Strict => {
             cmd.env_clear();
@@ -591,6 +624,15 @@ fn execute_simple(
         crate::ir::EnvSandboxResolved::Inherit => {
             cmd.envs(env);
         }
+    }
+
+    // Inject preload interposer
+    if let Some(ref ctx) = preload_ctx {
+        cmd.env(preload::Preload::preload_env_var(), &ctx.lib_path);
+        cmd.env("BESOGNE_PRELOAD_FD", ctx.shm_fd.to_string());
+    } else if let Some(ref tracker) = env_tracker {
+        cmd.env(envtrack::EnvTracker::preload_var(), &tracker.lib_path);
+        cmd.env("BESOGNE_ENVTRACK_FD", tracker.write_fd.to_string());
     }
 
     cmd.stdout(Stdio::piped());
@@ -619,5 +661,11 @@ fn execute_simple(
         stderr: output.stderr,
         events: vec![],
         process_tree: vec![],
+        accessed_env: if preload_ctx.is_some() {
+            HashSet::new()
+        } else {
+            env_tracker.map(|t| t.collect()).unwrap_or_default()
+        },
+        preload: preload_ctx.map(|p| p.collect()),
     })
 }
