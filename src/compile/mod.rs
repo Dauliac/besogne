@@ -16,11 +16,17 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, Stri
     let build_start = Instant::now();
 
     use crate::output::style::l3;
+    use crate::output::style::phase::Phase as StylePhase;
 
     // 1. Parse manifest
     let step = Instant::now();
     let mut manifest = manifest::load_manifest(manifest_path)?;
     let parse_ms = step.elapsed().as_millis();
+
+    // Show phase banner after parsing so we know the node count
+    let total_nodes = manifest.nodes.len();
+    eprintln!("\n{}", l3::sections::phase_banner::render(
+        StylePhase::Build, total_nodes, None));
     eprintln!("{}", l3::items::progress_step::render(
         &format!("parsed {} ({}ms)", manifest_path.display(), parse_ms)));
 
@@ -75,6 +81,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, Stri
         let total_ms = build_start.elapsed().as_millis();
         eprintln!("{}", l3::items::progress_step::render(
             &format!("store hit {} ({}ms total)", &cache_hash[..16], total_ms)));
+        eprintln!("  {}", l3::sections::footer_line::render(0, total_ms as u64));
         return Ok(store_binary);
     }
 
@@ -97,6 +104,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, Stri
     let total_ms = build_start.elapsed().as_millis();
     eprintln!("{}", l3::items::progress_step::render(
         &format!("emitted {} ({}, {}ms, {}ms total)", &cache_hash[..16], format_size(binary_size), emit_ms, total_ms)));
+    eprintln!("  {}", l3::sections::footer_line::render(0, total_ms as u64));
 
     Ok(store_binary)
 }
@@ -129,8 +137,16 @@ pub fn compile_quiet(manifest_path: &Path) -> Result<PathBuf, String> {
 
     let total_ms = build_start.elapsed().as_millis();
     let node_summary = build_node_summary(&ir);
-    eprintln!("{}", crate::output::style::l3::items::progress_step::render(
-        &format!("built {node_summary} ({}ms)", total_ms)));
+    {
+        use crate::output::style::l3;
+        use crate::output::style::phase::Phase as StylePhase;
+        let total_nodes = ir.nodes.len();
+        eprintln!("{}", l3::sections::phase_banner::render(
+            StylePhase::Build, total_nodes, None));
+        eprintln!("{}", l3::items::progress_step::render(
+            &format!("built {node_summary} ({}ms)", total_ms)));
+        eprintln!("  {}", l3::sections::footer_line::render(0, total_ms as u64));
+    }
 
     Ok(store_bin)
 }
