@@ -15,14 +15,14 @@ use std::time::Instant;
 pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, String> {
     let build_start = Instant::now();
 
+    use crate::output::style::l3;
+
     // 1. Parse manifest
     let step = Instant::now();
     let mut manifest = manifest::load_manifest(manifest_path)?;
     let parse_ms = step.elapsed().as_millis();
-    eprintln!("  {} parsed {} ({}ms)",
-        style::styled(style::status::PROBED, "•"),
-        style::dim(&manifest_path.display().to_string()),
-        parse_ms);
+    eprintln!("{}", l3::items::progress_step::render(
+        &format!("parsed {} ({}ms)", manifest_path.display(), parse_ms)));
 
     // 1b. Expand components → native inputs
     let component_count = manifest.nodes.values()
@@ -34,9 +34,8 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, Stri
         let expand_ms = step.elapsed().as_millis();
         let produced = expanded.len();
         manifest.nodes = expanded;
-        eprintln!("  {} expanded {} component → {} node ({}ms)",
-            style::styled(style::status::PROBED, "•"),
-            component_count, produced, expand_ms);
+        eprintln!("{}", l3::items::progress_step::render(
+            &format!("expanded {} component → {} nodes ({}ms)", component_count, produced, expand_ms)));
     }
 
     // 2. Lower manifest to IR (resolve types, compute hashes)
@@ -44,18 +43,16 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, Stri
     let mut ir = lower::lower_manifest(&manifest, manifest_path)?;
     let lower_ms = step.elapsed().as_millis();
     let node_summary = build_node_summary(&ir);
-    eprintln!("  {} lowered {node_summary} ({}ms)",
-        style::styled(style::status::PROBED, "•"),
-        lower_ms);
+    eprintln!("{}", l3::items::progress_step::render(
+        &format!("lowered {node_summary} ({}ms)", lower_ms)));
 
     // 2b. Build-time binary resolution — shift-left validation
     let step = Instant::now();
     let pin_result = resolve_build_binaries_inner(&mut ir, true);
     let pin_ms = step.elapsed().as_millis();
     let pin_summary = build_pin_summary(&ir);
-    eprintln!("  {} pinned {pin_summary} ({}ms)",
-        style::styled(style::status::PINNED, "•"),
-        pin_ms);
+    eprintln!("{}", l3::items::progress_step::render(
+        &format!("pinned {pin_summary} ({}ms)", pin_ms)));
     pin_result?;
 
     // 3. Check content-addressed store
@@ -76,10 +73,8 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, Stri
                 .map_err(|e| format!("cannot set permissions: {e}"))?;
         }
         let total_ms = build_start.elapsed().as_millis();
-        eprintln!("  {} store hit {} ({}ms total)",
-            style::styled(style::status::SEALED, "•"),
-            style::dim(&cache_hash[..16]),
-            total_ms);
+        eprintln!("{}", l3::items::progress_step::render(
+            &format!("store hit {} ({}ms total)", &cache_hash[..16], total_ms)));
         return Ok(store_binary);
     }
 
@@ -100,12 +95,8 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, Stri
 
     let binary_size = std::fs::metadata(&store_binary).ok().map(|m| m.len()).unwrap_or(0);
     let total_ms = build_start.elapsed().as_millis();
-    eprintln!("  {} emitted {} ({}, {}ms, {}ms total)",
-        style::styled(style::status::PROBED, "•"),
-        style::dim(&cache_hash[..16]),
-        format_size(binary_size),
-        emit_ms,
-        total_ms);
+    eprintln!("{}", l3::items::progress_step::render(
+        &format!("emitted {} ({}, {}ms, {}ms total)", &cache_hash[..16], format_size(binary_size), emit_ms, total_ms)));
 
     Ok(store_binary)
 }
@@ -138,9 +129,8 @@ pub fn compile_quiet(manifest_path: &Path) -> Result<PathBuf, String> {
 
     let total_ms = build_start.elapsed().as_millis();
     let node_summary = build_node_summary(&ir);
-    eprintln!("  {} built {node_summary} ({}ms)",
-        style::styled(style::status::PROBED, "•"),
-        total_ms);
+    eprintln!("{}", crate::output::style::l3::items::progress_step::render(
+        &format!("built {node_summary} ({}ms)", total_ms)));
 
     Ok(store_bin)
 }
