@@ -231,7 +231,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
             changed.push(crate::output::input_label(input));
         }
     }
-    if !changed.is_empty() {
+    if !changed.is_empty() && !args.force {
         renderer.on_changed_probes(&changed);
     }
 
@@ -500,7 +500,7 @@ fn execute_dag(
 
     // Idempotency verification: on first run, re-run each command (except side_effects)
     // to check whether outputs are deterministic.
-    let first_run = context.verified_hash.is_none();
+    let first_run = force || context.verified_hash.is_none();
     let mut non_idempotent: Vec<String> = Vec::new();
 
     let input_by_id: HashMap<_, _> = ir
