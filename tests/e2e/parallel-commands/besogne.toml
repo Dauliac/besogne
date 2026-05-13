@@ -1,0 +1,80 @@
+name = "parallel-commands"
+description = "Two parallel commands with interleaved output (same tier)"
+
+[nodes."coreutils/shell"]
+type = "component"
+
+[nodes.setup]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "mkdir -p results"]
+
+[nodes.setup-exit]
+type = "std"
+stream = "exit_code"
+expect = "0"
+parents = ["setup"]
+
+# worker-a and worker-b are in the same tier (both depend on setup-exit)
+# They run in parallel and produce interleaved output
+
+[nodes.worker-a]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "for i in 1 2 3 4 5; do echo \"[A] step $i\"; sleep 0.1; done; echo done-a > results/a.txt"]
+parents = ["setup-exit"]
+
+[nodes.worker-a-exit]
+type = "std"
+stream = "exit_code"
+expect = "0"
+parents = ["worker-a"]
+
+[nodes.worker-a-stdout]
+type = "std"
+stream = "stdout"
+contains = ["[A] step 5"]
+parents = ["worker-a"]
+
+[nodes.worker-b]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "for i in 1 2 3 4 5; do echo \"[B] step $i\"; sleep 0.1; done; echo done-b > results/b.txt"]
+parents = ["setup-exit"]
+
+[nodes.worker-b-exit]
+type = "std"
+stream = "exit_code"
+expect = "0"
+parents = ["worker-b"]
+
+[nodes.worker-b-stdout]
+type = "std"
+stream = "stdout"
+contains = ["[B] step 5"]
+parents = ["worker-b"]
+
+# merge waits for both workers
+[nodes.merge]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "cat results/a.txt results/b.txt"]
+parents = ["worker-a-exit", "worker-b-exit"]
+
+[nodes.merge-stdout]
+type = "std"
+stream = "stdout"
+contains = ["done-a", "done-b"]
+parents = ["merge"]
+
+[nodes.result-a]
+type = "file"
+path = "results/a.txt"
+phase = "exec"
+parents = ["worker-a"]
+
+[nodes.result-b]
+type = "file"
+path = "results/b.txt"
+phase = "exec"
+parents = ["worker-b"]
