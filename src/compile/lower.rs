@@ -73,6 +73,9 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
     // Validate script-as-command patterns: files used as command first args
     validate_script_commands(&resolved_nodes, &metadata.workdir)?;
 
+    // Validate node composition rules (e.g., std must be child of command)
+    validate_node_compositions(&resolved_nodes)?;
+
     // Sort nodes by content ID for deterministic serialization.
     // HashMap iteration order is non-deterministic — without sorting,
     // the same manifest produces different IR JSON → different binary hash.
@@ -219,7 +222,7 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
                 select: s.select.clone(),
                 sealed_env: None,
             };
-            let phase = s.phase.clone().unwrap_or(Phase::Seal);
+            let phase = s.phase.clone().unwrap_or(Phase::Exec);
             let id = ContentId::from_content("source", key, key.as_bytes());
             (native, phase, id)
         }
@@ -857,54 +860,151 @@ fn lower_retry(retry: &Option<manifest::RetryConfig>) -> Result<Option<RetryReso
     }))
 }
 
-/// Validate node compositions: reject invalid parent→child relationships.
+/// Validate node compositions: reject impossible relationships.
 ///
-/// Rule: **Only `Command` nodes can have `Std` children.**
-/// A `std` node probes command stdout/stderr/exit_code — it makes no sense
-/// as a child of env, file, binary, service, etc.
+/// Rules enforced:
+/// 1. `std` stream must be one of: stdout, stderr, exit_code, stdin
+/// 2. `std(stdout/stderr/exit_code)` must have exactly 1 command parent
+/// 3. `std(stdin)` must have 0 parents (stdin comes from binary input)
+/// 4. `source` must be exec phase (needs DAG ordering for env var delivery)
 fn validate_node_compositions(nodes: &[ResolvedNode]) -> Result<(), String> {
     let node_by_id: HashMap<&ContentId, &ResolvedNode> = nodes.iter()
         .map(|n| (&n.id, n)).collect();
 
     let mut errors = Vec::new();
+    let valid_streams = ["stdout", "stderr", "exit_code", "stdin"];
 
     for node in nodes {
-        if let ResolvedNativeNode::Std { stream, .. } = &node.node {
-            let node_key = node.id.0.split(':').nth(1).unwrap_or("?");
+        let node_key = node.id.0.split(':').nth(1).unwrap_or("?");
 
-            for parent_id in &node.parents {
-                if let Some(parent) = node_by_id.get(parent_id) {
-                    if !matches!(&parent.node, ResolvedNativeNode::Command { .. }) {
-                        let parent_type = match &parent.node {
-                            ResolvedNativeNode::Env { .. } => "env",
-                            ResolvedNativeNode::File { .. } => "file",
-                            ResolvedNativeNode::Binary { .. } => "binary",
-                            ResolvedNativeNode::Service { .. } => "service",
-                            ResolvedNativeNode::Dns { .. } => "dns",
-                            ResolvedNativeNode::Metric { .. } => "metric",
-                            ResolvedNativeNode::Platform { .. } => "platform",
-                            ResolvedNativeNode::Source { .. } => "source",
-                            ResolvedNativeNode::Std { .. } => "std",
-                            ResolvedNativeNode::Command { .. } => unreachable!(),
-                        };
-                        let parent_key = parent.id.0.split(':').nth(1).unwrap_or("?");
+        match &node.node {
+            ResolvedNativeNode::Std { stream, .. } => {
+                // Rule 1: stream must be a known value
+                if !valid_streams.contains(&stream.as_str()) {
+                    let header = style::error_diag(&format!(
+                        "unknown stream '{stream}' in std node '{node_key}'",
+                    ));
+                    let body = DiagBuilder::new()
+                        .location(&format!("manifest [nodes.{node_key}]"))
+                        .blank()
+                        .code(&format!("stream = \"{stream}\""))
+                        .blank()
+                        .note("valid streams are: stdout, stderr, exit_code, stdin")
+                        .build();
+                    errors.push(format!("{header}\n{body}"));
+                    continue;
+                }
+
+                if stream == "stdin" {
+                    // Rule 3: stdin std must have 0 parents
+                    if !node.parents.is_empty() {
+                        let parent_keys: Vec<String> = node.parents.iter()
+                            .map(|pid| node_by_id.get(pid)
+                                .map(|p| p.id.0.split(':').nth(1).unwrap_or("?").to_string())
+                                .unwrap_or_else(|| "?".to_string()))
+                            .collect();
                         let header = style::error_diag(&format!(
-                            "std node '{}' cannot be child of {} node '{}'",
-                            node_key, parent_type, parent_key,
+                            "stdin std node '{node_key}' cannot have parents",
+                        ));
+                        let body = DiagBuilder::new()
+                            .location(&format!("manifest [nodes.{node_key}]"))
+                            .blank()
+                            .code("stream = \"stdin\"")
+                            .code(&format!("parents = {:?}", parent_keys))
+                            .blank()
+                            .note("stdin comes from binary input, not from a parent node")
+                            .hint("remove the parents field from this stdin node")
+                            .build();
+                        errors.push(format!("{header}\n{body}"));
+                    }
+                } else {
+                    // stdout/stderr/exit_code rules
+
+                    // Rule 2a: must have at least 1 parent
+                    if node.parents.is_empty() {
+                        let header = style::error_diag(&format!(
+                            "std node '{node_key}' has no parents",
                         ));
                         let body = DiagBuilder::new()
                             .location(&format!("manifest [nodes.{node_key}]"))
                             .blank()
                             .code(&format!("stream = \"{stream}\""))
-                            .code(&format!("parents = [\"{parent_key}\"]"))
                             .blank()
-                            .note(&format!("'{parent_type}' nodes do not produce stdout/stderr/exit_code"))
-                            .hint("std nodes can only be children of command nodes")
+                            .note(&format!("'{stream}' must be captured from a command"))
+                            .hint("add parents = [\"<command-name>\"] to specify the source command")
+                            .build();
+                        errors.push(format!("{header}\n{body}"));
+                        continue;
+                    }
+
+                    // Rule 2b: all parents must be commands
+                    let mut command_count = 0;
+                    for parent_id in &node.parents {
+                        if let Some(parent) = node_by_id.get(parent_id) {
+                            if matches!(&parent.node, ResolvedNativeNode::Command { .. }) {
+                                command_count += 1;
+                            } else {
+                                let parent_type = node_type_name(&parent.node);
+                                let parent_key = parent.id.0.split(':').nth(1).unwrap_or("?");
+                                let header = style::error_diag(&format!(
+                                    "std node '{node_key}' cannot be child of {parent_type} node '{parent_key}'",
+                                ));
+                                let body = DiagBuilder::new()
+                                    .location(&format!("manifest [nodes.{node_key}]"))
+                                    .blank()
+                                    .code(&format!("stream = \"{stream}\""))
+                                    .code(&format!("parents = [\"{parent_key}\"]"))
+                                    .blank()
+                                    .note(&format!("'{parent_type}' nodes do not produce stdout/stderr/exit_code"))
+                                    .hint("std nodes can only be children of command nodes")
+                                    .build();
+                                errors.push(format!("{header}\n{body}"));
+                            }
+                        }
+                    }
+
+                    // Rule 2c: exactly 1 command parent (no ambiguity)
+                    if command_count > 1 {
+                        let header = style::error_diag(&format!(
+                            "std node '{node_key}' has {command_count} command parents (ambiguous)",
+                        ));
+                        let body = DiagBuilder::new()
+                            .location(&format!("manifest [nodes.{node_key}]"))
+                            .blank()
+                            .code(&format!("stream = \"{stream}\""))
+                            .blank()
+                            .note(&format!("cannot determine which command's {stream} to capture"))
+                            .hint("std nodes must have exactly one command parent")
                             .build();
                         errors.push(format!("{header}\n{body}"));
                     }
                 }
             }
+
+            ResolvedNativeNode::Source { .. } => {
+                // Rule 4: source must be exec phase
+                if node.phase != Phase::Exec {
+                    let phase_str = match node.phase {
+                        Phase::Build => "build",
+                        Phase::Seal => "seal",
+                        Phase::Exec => unreachable!(),
+                    };
+                    let header = style::error_diag(&format!(
+                        "source node '{node_key}' must be exec phase (found '{phase_str}')",
+                    ));
+                    let body = DiagBuilder::new()
+                        .location(&format!("manifest [nodes.{node_key}]"))
+                        .blank()
+                        .code(&format!("phase = \"{phase_str}\""))
+                        .blank()
+                        .note("source nodes participate in the exec DAG for proper ordering")
+                        .hint("remove the phase field (defaults to exec) or set phase = \"exec\"")
+                        .build();
+                    errors.push(format!("{header}\n{body}"));
+                }
+            }
+
+            _ => {}
         }
     }
 
@@ -912,6 +1012,21 @@ fn validate_node_compositions(nodes: &[ResolvedNode]) -> Result<(), String> {
         Ok(())
     } else {
         Err(errors.join("\n\n"))
+    }
+}
+
+fn node_type_name(node: &ResolvedNativeNode) -> &'static str {
+    match node {
+        ResolvedNativeNode::Env { .. } => "env",
+        ResolvedNativeNode::File { .. } => "file",
+        ResolvedNativeNode::Binary { .. } => "binary",
+        ResolvedNativeNode::Service { .. } => "service",
+        ResolvedNativeNode::Dns { .. } => "dns",
+        ResolvedNativeNode::Metric { .. } => "metric",
+        ResolvedNativeNode::Platform { .. } => "platform",
+        ResolvedNativeNode::Source { .. } => "source",
+        ResolvedNativeNode::Std { .. } => "std",
+        ResolvedNativeNode::Command { .. } => "command",
     }
 }
 

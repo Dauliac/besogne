@@ -92,6 +92,15 @@ pub fn run(ir: BesogneIR) -> ExitCode {
                 hash_parts.push(cached.hash.clone());
             }
         }
+        // Include exec-phase source hashes for cache invalidation
+        for node in ir.nodes.iter().filter(|n| n.phase == Phase::Exec && matches!(&n.node, ResolvedNativeNode::Source { .. })) {
+            let result = probe::probe_input(&node.node);
+            if result.success {
+                hash_parts.push(result.hash.clone());
+                all_vars.extend(result.variables.clone());
+                context.set_probe(node.id.0.clone(), result.hash, result.variables);
+            }
+        }
 
         hash_parts.sort();
         let input_hash = blake3::hash(hash_parts.join(":").as_bytes())
@@ -204,16 +213,40 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         return ExitCode::from(2);
     }
 
-    let all_variables = all_variables.into_inner().unwrap();
+    let mut all_variables = all_variables.into_inner().unwrap();
 
     let mut hash_parts = pre_hashes.into_inner().unwrap();
+
+    // Probe exec-phase source nodes eagerly so their hashes contribute to
+    // input_hash (cache invalidation) and their variables are available to commands.
+    let exec_sources: Vec<&ResolvedNode> = ir.nodes.iter()
+        .filter(|n| n.phase == Phase::Exec && matches!(&n.node, ResolvedNativeNode::Source { .. }))
+        .collect();
+    for source in &exec_sources {
+        let result = probe::probe_input(&source.node);
+        if result.success {
+            hash_parts.push(result.hash.clone());
+            all_variables.extend(result.variables.clone());
+            context.set_probe(source.id.0.clone(), result.hash, result.variables);
+        }
+    }
+
     hash_parts.sort();
     let input_hash = blake3::hash(hash_parts.join(":").as_bytes())
         .to_hex()
         .to_string();
 
     if !args.force && !has_side_effects(&ir) && context.can_skip(&input_hash) {
-        replay_cached_commands(&ir, &context, &mut *renderer, &all_variables);
+        // Load exec-phase source variables from cache for replay context
+        let mut replay_vars = all_variables.clone();
+        for node in ir.nodes.iter().filter(|n| n.phase == Phase::Exec) {
+            if matches!(&node.node, ResolvedNativeNode::Source { .. }) {
+                if let Some(cached) = context.get_probe(&node.id.0) {
+                    replay_vars.extend(cached.variables.clone());
+                }
+            }
+        }
+        replay_cached_commands(&ir, &context, &mut *renderer, &replay_vars);
         let wall_ms = start.elapsed().as_millis() as u64;
         renderer.on_summary(0, wall_ms);
         return ExitCode::SUCCESS;
@@ -380,7 +413,7 @@ fn determine_command_mode(
 /// Execute the exec-phase DAG
 fn execute_dag(
     ir: &BesogneIR,
-    all_variables: HashMap<String, String>,
+    mut all_variables: HashMap<String, String>,
     input_hash: String,
     renderer: &mut dyn output::OutputRenderer,
     context: &mut ContextCache,
@@ -767,8 +800,16 @@ fn execute_dag(
                 }
 
                 _ => {
+                    // Source nodes are probed eagerly before the DAG loop (for input_hash).
+                    if matches!(&input.node, ResolvedNativeNode::Source { .. }) {
+                        continue;
+                    }
                     let result = probe::probe_input(&input.node);
                     if result.success {
+                        // Inject probe variables for downstream commands
+                        if !result.variables.is_empty() {
+                            all_variables.extend(result.variables.clone());
+                        }
                         // Probe succeeded — cache the hash
                         context.set_probe(input.id.0.clone(), result.hash.clone(), result.variables.clone());
                         renderer.on_probe_result(input, &result, output::ProbeStatus::Probed);
