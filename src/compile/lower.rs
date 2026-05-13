@@ -5,8 +5,9 @@ use std::collections::{HashMap, HashSet};
 
 /// Lower a parsed manifest into the intermediate representation
 pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::Path) -> Result<BesogneIR, String> {
-    // Version is the content hash of the manifest — deterministic, no user-specified version
-    let manifest_json = serde_json::to_vec(manifest)
+    // Version is the content hash of the manifest — deterministic, no user-specified version.
+    // Serialize to canonical JSON with sorted keys to avoid HashMap ordering non-determinism.
+    let manifest_json = canonical_json(manifest)
         .map_err(|e| format!("cannot serialize manifest for hashing: {e}"))?;
     let version = blake3::hash(&manifest_json).to_hex()[..16].to_string();
 
@@ -71,6 +72,11 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
 
     // Validate script-as-command patterns: files used as command first args
     validate_script_commands(&resolved_nodes, &metadata.workdir)?;
+
+    // Sort nodes by content ID for deterministic serialization.
+    // HashMap iteration order is non-deterministic — without sorting,
+    // the same manifest produces different IR JSON → different binary hash.
+    resolved_nodes.sort_by(|a, b| a.id.0.cmp(&b.id.0));
 
     Ok(BesogneIR {
         metadata,
@@ -906,5 +912,29 @@ fn validate_node_compositions(nodes: &[ResolvedNode]) -> Result<(), String> {
         Ok(())
     } else {
         Err(errors.join("\n\n"))
+    }
+}
+
+/// Serialize any value to canonical JSON with sorted keys.
+/// Ensures deterministic output regardless of HashMap iteration order.
+fn canonical_json<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
+    let v = serde_json::to_value(value)?;
+    let sorted = sort_json_value(v);
+    serde_json::to_vec(&sorted)
+}
+
+fn sort_json_value(v: serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::Object(map) => {
+            let mut sorted: Vec<(String, serde_json::Value)> = map.into_iter()
+                .map(|(k, v)| (k, sort_json_value(v)))
+                .collect();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            serde_json::Value::Object(sorted.into_iter().collect())
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(sort_json_value).collect())
+        }
+        other => other,
     }
 }
