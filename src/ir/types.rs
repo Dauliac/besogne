@@ -7,6 +7,7 @@ use std::collections::HashMap;
 pub struct ContentId(pub String);
 
 impl ContentId {
+    #[allow(dead_code)]
     pub fn new(type_name: &str, identifier: &str, hash: &[u8]) -> Self {
         let short_hash = &blake3::Hash::from(
             <[u8; 32]>::try_from(hash).unwrap_or([0; 32]),

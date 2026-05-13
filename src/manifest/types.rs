@@ -144,6 +144,7 @@ pub enum Node {
 }
 
 impl Node {
+    #[allow(dead_code)]
     pub fn phase(&self) -> Phase {
         match self {
             Node::Env(e) => e.phase.clone().unwrap_or(Phase::Seal),

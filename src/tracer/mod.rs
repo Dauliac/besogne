@@ -10,7 +10,6 @@ pub mod output_sync;
 pub mod preload;
 
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
 
 /// Per-process metrics collected via wait4 rusage + /proc scanning
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -34,6 +33,7 @@ pub struct ProcessMetrics {
 
 /// Events emitted by the tracer during command execution
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum TraceEvent {
     CommandStart {
         pid: u32,
@@ -57,7 +57,9 @@ pub struct CommandResult {
     pub user_ms: u64,
     pub sys_ms: u64,
     pub max_rss_kb: u64,
+    #[allow(dead_code)]
     pub voluntary_cs: u64,
+    #[allow(dead_code)]
     pub involuntary_cs: u64,
     pub processes_spawned: u64,
     pub disk_read_bytes: u64,
@@ -66,6 +68,7 @@ pub struct CommandResult {
     pub net_write_bytes: u64,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+    #[allow(dead_code)]
     pub events: Vec<TraceEvent>,
     /// Per-process metrics for the entire process tree (root + all descendants)
     pub process_tree: Vec<ProcessMetrics>,
@@ -106,6 +109,7 @@ thread_local! {
 }
 
 /// Write a line to either OutputSync (parallel) or stderr (sequential).
+#[allow(dead_code)]
 fn emit_output_line(line: &str) {
     OUTPUT_SYNC.with(|cell| {
         let borrow = cell.borrow();
@@ -117,8 +121,8 @@ fn emit_output_line(line: &str) {
     });
 }
 
-/// Whether we're in parallel mode (multiple commands in same tier).
-/// When true, skip PR_SET_CHILD_SUBREAPER and wait4(-1) to avoid cross-thread reaping.
+// Whether we're in parallel mode (multiple commands in same tier).
+// When true, skip PR_SET_CHILD_SUBREAPER and wait4(-1) to avoid cross-thread reaping.
 thread_local! {
     static PARALLEL_MODE: std::cell::Cell<bool> = std::cell::Cell::new(false);
 }
@@ -149,6 +153,7 @@ pub fn execute_traced(
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone)]
 struct ProcSnapshot {
+    #[allow(dead_code)]
     pid: u32,
     ppid: u32,
     comm: String,

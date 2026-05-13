@@ -982,6 +982,7 @@ fn execute_dag(
 }
 
 /// Execute a command with optional retry logic.
+#[allow(dead_code)]
 fn execute_command_with_retry(
     name: &str,
     run: &[String],

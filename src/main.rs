@@ -3,6 +3,7 @@ mod compile;
 pub mod error;
 mod ir;
 mod manifest;
+#[allow(dead_code)]
 mod output;
 mod probe;
 mod runtime;

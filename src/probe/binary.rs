@@ -8,6 +8,7 @@ use std::process::Command;
 
 /// Result of resolving a binary at build time
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ResolvedBinary {
     pub name: String,
     pub path: PathBuf,
@@ -21,6 +22,7 @@ pub struct ResolvedBinary {
 ///
 /// `probe_version_flag`: if true, allow --version probing for System binaries
 /// (enabled when user sets `version` field in manifest).
+#[allow(dead_code)]
 pub fn resolve_binary(
     name: &str,
     explicit_path: Option<&str>,
@@ -391,6 +393,7 @@ pub struct BinaryProbe<'a> {
     /// Build-time resolved version
     pub resolved_version: Option<&'a str>,
     /// Build-time BLAKE3 hash
+    #[allow(dead_code)]
     pub binary_hash: Option<&'a str>,
 }
 

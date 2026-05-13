@@ -562,6 +562,7 @@ fn resolve_ordering(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn extract_version_constraint(
     validate: &Option<HashMap<String, serde_json::Value>>,
 ) -> Option<String> {

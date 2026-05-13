@@ -23,6 +23,7 @@ pub enum DumpMode {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct RuntimeArgs {
     pub log_format: LogFormat,
     pub run_mode: RunMode,
