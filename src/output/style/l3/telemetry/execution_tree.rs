@@ -33,10 +33,10 @@ use crate::manifest::Phase;
 use crate::runtime::cache::ContextCache;
 use crate::tracer::ProcessMetrics;
 
-use crate::output::style::{styled, dim, bold};
+use crate::output::style::{styled, dim};
 use crate::output::style::palette::RESET;
 use crate::output::style::{
-    phase, status, outcome, weight, node, badge, label, message,
+    phase, status, outcome, label, message,
     telemetry, ptree, diagnostic, icon,
 };
 use crate::output::style::l3::atoms;
@@ -137,7 +137,7 @@ fn exec_phase_node(
     let mut tree = Tree::new(format!("{}exec{RESET} {}{}",
         phase::EXEC_DIM,
         dim(&format!("({} nodes)", exec_nodes.len())),
-        format_inline_metrics_short(&agg)));
+        format_inline_metrics_full(&agg)));
 
     let node_by_id: HashMap<&ContentId, &ResolvedNode> = exec_nodes.iter()
         .map(|n| (&n.id, *n)).collect();
@@ -206,13 +206,20 @@ fn exec_node_tree(
         format!("  {}", dim(&format!("\u{2190} {}", parent_names[0])))
     } else { String::new() };
 
-    // Command detail (exit + time + memory)
+    // Command detail (exit + all metrics, no thresholds)
     let detail = match &n.node {
         ResolvedNativeNode::Command { name, .. } => {
             cache.get_command(name).map(|c| {
-                let metrics = format_inline_metrics_short(&NodeMetrics {
+                let metrics = format_inline_metrics_full(&NodeMetrics {
                     wall_ms: c.wall_ms,
+                    user_ms: c.user_ms,
+                    sys_ms: c.sys_ms,
                     max_rss_kb: c.max_rss_kb,
+                    disk_read_bytes: c.disk_read_bytes,
+                    disk_write_bytes: c.disk_write_bytes,
+                    net_read_bytes: c.net_read_bytes,
+                    net_write_bytes: c.net_write_bytes,
+                    processes_spawned: c.processes_spawned,
                 });
                 format!("  {}{metrics}", atoms::exit_code::render(c.exit_code))
             }).unwrap_or_default()
@@ -243,7 +250,7 @@ fn exec_node_tree(
 
                 let mut env_display: Vec<String> = Vec::new();
                 for probe_node in &ir.nodes {
-                    if let ResolvedNativeNode::Env { name, secret, .. } = &probe_node.node {
+                    if let ResolvedNativeNode::Env { name, secret: _, .. } = &probe_node.node {
                         if let Some(probe) = cache.get_probe(&probe_node.id.0) {
                             for (k, v) in &probe.variables {
                                 if secret_vars.contains(name.as_str()) || secret_vars.contains(k.as_str()) {
@@ -338,10 +345,17 @@ fn render_process_node(
     // Exit code: dim green for 0, red for non-zero (escalated)
     let exit = atoms::exit_code::render(p.exit_code);
 
-    // Per-process metrics (always L3)
-    let metrics = format_inline_metrics_short(&NodeMetrics {
+    // Per-process metrics (all metrics, no thresholds)
+    let metrics = format_inline_metrics_full(&NodeMetrics {
         wall_ms: p.wall_ms,
+        user_ms: p.user_ms,
+        sys_ms: p.sys_ms,
         max_rss_kb: p.max_rss_kb,
+        disk_read_bytes: p.read_bytes,
+        disk_write_bytes: p.write_bytes,
+        net_read_bytes: 0,
+        net_write_bytes: 0,
+        processes_spawned: 0,
     });
 
     let label = format!("{}{plabel}{RESET}{ss} [{exit}]{metrics}", ptree::CHILD);
@@ -361,34 +375,83 @@ fn render_process_node(
 
 struct NodeMetrics {
     wall_ms: u64,
+    user_ms: u64,
+    sys_ms: u64,
     max_rss_kb: u64,
+    disk_read_bytes: u64,
+    disk_write_bytes: u64,
+    net_read_bytes: u64,
+    net_write_bytes: u64,
+    processes_spawned: u64,
+}
+
+impl NodeMetrics {
+    fn zero() -> Self {
+        Self { wall_ms: 0, user_ms: 0, sys_ms: 0, max_rss_kb: 0,
+               disk_read_bytes: 0, disk_write_bytes: 0,
+               net_read_bytes: 0, net_write_bytes: 0, processes_spawned: 0 }
+    }
 }
 
 fn aggregate_exec_metrics(exec_nodes: &[&ResolvedNode], cache: &ContextCache) -> NodeMetrics {
-    let mut total_wall = 0u64;
-    let mut max_rss = 0u64;
+    let mut m = NodeMetrics::zero();
     for n in exec_nodes {
         if let ResolvedNativeNode::Command { name, .. } = &n.node {
             if let Some(c) = cache.get_command(name) {
-                total_wall += c.wall_ms;
-                max_rss = max_rss.max(c.max_rss_kb);
+                m.wall_ms += c.wall_ms;
+                m.user_ms += c.user_ms;
+                m.sys_ms += c.sys_ms;
+                m.max_rss_kb = m.max_rss_kb.max(c.max_rss_kb);
+                m.disk_read_bytes += c.disk_read_bytes;
+                m.disk_write_bytes += c.disk_write_bytes;
+                m.net_read_bytes += c.net_read_bytes;
+                m.net_write_bytes += c.net_write_bytes;
+                m.processes_spawned += c.processes_spawned;
             }
         }
     }
-    NodeMetrics { wall_ms: total_wall, max_rss_kb: max_rss }
+    m
 }
 
-fn format_inline_metrics_short(m: &NodeMetrics) -> String {
+/// Full metrics for --status view: show everything, no thresholds.
+fn format_inline_metrics_full(m: &NodeMetrics) -> String {
+    use crate::output::style::metric_label as ml;
+
     if m.wall_ms == 0 && m.max_rss_kb == 0 {
         return String::new();
     }
     let mut parts = Vec::new();
     parts.push(format!("{}{}:{:.3}s{RESET}",
         telemetry::TIME, telemetry::TIME_ICON, m.wall_ms as f64 / 1000.0));
+    if m.user_ms > 0 || m.sys_ms > 0 {
+        let cores = if m.wall_ms > 0 { (m.user_ms + m.sys_ms) as f64 / m.wall_ms as f64 } else { 0.0 };
+        parts.push(format!("{}{}:{:.2}s {} + {:.2}s {} ({:.1} {}){RESET}",
+            telemetry::CPU, telemetry::CPU_ICON,
+            m.user_ms as f64 / 1000.0, ml::USER,
+            m.sys_ms as f64 / 1000.0, ml::KERNEL,
+            cores, ml::CORES));
+    }
     if m.max_rss_kb > 0 {
         parts.push(format!("{}{}:{}{RESET}",
             telemetry::MEMORY, telemetry::MEMORY_ICON,
             format_bytes(m.max_rss_kb * 1024)));
+    }
+    if m.disk_read_bytes > 0 || m.disk_write_bytes > 0 {
+        parts.push(format!("{}{} \u{2b07} {}:{} \u{2b06} {}:{}{RESET}",
+            telemetry::DISK, telemetry::DISK_ICON,
+            ml::READ, format_bytes(m.disk_read_bytes),
+            ml::WRITE, format_bytes(m.disk_write_bytes)));
+    }
+    if m.net_read_bytes > 0 || m.net_write_bytes > 0 {
+        parts.push(format!("{}{} \u{2b07} {}:{} \u{2b06} {}:{}{RESET}",
+            telemetry::NETWORK, telemetry::NETWORK_ICON,
+            ml::DOWNLOAD, format_bytes(m.net_read_bytes),
+            ml::UPLOAD, format_bytes(m.net_write_bytes)));
+    }
+    if m.processes_spawned > 0 {
+        parts.push(format!("{}{} {}:{}{RESET}",
+            telemetry::PROCESS, telemetry::PROCESS_ICON,
+            ml::PROCESSES, m.processes_spawned + 1));
     }
     format!("  {}", parts.join("  "))
 }
