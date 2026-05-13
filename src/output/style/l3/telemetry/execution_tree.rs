@@ -269,24 +269,22 @@ fn exec_node_tree(
                 }
             }
 
-            // Cached output (L3 dim — single block, not tree branches)
-            let stdout_lines: Vec<&str> = cached.stdout.lines().collect();
-            let stderr_lines: Vec<&str> = cached.stderr.lines().collect();
-            let mut output_lines: Vec<String> = Vec::new();
+            // Cached output (L3 dim — leaf nodes, filtered for non-empty)
+            let stdout_lines: Vec<&str> = cached.stdout.lines()
+                .filter(|l| !l.is_empty()).collect();
+            let stderr_lines: Vec<&str> = cached.stderr.lines()
+                .filter(|l| !l.is_empty()).collect();
             for line in stdout_lines.iter().take(10) {
-                output_lines.push(dim(line));
+                tree.push(Tree::new(dim(line)));
             }
             if stdout_lines.len() > 10 {
-                output_lines.push(dim(&format!("...{} more lines", stdout_lines.len() - 10)));
+                tree.push(Tree::new(dim(&format!("...{} more lines", stdout_lines.len() - 10))));
             }
             for line in stderr_lines.iter().take(5) {
-                output_lines.push(dim(line));
+                tree.push(Tree::new(dim(line)));
             }
             if stderr_lines.len() > 5 {
-                output_lines.push(dim(&format!("...{} more lines", stderr_lines.len() - 5)));
-            }
-            if !output_lines.is_empty() {
-                tree.push(Tree::new(output_lines.join("\n")));
+                tree.push(Tree::new(dim(&format!("...{} more lines", stderr_lines.len() - 5))));
             }
 
             // Verification result
