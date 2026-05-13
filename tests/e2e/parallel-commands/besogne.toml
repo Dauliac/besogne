@@ -21,7 +21,7 @@ parents = ["setup"]
 [nodes.worker-a]
 type = "command"
 phase = "exec"
-run = ["sh", "-c", "for i in $(seq 1 100); do echo \"[A] step $i\"; sleep 0.01; done; echo done-a > results/a.txt"]
+run = ["sh", "-c", "for i in $(seq 1 100); do echo \"[A] step $i\"; sleep 1; done; echo done-a > results/a.txt"]
 parents = ["setup-exit"]
 
 [nodes.worker-a-exit]
@@ -39,7 +39,7 @@ parents = ["worker-a"]
 [nodes.worker-b]
 type = "command"
 phase = "exec"
-run = ["sh", "-c", "for i in $(seq 1 100); do echo \"[B] step $i\"; sleep 0.01; done; echo done-b > results/b.txt"]
+run = ["sh", "-c", "for i in $(seq 1 100); do echo \"[B] step $i\"; sleep 1; done; echo done-b > results/b.txt"]
 parents = ["setup-exit"]
 
 [nodes.worker-b-exit]
