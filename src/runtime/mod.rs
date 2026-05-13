@@ -547,190 +547,224 @@ fn execute_dag(
     renderer.on_phase_start("exec", exec_count);
 
     for tier in &tiers {
-        for &node_idx in tier {
-            // Skip propagation: if this node is in the skip set, don't execute
-            if skip_set.contains(&node_idx) {
-                continue;
-            }
+        // ── Phase 1: Collect commands to execute in this tier ──
+        struct CmdJob {
+            node_idx: petgraph::graph::NodeIndex,
+            name: String,
+            run: Vec<String>,
+            effective_run: Vec<String>,
+            cmd_env: HashMap<String, String>,
+            workdir: Option<String>,
+            side_effects: bool,
+        }
+        let mut jobs: Vec<CmdJob> = Vec::new();
 
+        for &node_idx in tier {
+            if skip_set.contains(&node_idx) { continue; }
             let content_id = &graph[node_idx];
-            let input = match input_by_id.get(content_id) {
-                Some(i) => i,
-                None => continue,
+            let Some(input) = input_by_id.get(content_id) else { continue };
+
+            if let ResolvedNativeNode::Command {
+                name, run, env, side_effects, workdir, force_args, debug_args, ..
+            } = &input.node {
+                if last_exit_code != 0 && !side_effects { continue; }
+
+                let forced_dirty = dirty_set.contains(&node_idx);
+                let cmd_mode = determine_command_mode(input, ir, context, forced_dirty, force, &input_hash);
+
+                if cmd_mode == cache::CommandMode::Skip {
+                    if let Some(cached) = context.get_command(name) {
+                        let mut cmd_env = all_variables.clone();
+                        cmd_env.extend(env.clone());
+                        let ctx = output::CommandContext {
+                            binary_paths: &binary_paths,
+                            binary_versions: &binary_versions,
+                            env_vars: &cmd_env,
+                            secret_vars: &secret_vars,
+                        };
+                        renderer.on_command_cached(name, run, cached, &ctx);
+                    }
+                    continue;
+                }
+
+                let mut cmd_env = all_variables.clone();
+                cmd_env.extend(env.clone());
+                let mut effective_run = run.clone();
+                if force && !force_args.is_empty() { effective_run.extend(force_args.clone()); }
+                if debug && !debug_args.is_empty() { effective_run.extend(debug_args.clone()); }
+
+                // Show command start header (safe from multiple threads — just eprintln)
+                let ctx = output::CommandContext {
+                    binary_paths: &binary_paths,
+                    binary_versions: &binary_versions,
+                    env_vars: &cmd_env,
+                    secret_vars: &secret_vars,
+                };
+                renderer.on_command_start(name, &effective_run, &ctx);
+
+                jobs.push(CmdJob {
+                    node_idx, name: name.clone(), run: run.clone(),
+                    effective_run, cmd_env,
+                    workdir: workdir.clone(), side_effects: *side_effects,
+                });
+            }
+        }
+
+        // ── Phase 2: Execute commands in parallel (tracer streams output) ──
+        let exec_results: Vec<(CmdJob, Result<tracer::CommandResult, String>)> = if jobs.len() > 1 {
+            // Multiple commands in tier → parallel execution
+            crossbeam::scope(|s| {
+                let sandbox = &ir.sandbox.env;
+                let handles: Vec<_> = jobs.into_iter().map(|job| {
+                    s.spawn(move |_| {
+                        let r = tracer::execute_traced(
+                            &job.effective_run, &job.cmd_env, sandbox, job.workdir.as_deref());
+                        (job, r)
+                    })
+                }).collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            }).unwrap()
+        } else {
+            // Single command or empty → sequential (no thread overhead)
+            jobs.into_iter().map(|job| {
+                let r = tracer::execute_traced(
+                    &job.effective_run, &job.cmd_env, &ir.sandbox.env, job.workdir.as_deref());
+                (job, r)
+            }).collect()
+        };
+
+        // ── Phase 3: Process results sequentially (cache, verify, detect) ──
+        for (job, exec_result) in exec_results {
+            let content_id = &graph[job.node_idx];
+            let input = input_by_id.get(content_id).unwrap();
+            let name = &job.name;
+
+            let result = match exec_result {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("{}", crate::output::style::error_diag(&e));
+                    last_exit_code = 126;
+                    continue;
+                }
             };
 
-            match &input.node {
-                ResolvedNativeNode::Command {
-                    name, run, env, side_effects, workdir, force_args, debug_args, retry, ..
-                } => {
-                    if last_exit_code != 0 && !side_effects {
-                        continue;
-                    }
+            let stdout = String::from_utf8_lossy(&result.stdout).to_string();
+            let cmd_stderr = String::from_utf8_lossy(&result.stderr).to_string();
 
-                    // Per-command skip decision (forward + backward checks)
-                    let forced_dirty = dirty_set.contains(&node_idx);
-                    let cmd_mode = determine_command_mode(input, ir, context, forced_dirty, force, &input_hash);
+            renderer.on_command_output(name, &stdout, &cmd_stderr);
+            renderer.on_command_end(name, &result);
 
-                    if cmd_mode == cache::CommandMode::Skip {
-                        if let Some(cached) = context.get_command(name) {
-                            let mut cmd_env = all_variables.clone();
-                            cmd_env.extend(env.clone());
-                            let ctx = output::CommandContext {
-                                binary_paths: &binary_paths,
-                                binary_versions: &binary_versions,
-                                env_vars: &cmd_env,
-                                secret_vars: &secret_vars,
-                            };
-                            renderer.on_command_cached(name, run, cached, &ctx);
-                        }
-                        continue;
-                    }
+            // Idempotency verification
+            if first_run && !job.side_effects && result.exit_code == 0 {
+                eprintln!("    {}", output::style::styled(
+                    output::style::diagnostic::VERIFYING,
+                    output::style::message::VERIFY_RUN2,
+                ));
+                let vresult = verify::verify_command(
+                    name, content_id,
+                    &job.effective_run, &job.cmd_env, &ir.sandbox.env, job.workdir.as_deref(),
+                    &result, &ir.nodes,
+                );
+                verify::format_verify_human(&vresult);
+                if !vresult.idempotent {
+                    non_idempotent.push(name.clone());
+                }
+            }
 
-                    let mut cmd_env = all_variables.clone();
-                    cmd_env.extend(env.clone());
+            // Detect undeclared binaries from process tree
+            let run_basenames: std::collections::HashSet<&str> = job.run.iter()
+                .filter_map(|a| a.rsplit('/').next())
+                .collect();
+            for (proc_idx, proc) in result.process_tree.iter().enumerate() {
+                if proc.comm.is_empty() { continue; }
+                if proc_idx == 0 { continue; }
+                let comm = &proc.comm;
+                if declared_binaries.contains(comm) { continue; }
+                if run_basenames.contains(comm.as_str()) { continue; }
+                if ["bash", "sh", "dash", "zsh", "fish", "csh", "tcsh"].contains(&comm.as_str()) { continue; }
+                if comm.chars().all(|c| c.is_ascii_hexdigit()) { continue; }
+                if proc.cmdline.contains("besogne") { continue; }
+                undeclared_binaries.insert(comm.clone());
+            }
 
-                    // Append force_args/debug_args when --force/--debug is active
-                    let mut effective_run = run.clone();
-                    if force && !force_args.is_empty() {
-                        effective_run.extend(force_args.clone());
-                    }
-                    if debug && !debug_args.is_empty() {
-                        effective_run.extend(debug_args.clone());
-                    }
+            // Detect undeclared deps via preload interposer
+            if let Some(ref preload) = result.preload {
+                let undeclared_env = tracer::preload::find_undeclared_env(
+                    &preload.accessed_env, &declared_env, &statically_referenced_env,
+                );
+                let undeclared_bins = tracer::preload::find_undeclared_binaries(
+                    &preload.executed_binaries, &declared_binaries,
+                );
+                if !undeclared_bins.is_empty() || !undeclared_env.is_empty() {
+                    renderer.on_undeclared_deps(&undeclared_bins, &undeclared_env);
+                }
+            } else if !result.accessed_env.is_empty() {
+                let undeclared = tracer::envtrack::find_undeclared(
+                    &result.accessed_env, &declared_env, &statically_referenced_env,
+                );
+                if !undeclared.is_empty() {
+                    renderer.on_undeclared_deps(&[], &undeclared);
+                }
+            }
 
-                    let ctx = output::CommandContext {
-                        binary_paths: &binary_paths,
-                        binary_versions: &binary_versions,
-                        env_vars: &cmd_env,
-                        secret_vars: &secret_vars,
-                    };
-                    renderer.on_command_start(name, &effective_run, &ctx);
+            // Cache command output
+            if !debug {
+                context.set_command(
+                    name.clone(),
+                    cache::CachedCommand {
+                        stdout: stdout.clone(),
+                        stderr: cmd_stderr.clone(),
+                        exit_code: result.exit_code,
+                        wall_ms: result.wall_ms,
+                        user_ms: result.user_ms,
+                        sys_ms: result.sys_ms,
+                        max_rss_kb: result.max_rss_kb,
+                        disk_read_bytes: result.disk_read_bytes,
+                        disk_write_bytes: result.disk_write_bytes,
+                        net_read_bytes: result.net_read_bytes,
+                        net_write_bytes: result.net_write_bytes,
+                        processes_spawned: result.processes_spawned,
+                        process_tree: result.process_tree.clone(),
+                        ran_at: chrono::Utc::now().to_rfc3339(),
+                        parent_hash: compute_parent_hash(input, ir, context, &input_hash),
+                        child_hash: {
+                            let (_, ch) = compute_child_hash(content_id, ir, context);
+                            ch
+                        },
+                    },
+                );
+            }
 
-                    let (result, stdout, cmd_stderr) = execute_command_with_retry(
-                        name, &effective_run, &cmd_env, &ir.sandbox.env, workdir.as_deref(),
-                        retry.as_ref(), renderer,
-                    );
-                    let result = match result {
-                        Some(r) => r,
-                        None => {
-                            last_exit_code = 126;
-                            continue;
-                        }
-                    };
-
-                    renderer.on_command_output(name, &stdout, &cmd_stderr);
-                    renderer.on_command_end(name, &result);
-
-                    // Idempotency verification: re-run if first run + not side_effects + succeeded
-                    if first_run && !side_effects && result.exit_code == 0 {
-                        eprintln!("    {}", output::style::styled(
-                            output::style::diagnostic::VERIFYING,
-                            output::style::message::VERIFY_RUN2,
-                        ));
-                        let vresult = verify::verify_command(
-                            name, content_id,
-                            &effective_run, &cmd_env, &ir.sandbox.env, workdir.as_deref(),
-                            &result, &ir.nodes,
-                        );
-                        verify::format_verify_human(&vresult);
-                        if !vresult.idempotent {
-                            non_idempotent.push(name.clone());
-                        }
-                    }
-
-                    // Detect undeclared binaries from process tree
-                    let run_basenames: std::collections::HashSet<&str> = run.iter()
-                        .filter_map(|a| a.rsplit('/').next())
-                        .collect();
-                    for (proc_idx, proc) in result.process_tree.iter().enumerate() {
-                        if proc.comm.is_empty() { continue; }
-                        if proc_idx == 0 { continue; } // skip root (the command itself)
-                        let comm = &proc.comm;
-                        if declared_binaries.contains(comm) { continue; }
-                        if run_basenames.contains(comm.as_str()) { continue; }
-                        // Skip shells, besogne itself, and hex-hash cache binary names
-                        if ["bash", "sh", "dash", "zsh", "fish", "csh", "tcsh"].contains(&comm.as_str()) { continue; }
-                        if comm.chars().all(|c| c.is_ascii_hexdigit()) { continue; }
-                        if proc.cmdline.contains("besogne") { continue; }
-                        undeclared_binaries.insert(comm.clone());
-                    }
-
-                    // Detect undeclared deps via preload interposer
-                    if let Some(ref preload) = result.preload {
-                        // Undeclared env vars (intersected with static $VAR analysis)
-                        let undeclared_env = tracer::preload::find_undeclared_env(
-                            &preload.accessed_env, &declared_env, &statically_referenced_env,
-                        );
-                        // Undeclared binaries (from execve tracking — more precise than /proc comm)
-                        let undeclared_bins = tracer::preload::find_undeclared_binaries(
-                            &preload.executed_binaries, &declared_binaries,
-                        );
-                        if !undeclared_bins.is_empty() || !undeclared_env.is_empty() {
-                            renderer.on_undeclared_deps(&undeclared_bins, &undeclared_env);
-                        }
-                    } else if !result.accessed_env.is_empty() {
-                        // Fallback to pipe-based env tracking (intersected with static analysis)
-                        let undeclared = tracer::envtrack::find_undeclared(
-                            &result.accessed_env, &declared_env, &statically_referenced_env,
-                        );
-                        if !undeclared.is_empty() {
-                            renderer.on_undeclared_deps(&[], &undeclared);
-                        }
-                    }
-
-                    // Cache command output for replay on future skips.
-                    // Skip cache writes when --debug is active to avoid poisoning
-                    // cache with debug output (which changes stdout/stderr).
-                    if !debug {
-                        context.set_command(
-                            name.clone(),
-                            cache::CachedCommand {
-                                stdout: stdout.clone(),
-                                stderr: cmd_stderr.clone(),
-                                exit_code: result.exit_code,
-                                wall_ms: result.wall_ms,
-                                user_ms: result.user_ms,
-                                sys_ms: result.sys_ms,
-                                max_rss_kb: result.max_rss_kb,
-                                disk_read_bytes: result.disk_read_bytes,
-                                disk_write_bytes: result.disk_write_bytes,
-                                net_read_bytes: result.net_read_bytes,
-                                net_write_bytes: result.net_write_bytes,
-                                processes_spawned: result.processes_spawned,
-                                process_tree: result.process_tree.clone(),
-                                ran_at: chrono::Utc::now().to_rfc3339(),
-                                parent_hash: compute_parent_hash(input, ir, context, &input_hash),
-                                child_hash: {
-                                    let (_, ch) = compute_child_hash(content_id, ir, context);
-                                    ch
-                                },
-                            },
-                        );
-                    }
-
-                    // Dirty propagation: if persistent child hashes changed,
-                    // all downstream nodes must re-run.
-                    if let Some(old_cached) = context.get_command(name) {
-                        let (_, new_child_hash) = compute_child_hash(content_id, ir, context);
-                        if old_cached.child_hash != new_child_hash {
-                            // Outputs changed → propagate dirty to all descendants
-                            for neighbor in graph.neighbors_directed(node_idx, petgraph::Direction::Outgoing) {
-                                let mut stack = vec![neighbor];
-                                while let Some(idx) = stack.pop() {
-                                    if dirty_set.insert(idx) {
-                                        for next in graph.neighbors_directed(idx, petgraph::Direction::Outgoing) {
-                                            stack.push(next);
-                                        }
-                                    }
+            // Dirty propagation
+            if let Some(old_cached) = context.get_command(name) {
+                let (_, new_child_hash) = compute_child_hash(content_id, ir, context);
+                if old_cached.child_hash != new_child_hash {
+                    for neighbor in graph.neighbors_directed(job.node_idx, petgraph::Direction::Outgoing) {
+                        let mut stack = vec![neighbor];
+                        while let Some(idx) = stack.pop() {
+                            if dirty_set.insert(idx) {
+                                for next in graph.neighbors_directed(idx, petgraph::Direction::Outgoing) {
+                                    stack.push(next);
                                 }
                             }
                         }
                     }
-
-                    if result.exit_code != 0 {
-                        last_exit_code = result.exit_code;
-                    }
                 }
+            }
+
+            if result.exit_code != 0 {
+                last_exit_code = result.exit_code;
+            }
+        }
+
+        // ── Phase 4: Process non-command nodes sequentially ──
+        for &node_idx in tier {
+            if skip_set.contains(&node_idx) { continue; }
+            let content_id = &graph[node_idx];
+            let Some(input) = input_by_id.get(content_id) else { continue };
+            if matches!(&input.node, ResolvedNativeNode::Command { .. }) { continue; } // already processed
+
+            match &input.node {
 
                 ResolvedNativeNode::Service { .. }
                 | ResolvedNativeNode::Dns { .. }
