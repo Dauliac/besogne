@@ -593,13 +593,12 @@ impl OutputRenderer for HumanRenderer {
     }
 
     fn on_command_start(&mut self, name: &str, exec: &[String], ctx: &CommandContext) {
-        eprintln!("  {} {name}: {}", bold("▹"), exec.join(" "));
+        eprintln!("\n  {} {name}: {}", bold("▹"), exec.join(" "));
         format_command_context_human(exec, ctx);
     }
 
-    fn on_command_output(&mut self, _name: &str, stdout: &str, stderr: &str) {
-        for line in stdout.lines() { eprintln!("    {line}"); }
-        for line in stderr.lines() { eprintln!("    {line}"); }
+    fn on_command_output(&mut self, _name: &str, _stdout: &str, _stderr: &str) {
+        // Output already streamed in real-time by the tracer
     }
 
     fn on_command_end(&mut self, name: &str, result: &CommandResult) {
@@ -610,7 +609,7 @@ impl OutputRenderer for HumanRenderer {
             eprintln!("  {} {name}  exit {}  {metrics}",
                 styled(status::FAILED, label::FAILED), result.exit_code);
         }
-        format_process_tree_human(&result.process_tree);
+        // Process tree only shown in --status view, not during live execution
     }
 
     fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand, ctx: &CommandContext) {
@@ -632,7 +631,7 @@ impl OutputRenderer for HumanRenderer {
         }
         let metrics = format_metrics_human(&Metrics::from(cached));
         eprintln!("  {} {name}  {metrics}", styled(status::CACHED, label::CACHED));
-        format_process_tree_human(&cached.process_tree);
+        // Process tree only shown in --status view, not during cached replay
     }
 
     fn on_build_pinned_summary(&mut self, nodes: &[&ResolvedNode]) {

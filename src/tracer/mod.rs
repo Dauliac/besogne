@@ -401,15 +401,43 @@ fn execute_with_wait4(
         })
     };
 
-    // Read stdout and stderr
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    {
-        let mut stdout_file = unsafe { std::fs::File::from_raw_fd(stdout_read) };
-        let mut stderr_file = unsafe { std::fs::File::from_raw_fd(stderr_read) };
-        let _ = stdout_file.read_to_end(&mut stdout);
-        let _ = stderr_file.read_to_end(&mut stderr);
-    }
+    // Read stdout and stderr — stream to terminal while also capturing for cache.
+    // Uses threads to read both pipes concurrently (prevents deadlock if child
+    // fills one pipe buffer while we're blocked reading the other).
+    let stdout_handle = {
+        let stdout_file = unsafe { std::fs::File::from_raw_fd(stdout_read) };
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let mut buf = Vec::new();
+            let reader = std::io::BufReader::new(stdout_file);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    eprintln!("    {line}");
+                    buf.extend(line.as_bytes());
+                    buf.push(b'\n');
+                }
+            }
+            buf
+        })
+    };
+    let stderr_handle = {
+        let stderr_file = unsafe { std::fs::File::from_raw_fd(stderr_read) };
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let mut buf = Vec::new();
+            let reader = std::io::BufReader::new(stderr_file);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    eprintln!("    {line}");
+                    buf.extend(line.as_bytes());
+                    buf.push(b'\n');
+                }
+            }
+            buf
+        })
+    };
+    let stdout = stdout_handle.join().unwrap_or_default();
+    let stderr = stderr_handle.join().unwrap_or_default();
 
     // Final /proc snapshot for the root child (while still a zombie)
     if let Ok(mut m) = metrics.lock() {
