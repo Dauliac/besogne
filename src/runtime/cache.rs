@@ -142,16 +142,16 @@ impl ContextCache {
     }
 
     /// Save cache to disk and GC old compiler hash directories.
-    pub fn save(&self) -> Result<(), String> {
+    pub fn save(&self) -> Result<(), crate::error::BesogneError> {
         let path = cache_path(&self.compiler_hash, &self.besogne_hash);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| format!("cannot create cache dir: {e}"))?;
+                .map_err(|e| crate::error::BesogneError::Cache(format!("cannot create cache dir: {e}")))?;
         }
         let content = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("cannot serialize cache: {e}"))?;
+            .map_err(|e| crate::error::BesogneError::Cache(format!("cannot serialize cache: {e}")))?;
         std::fs::write(&path, content)
-            .map_err(|e| format!("cannot write cache: {e}"))?;
+            .map_err(|e| crate::error::BesogneError::Cache(format!("cannot write cache: {e}")))?;
 
         // GC: remove sibling compiler_hash dirs that don't match current
         gc_old_compiler_dirs(&self.compiler_hash);
@@ -380,7 +380,7 @@ mod tests {
     use super::*;
 
     /// Test helper: save a ContextCache directly to a given base dir (no env var dependency).
-    fn save_to(cache: &ContextCache, base: &Path) -> Result<(), String> {
+    fn save_to(cache: &ContextCache, base: &Path) -> Result<(), crate::error::BesogneError> {
         let path = base
             .join("besogne")
             .join(&cache.compiler_hash)
@@ -388,12 +388,12 @@ mod tests {
             .join("context.json");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| format!("cannot create cache dir: {e}"))?;
+                .map_err(|e| crate::error::BesogneError::Cache(format!("cannot create cache dir: {e}")))?;
         }
         let content = serde_json::to_string_pretty(cache)
-            .map_err(|e| format!("cannot serialize cache: {e}"))?;
+            .map_err(|e| crate::error::BesogneError::Cache(format!("cannot serialize cache: {e}")))?;
         std::fs::write(&path, content)
-            .map_err(|e| format!("cannot write cache: {e}"))?;
+            .map_err(|e| crate::error::BesogneError::Cache(format!("cannot write cache: {e}")))?;
         Ok(())
     }
 

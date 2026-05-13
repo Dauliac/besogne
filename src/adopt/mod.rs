@@ -8,6 +8,7 @@ mod impurity;
 mod npm;
 mod toml_gen;
 
+use crate::error::BesogneError;
 use std::path::{Path, PathBuf};
 
 /// Source format to adopt from
@@ -46,7 +47,7 @@ pub fn adopt(
     source_type: &AdoptSource,
     output_path: &Path,
     dry_run: bool,
-) -> Result<AdoptResult, String> {
+) -> Result<AdoptResult, BesogneError> {
     match source_type {
         AdoptSource::PackageJson => adopt_package_json(source_path, output_path, dry_run),
     }
@@ -56,7 +57,7 @@ fn adopt_package_json(
     source_path: &Path,
     output_path: &Path,
     dry_run: bool,
-) -> Result<AdoptResult, String> {
+) -> Result<AdoptResult, BesogneError> {
     // 1. Parse package.json scripts
     let (pkg_value, mut scripts) = npm::parse_package_json(source_path)?;
 
@@ -86,19 +87,19 @@ fn adopt_package_json(
 
     // 5. Write besogne.toml
     std::fs::write(output_path, &toml_content)
-        .map_err(|e| format!("cannot write {}: {e}", output_path.display()))?;
+        .map_err(|e| BesogneError::Adopt(format!("cannot write {}: {e}", output_path.display())))?;
     eprintln!("besogne adopt: wrote {}", output_path.display());
 
     // 6. Backup original
     let backup = backup_path(source_path);
     std::fs::copy(source_path, &backup)
-        .map_err(|e| format!("cannot backup {}: {e}", source_path.display()))?;
+        .map_err(|e| BesogneError::Adopt(format!("cannot backup {}: {e}", source_path.display())))?;
     eprintln!("besogne adopt: backed up → {}", backup.display());
 
     // 7. Rewrite package.json scripts to `besogne run <name>`
     let rewritten = npm::rewrite_package_json(&pkg_value, &scripts)?;
     std::fs::write(source_path, &rewritten)
-        .map_err(|e| format!("cannot rewrite {}: {e}", source_path.display()))?;
+        .map_err(|e| BesogneError::Adopt(format!("cannot rewrite {}: {e}", source_path.display())))?;
     eprintln!("besogne adopt: rewrote {}", source_path.display());
 
     Ok(AdoptResult {

@@ -6,13 +6,13 @@ use std::path::Path;
 const MAGIC: &[u8; 8] = b"BESOGNE\0";
 
 /// Embed IR into an output binary by copying self and appending IR
-pub fn emit(output_path: &Path, ir: &BesogneIR) -> Result<(), String> {
+pub fn emit(output_path: &Path, ir: &BesogneIR) -> Result<(), crate::error::BesogneError> {
     let self_path = std::env::current_exe()
-        .map_err(|e| format!("cannot find own binary: {e}"))?;
+        .map_err(|e| crate::error::BesogneError::Embed(format!("cannot find own binary: {e}")))?;
 
     // Copy the compiler binary as the base
     fs::copy(&self_path, output_path)
-        .map_err(|e| format!("cannot copy binary to {}: {e}", output_path.display()))?;
+        .map_err(|e| crate::error::BesogneError::Embed(format!("cannot copy binary to {}: {e}", output_path.display())))?;
 
     // Make it executable
     #[cfg(unix)]
@@ -20,25 +20,25 @@ pub fn emit(output_path: &Path, ir: &BesogneIR) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         let perms = fs::Permissions::from_mode(0o755);
         fs::set_permissions(output_path, perms)
-            .map_err(|e| format!("cannot set permissions: {e}"))?;
+            .map_err(|e| crate::error::BesogneError::Embed(format!("cannot set permissions: {e}")))?;
     }
 
     // Serialize IR as JSON (bincode can't handle serde_json::Value)
     let ir_bytes = serde_json::to_vec(ir)
-        .map_err(|e| format!("cannot serialize IR: {e}"))?;
+        .map_err(|e| crate::error::BesogneError::Embed(format!("cannot serialize IR: {e}")))?;
 
     // Append: [IR bytes] [IR length as u64 LE] [MAGIC]
     let mut file = OpenOptions::new()
         .append(true)
         .open(output_path)
-        .map_err(|e| format!("cannot open output for append: {e}"))?;
+        .map_err(|e| crate::error::BesogneError::Embed(format!("cannot open output for append: {e}")))?;
 
     file.write_all(&ir_bytes)
-        .map_err(|e| format!("cannot write IR: {e}"))?;
+        .map_err(|e| crate::error::BesogneError::Embed(format!("cannot write IR: {e}")))?;
     file.write_all(&(ir_bytes.len() as u64).to_le_bytes())
-        .map_err(|e| format!("cannot write IR length: {e}"))?;
+        .map_err(|e| crate::error::BesogneError::Embed(format!("cannot write IR length: {e}")))?;
     file.write_all(MAGIC)
-        .map_err(|e| format!("cannot write magic: {e}"))?;
+        .map_err(|e| crate::error::BesogneError::Embed(format!("cannot write magic: {e}")))?;
 
     Ok(())
 }

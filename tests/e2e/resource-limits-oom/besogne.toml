@@ -1,0 +1,11 @@
+name = "resource-limits-oom"
+description = "Memory limit too small — command should fail"
+
+# Use dd to try to allocate a large buffer, with a tight memory limit.
+# dd bs=100M reads 100MB into memory. With 50MB RLIMIT_AS, mmap fails.
+[nodes.oom]
+type = "command"
+phase = "exec"
+memory_limit = "50MB"
+side_effects = true
+run = ["dd", "if=/dev/zero", "of=/dev/null", "bs=100M", "count=1"]

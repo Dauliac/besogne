@@ -11,7 +11,7 @@ use crate::tracer::{CommandResult, ProcessMetrics};
 use termtree::Tree;
 
 use style::{styled, dim, bold, exit_code as fmt_exit, palette::RESET};
-use style::{status, node, telemetry, phase, outcome, weight, diagnostic};
+use style::{status, node, telemetry, phase, weight, diagnostic};
 use style::{label, badge, phase_label, metric_label, message};
 
 /// Why a probe result is being reported
@@ -1110,7 +1110,7 @@ pub fn render_status_tree(ir: &BesogneIR, cache: &ContextCache) {
         let node_by_id: HashMap<&ContentId, &ResolvedNode> = exec_nodes.iter()
             .map(|n| (&n.id, *n)).collect();
 
-        if let Ok((graph, node_map)) = crate::ir::dag::build_exec_dag(ir) {
+        if let Ok((graph, _node_map)) = crate::ir::dag::build_exec_dag(ir) {
             if let Ok(tiers) = crate::ir::dag::compute_tiers(&graph) {
                 for (tier_idx, tier) in tiers.iter().enumerate() {
                     // Tier header

@@ -173,6 +173,10 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
                 debug_args: c.debug_args.clone().unwrap_or_default(),
                 retry: lower_retry(&c.retry)?,
                 verify: c.verify,
+                resources: ResourceLimits {
+                    priority: c.priority.as_ref().map(resolve_priority).unwrap_or_default(),
+                    memory_limit: c.memory_limit.as_ref().map(|s| parse_byte_size(s)),
+                },
             };
             let phase = c.phase.clone().unwrap_or(Phase::Exec);
             let id = ContentId::from_content("command", key, key.as_bytes());
@@ -730,22 +734,30 @@ fn resolve_sandbox(sandbox: &Option<manifest::Sandbox>) -> SandboxResolved {
             env: EnvSandboxResolved::Inherit,
             tmpdir: false,
             network: NetworkSandboxResolved::Host,
+            priority: PriorityResolved::Normal,
+            memory_limit: None,
         },
         Some(manifest::Sandbox::Preset(preset)) => match preset {
             manifest::SandboxPreset::None => SandboxResolved {
                 env: EnvSandboxResolved::Inherit,
                 tmpdir: false,
                 network: NetworkSandboxResolved::Host,
+                priority: PriorityResolved::Normal,
+                memory_limit: None,
             },
             manifest::SandboxPreset::Strict => SandboxResolved {
                 env: EnvSandboxResolved::Strict,
                 tmpdir: true,
                 network: NetworkSandboxResolved::None,
+                priority: PriorityResolved::Normal,
+                memory_limit: None,
             },
             manifest::SandboxPreset::Container => SandboxResolved {
                 env: EnvSandboxResolved::Strict,
                 tmpdir: true,
                 network: NetworkSandboxResolved::Restricted,
+                priority: PriorityResolved::Normal,
+                memory_limit: None,
             },
         },
         Some(manifest::Sandbox::Custom(config)) => {
@@ -757,6 +769,8 @@ fn resolve_sandbox(sandbox: &Option<manifest::Sandbox>) -> SandboxResolved {
                     env: EnvSandboxResolved::Inherit,
                     tmpdir: false,
                     network: NetworkSandboxResolved::Host,
+                    priority: PriorityResolved::Normal,
+                    memory_limit: None,
                 });
 
             SandboxResolved {
@@ -770,8 +784,32 @@ fn resolve_sandbox(sandbox: &Option<manifest::Sandbox>) -> SandboxResolved {
                     manifest::NetworkSandbox::Host => NetworkSandboxResolved::Host,
                     manifest::NetworkSandbox::Restricted => NetworkSandboxResolved::Restricted,
                 }).unwrap_or(base.network),
+                priority: config.priority.as_ref().map(resolve_priority).unwrap_or(base.priority),
+                memory_limit: config.memory_limit.as_ref().map(|s| parse_byte_size(s)).or(base.memory_limit),
             }
         }
+    }
+}
+
+fn resolve_priority(p: &manifest::Priority) -> PriorityResolved {
+    match p {
+        manifest::Priority::Normal => PriorityResolved::Normal,
+        manifest::Priority::Low => PriorityResolved::Low,
+        manifest::Priority::Background => PriorityResolved::Background,
+    }
+}
+
+/// Parse a human-readable byte size: "512MB", "2GB", "1024KB"
+fn parse_byte_size(s: &str) -> u64 {
+    let s = s.trim();
+    let (num_str, unit) = s.split_at(s.find(|c: char| c.is_alphabetic()).unwrap_or(s.len()));
+    let num: f64 = num_str.trim().parse().unwrap_or(0.0);
+    match unit.trim().to_uppercase().as_str() {
+        "KB" | "K" => (num * 1024.0) as u64,
+        "MB" | "M" => (num * 1024.0 * 1024.0) as u64,
+        "GB" | "G" => (num * 1024.0 * 1024.0 * 1024.0) as u64,
+        "TB" | "T" => (num * 1024.0 * 1024.0 * 1024.0 * 1024.0) as u64,
+        _ => num as u64, // bare number = bytes
     }
 }
 

@@ -1,12 +1,13 @@
 //! Generate besogne.toml from parsed scripts.
 
+use crate::error::BesogneError;
 use super::ParsedScript;
 use std::path::Path;
 
 /// Generate a besogne.toml manifest from parsed scripts.
 /// Uses raw string building instead of toml crate serialization
 /// for readable, well-commented output.
-pub fn generate_toml(scripts: &[ParsedScript], source_path: &Path) -> Result<String, String> {
+pub fn generate_toml(scripts: &[ParsedScript], source_path: &Path) -> Result<String, BesogneError> {
     let project_name = infer_project_name(source_path);
 
     let mut out = String::new();

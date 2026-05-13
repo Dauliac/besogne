@@ -25,7 +25,7 @@ pub fn resolve_binary(
     name: &str,
     explicit_path: Option<&str>,
     probe_version_flag: bool,
-) -> Result<ResolvedBinary, String> {
+) -> Result<ResolvedBinary, crate::error::BesogneError> {
     resolve_binary_with_cache(name, explicit_path, probe_version_flag, None)
 }
 
@@ -36,23 +36,23 @@ pub fn resolve_binary_with_cache(
     explicit_path: Option<&str>,
     probe_version_flag: bool,
     hash_cache: Option<&std::sync::Mutex<std::collections::HashMap<PathBuf, String>>>,
-) -> Result<ResolvedBinary, String> {
+) -> Result<ResolvedBinary, crate::error::BesogneError> {
     // 1. Resolve raw path
     let raw_path = match explicit_path {
         Some(p) => {
             let pb = PathBuf::from(p);
             if !pb.exists() {
-                return Err(format!(
+                return Err(crate::error::BesogneError::Probe(format!(
                     "binary '{name}' not found at {p}\n  hint: check that the path is correct"
-                ));
+                )));
             }
             pb
         }
         None => resolve_via_path(name).ok_or_else(|| {
-            format!(
+            crate::error::BesogneError::Probe(format!(
                 "binary '{name}' not found in PATH\n  \
                  hint: add it to your PATH or set an explicit \"path\" in the manifest"
-            )
+            ))
         })?,
     };
 
@@ -90,10 +90,10 @@ pub fn resolve_binary_with_cache(
     })
 }
 
-fn hash_binary(canonical: &PathBuf, name: &str) -> Result<String, String> {
+fn hash_binary(canonical: &PathBuf, name: &str) -> Result<String, crate::error::BesogneError> {
     match std::fs::read(canonical) {
         Ok(content) => Ok(blake3::hash(&content).to_hex().to_string()),
-        Err(e) => Err(format!("cannot read binary '{name}': {e}")),
+        Err(e) => Err(crate::error::BesogneError::Probe(format!("cannot read binary '{name}': {e}"))),
     }
 }
 
@@ -248,7 +248,7 @@ fn detect_mise(path_str: &str) -> Option<BinarySourceResolved> {
 fn extract_version(
     source: &BinarySourceResolved,
     canonical_path: &PathBuf,
-    probe_version_flag: bool,
+    _probe_version_flag: bool,
 ) -> Option<String> {
     match source {
         BinarySourceResolved::Nix { .. } => nix_version(canonical_path),
@@ -317,7 +317,7 @@ fn probe_version_from_binary(binary_path: &PathBuf) -> Option<String> {
             .ok()?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let _stderr = String::from_utf8_lossy(&output.stderr);
 
         // Try first line of stdout first (most tools put version there)
         // then fall back to stderr, then full output

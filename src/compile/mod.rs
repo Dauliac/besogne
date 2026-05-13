@@ -12,7 +12,7 @@ use std::time::Instant;
 /// Compile a manifest into a self-contained binary in the global store.
 /// Returns the store path of the binary.
 /// Uses a content-addressed cache in $XDG_CACHE_HOME/besogne/store/ — same IR = same binary.
-pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<PathBuf, String> {
+pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<PathBuf, crate::error::BesogneError> {
     let build_start = Instant::now();
 
     use crate::output::style::l3;
@@ -71,7 +71,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
     // 3. Check content-addressed store
     // IR is fully deterministic (no timestamps) — same manifest + same binaries = same hash.
     let ir_json = serde_json::to_vec(&ir)
-        .map_err(|e| format!("cannot serialize IR for cache key: {e}"))?;
+        .map_err(|e| crate::error::BesogneError::Compile(format!("cannot serialize IR for cache key: {e}")))?;
     let cache_hash = compile_cache_key(&ir_json);
     let store_binary = store_binary_path(&cache_hash);
 
@@ -83,13 +83,13 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
     if !force && store_binary.exists() {
         // Store hit — copy or symlink to output
         std::fs::copy(&store_binary, output_path)
-            .map_err(|e| format!("cannot copy from store: {e}"))?;
+            .map_err(|e| crate::error::BesogneError::Compile(format!("cannot copy from store: {e}")))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let perms = std::fs::Permissions::from_mode(0o755);
             std::fs::set_permissions(output_path, perms)
-                .map_err(|e| format!("cannot set permissions: {e}"))?;
+                .map_err(|e| crate::error::BesogneError::Compile(format!("cannot set permissions: {e}")))?;
         }
         let total_ms = build_start.elapsed().as_millis();
         eprintln!("{}", l3::items::progress_step::render(
@@ -112,7 +112,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
 
     // 6. Copy to output path
     std::fs::copy(&store_binary, output_path)
-        .map_err(|e| format!("cannot copy to output: {e}"))?;
+        .map_err(|e| crate::error::BesogneError::Compile(format!("cannot copy to output: {e}")))?;
 
     let binary_size = std::fs::metadata(&store_binary).ok().map(|m| m.len()).unwrap_or(0);
     let total_ms = build_start.elapsed().as_millis();
@@ -126,7 +126,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
 
 /// Compile with minimal progress. Returns the store path of the binary.
 /// Does NOT copy to output_path — caller should create a symlink or copy.
-pub fn compile_quiet(manifest_path: &Path, force: bool) -> Result<PathBuf, String> {
+pub fn compile_quiet(manifest_path: &Path, force: bool) -> Result<PathBuf, crate::error::BesogneError> {
     let build_start = Instant::now();
     let mut manifest = manifest::load_manifest(manifest_path)?;
     if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
@@ -136,7 +136,7 @@ pub fn compile_quiet(manifest_path: &Path, force: bool) -> Result<PathBuf, Strin
     resolve_build_binaries_quiet(&mut ir)?;
 
     let ir_json = serde_json::to_vec(&ir)
-        .map_err(|e| format!("cannot serialize IR for cache key: {e}"))?;
+        .map_err(|e| crate::error::BesogneError::Compile(format!("cannot serialize IR for cache key: {e}")))?;
     let cache_hash = compile_cache_key(&ir_json);
     let store_bin = store_binary_path(&cache_hash);
 
@@ -168,7 +168,7 @@ pub fn compile_quiet(manifest_path: &Path, force: bool) -> Result<PathBuf, Strin
 
 /// Parse manifest and lower to IR — no binary resolution, no compilation.
 /// Used for `--help` display where we only need metadata and flags.
-pub fn check_to_ir(manifest_path: &Path) -> Result<crate::ir::BesogneIR, String> {
+pub fn check_to_ir(manifest_path: &Path) -> Result<crate::ir::BesogneIR, crate::error::BesogneError> {
     let mut manifest = manifest::load_manifest(manifest_path)?;
     if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
         manifest.nodes = component::expand_components(&manifest, manifest_path)?;
@@ -177,7 +177,7 @@ pub fn check_to_ir(manifest_path: &Path) -> Result<crate::ir::BesogneIR, String>
 }
 
 /// Validate a manifest without compiling
-pub fn check(manifest_path: &Path) -> Result<(), String> {
+pub fn check(manifest_path: &Path) -> Result<(), crate::error::BesogneError> {
     let mut manifest = manifest::load_manifest(manifest_path)?;
     if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
         manifest.nodes = component::expand_components(&manifest, manifest_path)?;
@@ -188,16 +188,16 @@ pub fn check(manifest_path: &Path) -> Result<(), String> {
 }
 
 /// Quiet variant — same resolution, no eprintln output
-fn resolve_build_binaries_quiet(ir: &mut BesogneIR) -> Result<(), String> {
+fn resolve_build_binaries_quiet(ir: &mut BesogneIR) -> Result<(), crate::error::BesogneError> {
     resolve_build_binaries_inner(ir, true)
 }
 
 /// Build-time binary resolution: resolve all binary inputs, detect source, extract version, hash.
-fn resolve_build_binaries(ir: &mut BesogneIR) -> Result<(), String> {
+fn resolve_build_binaries(ir: &mut BesogneIR) -> Result<(), crate::error::BesogneError> {
     resolve_build_binaries_inner(ir, false)
 }
 
-fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), String> {
+fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), crate::error::BesogneError> {
     use std::sync::Mutex;
 
     // Collect binary resolution tasks (index, name, path, has_version)
@@ -216,7 +216,7 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
     // (many binaries like coreutils share the same canonical path)
     let hash_cache: Mutex<std::collections::HashMap<std::path::PathBuf, String>> =
         Mutex::new(std::collections::HashMap::new());
-    let results: Mutex<Vec<(usize, Result<binary::ResolvedBinary, String>)>> =
+    let results: Mutex<Vec<(usize, Result<binary::ResolvedBinary, crate::error::BesogneError>)>> =
         Mutex::new(Vec::with_capacity(tasks.len()));
 
     crossbeam::scope(|s| {
@@ -298,7 +298,7 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
     }
 
     if !errors.is_empty() {
-        return Err(errors.join("\n\n"));
+        return Err(crate::error::BesogneError::Compile(errors.join("\n\n")));
     }
 
     // Collect resolved hashes by binary name AND qualified key (for parent lookups).
@@ -376,10 +376,10 @@ fn resolve_build_binaries_inner(ir: &mut BesogneIR, quiet: bool) -> Result<(), S
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(format!(
+        Err(crate::error::BesogneError::Compile(format!(
             "build-time binary resolution failed:\n  {}",
             errors.join("\n  ")
-        ))
+        )))
     }
 }
 

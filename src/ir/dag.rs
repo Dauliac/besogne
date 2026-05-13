@@ -6,7 +6,7 @@ use std::collections::HashMap;
 /// Build the exec-phase DAG from resolved inputs
 pub fn build_exec_dag(
     ir: &BesogneIR,
-) -> Result<(DiGraph<ContentId, ()>, HashMap<ContentId, NodeIndex>), String> {
+) -> Result<(DiGraph<ContentId, ()>, HashMap<ContentId, NodeIndex>), crate::error::BesogneError> {
     let mut graph = DiGraph::new();
     let mut node_map: HashMap<ContentId, NodeIndex> = HashMap::new();
 
@@ -36,7 +36,7 @@ pub fn build_exec_dag(
 
     // Check for cycles
     if petgraph::algo::is_cyclic_directed(&graph) {
-        return Err("circular ordering in exec DAG".into());
+        return Err(crate::error::BesogneError::Dag("circular ordering in exec DAG".into()));
     }
 
     Ok((graph, node_map))
@@ -45,9 +45,9 @@ pub fn build_exec_dag(
 /// Compute parallel execution tiers from topological sort
 pub fn compute_tiers(
     graph: &DiGraph<ContentId, ()>,
-) -> Result<Vec<Vec<NodeIndex>>, String> {
+) -> Result<Vec<Vec<NodeIndex>>, crate::error::BesogneError> {
     let topo = petgraph::algo::toposort(graph, None)
-        .map_err(|_| "circular ordering detected".to_string())?;
+        .map_err(|_| crate::error::BesogneError::Dag("circular ordering detected".into()))?;
 
     let mut depth: HashMap<NodeIndex, usize> = HashMap::new();
     let mut max_depth = 0;

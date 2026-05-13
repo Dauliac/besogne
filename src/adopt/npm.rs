@@ -1,22 +1,23 @@
 //! package.json parser and rewriter for `besogne adopt`.
 
+use crate::error::BesogneError;
 use super::ParsedScript;
 use std::path::Path;
 
 /// Parse package.json and extract scripts
 pub fn parse_package_json(
     path: &Path,
-) -> Result<(serde_json::Value, Vec<ParsedScript>), String> {
+) -> Result<(serde_json::Value, Vec<ParsedScript>), BesogneError> {
     let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        .map_err(|e| BesogneError::Adopt(format!("cannot read {}: {e}", path.display())))?;
 
     let pkg: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("invalid JSON in {}: {e}", path.display()))?;
+        .map_err(|e| BesogneError::Adopt(format!("invalid JSON in {}: {e}", path.display())))?;
 
     let scripts_obj = match pkg.get("scripts") {
         Some(serde_json::Value::Object(m)) => m,
-        Some(_) => return Err("\"scripts\" field is not an object".into()),
-        None => return Err("no \"scripts\" field in package.json".into()),
+        Some(_) => return Err(BesogneError::Adopt("\"scripts\" field is not an object".into())),
+        None => return Err(BesogneError::Adopt("no \"scripts\" field in package.json".into())),
     };
 
     let scripts: Vec<ParsedScript> = scripts_obj
@@ -46,7 +47,7 @@ pub fn resolve_lifecycle_ordering(scripts: &mut [ParsedScript]) {
     for script in scripts.iter() {
         let name = &script.name;
 
-        if let Some(base) = name.strip_prefix("seal") {
+        if let Some(base) = name.strip_prefix("pre") {
             if names.contains(&base.to_string()) {
                 deps_to_add.push((base.to_string(), name.to_string()));
             }
@@ -73,7 +74,7 @@ pub fn resolve_lifecycle_ordering(scripts: &mut [ParsedScript]) {
 pub fn rewrite_package_json(
     original: &serde_json::Value,
     scripts: &[ParsedScript],
-) -> Result<String, String> {
+) -> Result<String, BesogneError> {
     let mut pkg = original.clone();
 
     if let Some(scripts_obj) = pkg.get_mut("scripts").and_then(|s| s.as_object_mut()) {
@@ -86,7 +87,7 @@ pub fn rewrite_package_json(
     }
 
     serde_json::to_string_pretty(&pkg)
-        .map_err(|e| format!("cannot serialize package.json: {e}"))
+        .map_err(|e| BesogneError::Adopt(format!("cannot serialize package.json: {e}")))
 }
 
 #[cfg(test)]

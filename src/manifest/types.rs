@@ -100,6 +100,14 @@ pub struct SandboxConfig {
 
     #[serde(default)]
     pub network: Option<NetworkSandbox>,
+
+    /// Default scheduling priority for all commands (overridden per-command)
+    #[serde(default)]
+    pub priority: Option<Priority>,
+
+    /// Default memory limit for all commands (overridden per-command)
+    #[serde(default)]
+    pub memory_limit: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -297,6 +305,16 @@ pub struct CommandInput {
     /// - omitted (None): auto — verify if <10s, skip if >=10s
     #[serde(default)]
     pub verify: Option<bool>,
+
+    /// Scheduling priority: "normal" (default), "low", "background".
+    /// Controls CPU nice level + I/O scheduling priority.
+    #[serde(default)]
+    pub priority: Option<Priority>,
+
+    /// Memory limit for this command (e.g. "2GB", "512MB").
+    /// Process is killed if it exceeds this via RLIMIT_AS.
+    #[serde(default)]
+    pub memory_limit: Option<String>,
 }
 
 
@@ -448,6 +466,19 @@ pub struct RetryConfig {
     /// Total timeout for all attempts combined (e.g. "5m", "10m")
     #[serde(default)]
     pub timeout: Option<String>,
+}
+
+/// Scheduling priority for commands.
+/// Controls CPU nice level + I/O scheduling class.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Priority {
+    /// Default scheduling — no changes
+    Normal,
+    /// Reduced priority: nice 10 + best-effort I/O
+    Low,
+    /// Lowest priority: nice 19 + idle I/O
+    Background,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

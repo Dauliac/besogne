@@ -85,13 +85,14 @@ pub fn execute_traced_parallel(
     workdir: Option<&str>,
     sync: &output_sync::OutputSync,
     cmd_name: &str,
-) -> Result<CommandResult, String> {
+    resources: &crate::ir::ResourceLimits,
+) -> Result<CommandResult, crate::error::BesogneError> {
     // Set thread-local state for parallel execution
     PARALLEL_MODE.with(|c| c.set(true));
     OUTPUT_SYNC.with(|cell| {
         *cell.borrow_mut() = Some((sync.clone(), cmd_name.to_string()));
     });
-    let result = execute_traced(args, env, env_isolation, workdir);
+    let result = execute_traced(args, env, env_isolation, workdir, resources);
     OUTPUT_SYNC.with(|cell| { *cell.borrow_mut() = None; });
     PARALLEL_MODE.with(|c| c.set(false));
     // Final flush for this command
@@ -127,19 +128,20 @@ pub fn execute_traced(
     env: &HashMap<String, String>,
     env_isolation: &crate::ir::EnvSandboxResolved,
     workdir: Option<&str>,
-) -> Result<CommandResult, String> {
+    resources: &crate::ir::ResourceLimits,
+) -> Result<CommandResult, crate::error::BesogneError> {
     if args.is_empty() {
-        return Err("empty command".into());
+        return Err(crate::error::BesogneError::Tracer("empty command".into()));
     }
 
     #[cfg(target_os = "linux")]
     {
-        execute_with_wait4(args, env, env_isolation, workdir)
+        execute_with_wait4(args, env, env_isolation, workdir, resources)
     }
 
     #[cfg(not(target_os = "linux"))]
     {
-        execute_simple(args, env, env_isolation, workdir)
+        execute_simple(args, env, env_isolation, workdir, resources)
     }
 }
 
@@ -312,7 +314,8 @@ fn execute_with_wait4(
     env: &HashMap<String, String>,
     env_isolation: &crate::ir::EnvSandboxResolved,
     workdir: Option<&str>,
-) -> Result<CommandResult, String> {
+    resources: &crate::ir::ResourceLimits,
+) -> Result<CommandResult, crate::error::BesogneError> {
     use std::os::unix::io::FromRawFd;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
@@ -337,13 +340,13 @@ fn execute_with_wait4(
     let preload_ctx = preload::Preload::setup();
 
     // Create pipes for stdout and stderr
-    let (stdout_read, stdout_write) = pipe().map_err(|e| format!("pipe failed: {e}"))?;
-    let (stderr_read, stderr_write) = pipe().map_err(|e| format!("pipe failed: {e}"))?;
+    let (stdout_read, stdout_write) = pipe().map_err(|e| crate::error::BesogneError::Tracer(format!("pipe failed: {e}")))?;
+    let (stderr_read, stderr_write) = pipe().map_err(|e| crate::error::BesogneError::Tracer(format!("pipe failed: {e}")))?;
 
     let pid = unsafe { libc::fork() };
 
     if pid < 0 {
-        return Err("fork failed".into());
+        return Err(crate::error::BesogneError::Tracer("fork failed".into()));
     }
 
     if pid == 0 {
@@ -391,6 +394,9 @@ fn execute_with_wait4(
                 std::env::set_var(envtrack::EnvTracker::preload_var(), &tracker.lib_path);
                 std::env::set_var("BESOGNE_ENVTRACK_FD", tracker.write_fd.to_string());
             }
+
+            // Apply resource limits before exec
+            apply_resource_limits(resources);
 
             let c_args: Vec<std::ffi::CString> = args
                 .iter()
@@ -516,7 +522,7 @@ fn execute_with_wait4(
     let main_wall_ms = start.elapsed().as_millis() as u64;
 
     if waited < 0 {
-        return Err(format!("wait4 failed: {}", std::io::Error::last_os_error()));
+        return Err(crate::error::BesogneError::Tracer(format!("wait4 failed: {}", std::io::Error::last_os_error())));
     }
 
     let main_exit = extract_exit_code(status);
@@ -695,7 +701,8 @@ fn execute_simple(
     env: &HashMap<String, String>,
     env_isolation: &crate::ir::EnvSandboxResolved,
     workdir: Option<&str>,
-) -> Result<CommandResult, String> {
+    resources: &crate::ir::ResourceLimits,
+) -> Result<CommandResult, crate::error::BesogneError> {
     use std::process::{Command, Stdio};
     use std::time::Instant;
 
@@ -733,9 +740,22 @@ fn execute_simple(
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
+    // Apply resource limits in the child process via pre_exec
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let resources = resources.clone();
+        unsafe {
+            cmd.pre_exec(move || {
+                apply_resource_limits(&resources);
+                Ok(())
+            });
+        }
+    }
+
     let output = cmd
         .output()
-        .map_err(|e| format!("cannot execute '{}': {e}", args[0]))?;
+        .map_err(|e| crate::error::BesogneError::Tracer(format!("cannot execute '{}': {e}", args[0])))?;
 
     let wall_ms = start.elapsed().as_millis() as u64;
 
@@ -764,3 +784,72 @@ fn execute_simple(
         preload: preload_ctx.map(|p| p.collect()),
     })
 }
+
+/// Apply resource limits in a child process (after fork, before exec).
+/// Works on both Linux and macOS (POSIX).
+#[cfg(unix)]
+fn apply_resource_limits(resources: &crate::ir::ResourceLimits) {
+    use crate::ir::PriorityResolved;
+
+    // 1. CPU scheduling priority (nice)
+    match resources.priority {
+        PriorityResolved::Normal => {}
+        PriorityResolved::Low => {
+            unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 10); }
+            apply_io_priority_low();
+        }
+        PriorityResolved::Background => {
+            #[cfg(target_os = "macos")]
+            {
+                // macOS: PRIO_DARWIN_BG sets full background mode (CPU + I/O + timers)
+                unsafe { libc::setpriority(libc::PRIO_DARWIN_BG, 0, 1); }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 19); }
+                apply_io_priority_idle();
+            }
+        }
+    }
+
+    // 2. Memory limit via RLIMIT_AS (address space limit — POSIX)
+    if let Some(limit) = resources.memory_limit {
+        let rlim = libc::rlimit {
+            rlim_cur: limit,
+            rlim_max: limit,
+        };
+        unsafe { libc::setrlimit(libc::RLIMIT_AS, &rlim); }
+    }
+}
+
+/// Linux: set I/O scheduling to best-effort priority 4
+#[cfg(target_os = "linux")]
+fn apply_io_priority_low() {
+    const IOPRIO_WHO_PROCESS: libc::c_int = 1;
+    const IOPRIO_CLASS_BE: u32 = 2;
+    let ioprio = (IOPRIO_CLASS_BE << 13) | 4;
+    unsafe { libc::syscall(libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS, 0, ioprio); }
+}
+
+/// Linux: set I/O scheduling to idle class
+#[cfg(target_os = "linux")]
+fn apply_io_priority_idle() {
+    const IOPRIO_WHO_PROCESS: libc::c_int = 1;
+    const IOPRIO_CLASS_IDLE: u32 = 3;
+    let ioprio = IOPRIO_CLASS_IDLE << 13;
+    unsafe { libc::syscall(libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS, 0, ioprio); }
+}
+
+/// macOS: set I/O scheduling via setiopolicy_np
+#[cfg(target_os = "macos")]
+fn apply_io_priority_low() {
+    extern "C" {
+        fn setiopolicy_np(iotype: libc::c_int, scope: libc::c_int, policy: libc::c_int) -> libc::c_int;
+    }
+    // IOPOL_TYPE_DISK=0, IOPOL_SCOPE_PROCESS=0, IOPOL_UTILITY=1
+    unsafe { setiopolicy_np(0, 0, 1); }
+}
+
+/// Non-unix stub (no-op)
+#[cfg(not(unix))]
+fn apply_resource_limits(_resources: &crate::ir::ResourceLimits) {}

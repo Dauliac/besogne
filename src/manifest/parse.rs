@@ -1,9 +1,9 @@
 use super::types::Manifest;
 use std::path::Path;
 
-pub fn load_manifest(path: &Path) -> Result<Manifest, String> {
+pub fn load_manifest(path: &Path) -> Result<Manifest, crate::error::BesogneError> {
     let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        .map_err(|e| crate::error::BesogneError::Manifest(format!("cannot read {}: {e}", path.display())))?;
 
     let ext = path
         .extension()
@@ -13,11 +13,11 @@ pub fn load_manifest(path: &Path) -> Result<Manifest, String> {
 
     let manifest: Manifest = match ext.as_str() {
         "yaml" | "yml" => serde_yaml::from_str(&content)
-            .map_err(|e| format!("invalid manifest YAML in {}: {e}", path.display()))?,
+            .map_err(|e| crate::error::BesogneError::Manifest(format!("invalid manifest YAML in {}: {e}", path.display())))?,
         "toml" => toml::from_str(&content)
-            .map_err(|e| format!("invalid manifest TOML in {}: {e}", path.display()))?,
+            .map_err(|e| crate::error::BesogneError::Manifest(format!("invalid manifest TOML in {}: {e}", path.display())))?,
         _ => serde_json::from_str(&content)
-            .map_err(|e| format!("invalid manifest JSON in {}: {e}", path.display()))?,
+            .map_err(|e| crate::error::BesogneError::Manifest(format!("invalid manifest JSON in {}: {e}", path.display())))?,
     };
 
     validate_manifest(&manifest)?;
@@ -115,9 +115,9 @@ fn find_git_root(start: &Path) -> Option<std::path::PathBuf> {
     }
 }
 
-fn validate_manifest(manifest: &Manifest) -> Result<(), String> {
+fn validate_manifest(manifest: &Manifest) -> Result<(), crate::error::BesogneError> {
     if manifest.name.is_empty() {
-        return Err("manifest 'name' is required".into());
+        return Err(crate::error::BesogneError::Manifest("manifest 'name' is required".into()));
     }
 
     // With named map, duplicates are impossible (map keys are unique).

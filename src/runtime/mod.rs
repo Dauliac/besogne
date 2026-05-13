@@ -10,7 +10,7 @@ use crate::output::{self, OutputRenderer};
 use crate::probe;
 use crate::tracer;
 use cache::ContextCache;
-use cli::{DumpMode, RunMode};
+use cli::DumpMode;
 use std::collections::HashMap;
 use std::process::ExitCode;
 use std::sync::Mutex;
@@ -59,7 +59,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     }
 
     // Partition inputs by phase
-    let build_nodes: Vec<&ResolvedNode> = ir.nodes.iter().filter(|i| i.phase == Phase::Build).collect();
+    let _build_nodes: Vec<&ResolvedNode> = ir.nodes.iter().filter(|i| i.phase == Phase::Build).collect();
     let pre_nodes: Vec<&ResolvedNode> = ir.nodes.iter().filter(|i| i.phase == Phase::Seal).collect();
 
     // 2. Pre-phase — check seals
@@ -70,7 +70,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         // For file inputs, verify the file hasn't changed since caching
         // by re-hashing (cheap for small files, catches content changes)
         match &input.node {
-            ResolvedNativeNode::File { path, .. } => {
+            ResolvedNativeNode::File { path: _, .. } => {
                 let fresh = probe::probe_input(&input.node);
                 if let Some(cached) = context.get_probe(&input.id.0) {
                     fresh.success && fresh.hash == cached.hash
@@ -557,6 +557,7 @@ fn execute_dag(
             workdir: Option<String>,
             side_effects: bool,
             verify: Option<bool>,
+            resources: crate::ir::ResourceLimits,
         }
         let mut jobs: Vec<CmdJob> = Vec::new();
 
@@ -566,7 +567,7 @@ fn execute_dag(
             let Some(input) = input_by_id.get(content_id) else { continue };
 
             if let ResolvedNativeNode::Command {
-                name, run, env, side_effects, workdir, force_args, debug_args, verify, ..
+                name, run, env, side_effects, workdir, force_args, debug_args, verify, resources, ..
             } = &input.node {
                 if last_exit_code != 0 && !side_effects { continue; }
 
@@ -603,11 +604,22 @@ fn execute_dag(
                 };
                 renderer.on_command_start(name, &effective_run, &ctx);
 
+                // Merge resource limits: command-level overrides sandbox defaults
+                let effective_resources = crate::ir::ResourceLimits {
+                    priority: if resources.priority != crate::ir::PriorityResolved::Normal {
+                        resources.priority
+                    } else {
+                        ir.sandbox.priority
+                    },
+                    memory_limit: resources.memory_limit.or(ir.sandbox.memory_limit),
+                };
+
                 jobs.push(CmdJob {
                     node_idx, name: name.clone(), run: run.clone(),
                     effective_run, cmd_env,
                     workdir: workdir.clone(), side_effects: *side_effects,
                     verify: *verify,
+                    resources: effective_resources,
                 });
             }
         }
@@ -630,7 +642,7 @@ fn execute_dag(
                     s.spawn(move |_| {
                         let r = tracer::execute_traced_parallel(
                             &job.effective_run, &job.cmd_env, sandbox, job.workdir.as_deref(),
-                            sync, &cmd_name);
+                            sync, &cmd_name, &job.resources);
                         (job, r)
                     })
                 }).collect();
@@ -643,7 +655,8 @@ fn execute_dag(
             // Single command or empty → sequential (direct streaming, no sync overhead)
             jobs.into_iter().map(|job| {
                 let r = tracer::execute_traced(
-                    &job.effective_run, &job.cmd_env, &ir.sandbox.env, job.workdir.as_deref());
+                    &job.effective_run, &job.cmd_env, &ir.sandbox.env, job.workdir.as_deref(),
+                    &job.resources);
                 (job, r)
             }).collect()
         };
@@ -678,27 +691,65 @@ fn execute_dag(
             renderer.on_command_output(name, &stdout, &cmd_stderr);
             renderer.on_command_end(name, &result);
 
-            // Idempotency verification: verify=true → always, verify=false → never,
-            // verify=None → auto (skip if >10s to avoid doubling execution time).
+            // Idempotency verification — two strategies:
+            //
+            // 1. Free check: compare declared outputs (std children, file children,
+            //    exit code) between the cached entry and this fresh run.
+            //    Two executions with matching declared outputs = idempotent,
+            //    no extra re-run needed.
+            //
+            // 2. Explicit verify: re-run the command a second time and diff.
+            //    Only when no cached entry exists for free comparison.
+            //
+            // verify=true → always explicit, verify=false → never, None → auto.
             const VERIFY_THRESHOLD_MS: u64 = 10_000;
-            let should_verify = match job.verify {
-                Some(true) => true,
-                Some(false) => false,
-                None => result.wall_ms < VERIFY_THRESHOLD_MS,
-            };
-            if first_run && !job.side_effects && result.exit_code == 0 && should_verify {
-                eprintln!("    {}", output::style::styled(
-                    output::style::diagnostic::VERIFYING,
-                    output::style::message::VERIFY_RUN2,
-                ));
-                let vresult = verify::verify_command(
-                    name, content_id,
-                    &job.effective_run, &job.cmd_env, &ir.sandbox.env, job.workdir.as_deref(),
-                    &result, &ir.nodes,
-                );
-                verify::format_verify_human(&vresult);
-                if !vresult.idempotent {
-                    non_idempotent.push(name.clone());
+            let mut verified_by_cache = false;
+
+            if !job.side_effects && result.exit_code == 0 && job.verify != Some(false) {
+                if let Some(cached) = context.get_command(name) {
+                    let outputs_old = verify::collect_declared_outputs(
+                        name, content_id, &ir.nodes,
+                        &cached.stdout, &cached.stderr, cached.exit_code,
+                    );
+                    let outputs_new = verify::collect_declared_outputs(
+                        name, content_id, &ir.nodes,
+                        &stdout, &cmd_stderr, result.exit_code,
+                    );
+                    let diffs = verify::diff_outputs(&outputs_old, &outputs_new);
+                    if diffs.is_empty() {
+                        verified_by_cache = true;
+                    } else {
+                        non_idempotent.push(name.clone());
+                        verify::format_verify_human(&verify::VerifyResult {
+                            command_name: name.clone(),
+                            idempotent: false,
+                            diffs,
+                        });
+                    }
+                }
+            }
+
+            // Explicit verify: only when free check didn't cover it (no cached entry)
+            if !verified_by_cache && !non_idempotent.contains(name) {
+                let should_verify = match job.verify {
+                    Some(true) => true,
+                    Some(false) => false,
+                    None => result.wall_ms < VERIFY_THRESHOLD_MS,
+                };
+                if first_run && !job.side_effects && result.exit_code == 0 && should_verify {
+                    eprintln!("    {}", output::style::styled(
+                        output::style::diagnostic::VERIFYING,
+                        output::style::message::VERIFY_RUN2,
+                    ));
+                    let vresult = verify::verify_command(
+                        name, content_id,
+                        &job.effective_run, &job.cmd_env, &ir.sandbox.env, job.workdir.as_deref(),
+                        &result, &ir.nodes,
+                    );
+                    verify::format_verify_human(&vresult);
+                    if !vresult.idempotent {
+                        non_idempotent.push(name.clone());
+                    }
                 }
             }
 
@@ -939,6 +990,7 @@ fn execute_command_with_retry(
     workdir: Option<&str>,
     retry: Option<&crate::ir::RetryResolved>,
     _renderer: &mut output::Renderer,
+    resources: &crate::ir::ResourceLimits,
 ) -> (Option<tracer::CommandResult>, String, String) {
     let max_attempts = retry.map(|r| r.attempts).unwrap_or(1);
     let deadline = retry.and_then(|r| r.timeout_ms.map(|t| {
@@ -958,7 +1010,7 @@ fn execute_command_with_retry(
             }
         }
 
-        match tracer::execute_traced(run, env, sandbox_env, workdir) {
+        match tracer::execute_traced(run, env, sandbox_env, workdir, resources) {
             Ok(result) => {
                 let stdout = String::from_utf8_lossy(&result.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&result.stderr).to_string();

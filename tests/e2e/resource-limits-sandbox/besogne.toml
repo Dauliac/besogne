@@ -1,0 +1,29 @@
+name = "resource-limits-sandbox"
+description = "Sandbox-level priority inherited by commands"
+
+[sandbox]
+priority = "low"
+
+# No per-command priority — should inherit sandbox "low" (nice 10)
+[nodes.check-inherited]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "cat /proc/self/stat | awk '{print $19}'"]
+
+[nodes.inherited-stdout]
+type = "std"
+stream = "stdout"
+parents = ["check-inherited"]
+
+# Per-command override to background — should use nice 19
+[nodes.check-override]
+type = "command"
+phase = "exec"
+priority = "background"
+run = ["sh", "-c", "cat /proc/self/stat | awk '{print $19}'"]
+parents = ["check-inherited"]
+
+[nodes.override-stdout]
+type = "std"
+stream = "stdout"
+parents = ["check-override"]

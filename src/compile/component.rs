@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 pub fn expand_components(
     manifest: &Manifest,
     manifest_path: &Path,
-) -> Result<HashMap<String, Node>, String> {
+) -> Result<HashMap<String, Node>, crate::error::BesogneError> {
     let mut expanded = HashMap::new();
 
     for (key, input) in &manifest.nodes {
@@ -54,7 +54,7 @@ pub fn expand_components(
                             .blank()
                             .note(&e.to_string())
                             .build();
-                        format!("{header}\n{body}")
+                        crate::error::BesogneError::Component(format!("{header}\n{body}"))
                     })?;
                     if expanded.contains_key(&full_key) {
                         let header = style::error_diag(&format!(
@@ -67,7 +67,7 @@ pub fn expand_components(
                             .note(&format!("node '{full_key}' already exists"))
                             .hint("two components produce the same node — rename one or use overrides")
                             .build();
-                        return Err(format!("{header}\n{body}"));
+                        return Err(crate::error::BesogneError::Component(format!("{header}\n{body}")));
                     }
                     expanded.insert(full_key, node);
                 }
@@ -81,12 +81,12 @@ pub fn expand_components(
     Ok(expanded)
 }
 
-fn parse_component_ref(component_ref: &str) -> Result<(String, String), String> {
+fn parse_component_ref(component_ref: &str) -> Result<(String, String), crate::error::BesogneError> {
     let parts: Vec<&str> = component_ref.splitn(2, '/').collect();
     if parts.len() != 2 {
-        return Err(format!(
+        return Err(crate::error::BesogneError::Component(format!(
             "invalid component reference '{component_ref}': expected 'namespace/name' (e.g., 'docker/daemon')"
-        ));
+        )));
     }
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
@@ -101,7 +101,7 @@ fn expand_component_json(
     source: &str,
     manifest_path: &Path,
     visited: &mut Vec<String>,
-) -> Result<Vec<(String, serde_json::Value)>, String> {
+) -> Result<Vec<(String, serde_json::Value)>, crate::error::BesogneError> {
     // Cycle detection
     if visited.contains(&component_ref.to_string()) {
         let chain = format!("{} \u{2192} {}", visited.join(" \u{2192} "), component_ref);
@@ -115,7 +115,7 @@ fn expand_component_json(
             .note(&format!("composition chain: {chain}"))
             .hint("break the cycle by removing one of the component references")
             .build();
-        return Err(format!("{header}\n{body}"));
+        return Err(crate::error::BesogneError::Component(format!("{header}\n{body}")));
     }
     visited.push(component_ref.to_string());
 
@@ -124,7 +124,7 @@ fn expand_component_json(
         .map_err(|e| {
             if visited.len() > 1 {
                 let chain = visited.join(" \u{2192} ");
-                format!("{e}\n   = note: composition chain: {chain}")
+                crate::error::BesogneError::Component(format!("{e}\n   = note: composition chain: {chain}"))
             } else {
                 e
             }
@@ -133,7 +133,7 @@ fn expand_component_json(
         .map_err(|e| {
             if visited.len() > 1 {
                 let chain = visited.join(" \u{2192} ");
-                format!("{e}\n   = note: composition chain: {chain}")
+                crate::error::BesogneError::Component(format!("{e}\n   = note: composition chain: {chain}"))
             } else {
                 e
             }
@@ -209,17 +209,17 @@ fn expand_component_json(
 /// Components use manifest format (`nodes: { ... }`).
 fn load_component_nodes(
     component_path: &Path,
-) -> Result<HashMap<String, serde_json::Value>, String> {
+) -> Result<HashMap<String, serde_json::Value>, crate::error::BesogneError> {
     let content = std::fs::read_to_string(component_path)
-        .map_err(|e| format!("cannot read component {}: {e}", component_path.display()))?;
+        .map_err(|e| crate::error::BesogneError::Component(format!("cannot read component {}: {e}", component_path.display())))?;
     let raw: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("invalid component JSON {}: {e}", component_path.display()))?;
+        .map_err(|e| crate::error::BesogneError::Component(format!("invalid component JSON {}: {e}", component_path.display())))?;
 
     let nodes_obj = raw
         .get("nodes")
         .and_then(|n| n.as_object())
         .ok_or_else(|| {
-            format!("component '{}' missing 'nodes' map", component_path.display())
+            crate::error::BesogneError::Component(format!("component '{}' missing 'nodes' map", component_path.display()))
         })?;
 
     Ok(nodes_obj
@@ -334,7 +334,7 @@ fn resolve_component_path(
     source: &str,
     component_ref: &str,
     manifest_path: &Path,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, crate::error::BesogneError> {
     let (namespace, name) = parse_component_ref(component_ref)?;
 
     match source {
@@ -367,10 +367,10 @@ fn resolve_component_path(
                 return Ok(json_path);
             }
 
-            Err(format!(
+            Err(crate::error::BesogneError::Component(format!(
                 "builtin component '{component_ref}' not found. Looked in:\n  {}",
                 json_path.display()
-            ))
+            )))
         }
 
         s if s.starts_with("./") || s.starts_with("../") => {
@@ -387,16 +387,16 @@ fn resolve_component_path(
                 return Ok(flat_json);
             }
 
-            Err(format!(
+            Err(crate::error::BesogneError::Component(format!(
                 "component '{component_ref}' not found in '{s}'. Looked in:\n  {}\n  {}",
                 component_dir.join(&namespace).display(),
                 component_dir.display()
-            ))
+            )))
         }
 
-        _ => Err(format!(
+        _ => Err(crate::error::BesogneError::Component(format!(
             "unsupported component source '{source}' for '{component_ref}'. \
              Supported: \"builtin\", \"./local/path\""
-        )),
+        ))),
     }
 }

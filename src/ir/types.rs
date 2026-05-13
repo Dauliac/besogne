@@ -82,6 +82,12 @@ pub struct SandboxResolved {
     pub env: EnvSandboxResolved,
     pub tmpdir: bool,
     pub network: NetworkSandboxResolved,
+    /// Default scheduling priority for all commands
+    #[serde(default)]
+    pub priority: PriorityResolved,
+    /// Default memory limit in bytes for all commands (None = unlimited)
+    #[serde(default)]
+    pub memory_limit: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,6 +221,9 @@ pub enum ResolvedNativeNode {
         /// Explicit idempotency toggle: true=always, false=never, None=auto (<10s)
         #[serde(default)]
         verify: Option<bool>,
+        /// Resource limits (priority + memory cap)
+        #[serde(default)]
+        resources: ResourceLimits,
     },
 
     Platform {
@@ -278,6 +287,27 @@ pub struct RetryResolved {
     /// Total timeout in milliseconds (None = unlimited)
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+}
+
+/// Resolved scheduling priority — platform-independent
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PriorityResolved {
+    #[default]
+    Normal,
+    Low,
+    Background,
+}
+
+/// Resolved resource limits for a command
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ResourceLimits {
+    /// Scheduling priority
+    #[serde(default)]
+    pub priority: PriorityResolved,
+    /// Memory limit in bytes (RLIMIT_AS). None = unlimited.
+    #[serde(default)]
+    pub memory_limit: Option<u64>,
 }
 
 /// How to handle a missing resource at probe time.

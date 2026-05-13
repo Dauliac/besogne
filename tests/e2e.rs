@@ -802,6 +802,96 @@ fn e2e_multi_project_run_by_task_name() {
     assert!(err.contains("tests passed"), "should run test task: {err}");
 }
 
+// ─── resource-limits ────────────────────────────────────────────────
+
+#[test]
+#[cfg(target_os = "linux")]
+fn e2e_resource_limits_priority() {
+    let dir = setup_case("resource-limits");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    // Run with JSON output to parse nice values from stdout
+    let r = run_in_with_args(dir.path(), &["-l", "json"]);
+    let err = stderr(&r);
+    assert!(r.status.success(), "run: {err}");
+
+    let stdout = String::from_utf8_lossy(&r.stdout);
+    // Parse JSON lines to find stdout events
+    let mut nice_low = None;
+    let mut nice_bg = None;
+    for line in stdout.lines() {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+            if v["event"] == "command_cached" || v["event"] == "command_end" {
+                // skip
+            }
+            if v["event"] == "command_output" {
+                let name = v["name"].as_str().unwrap_or("");
+                let out = v["stdout"].as_str().unwrap_or("").trim();
+                if name == "check-nice" && !out.is_empty() {
+                    nice_low = out.parse::<i32>().ok();
+                }
+                if name == "check-nice-bg" && !out.is_empty() {
+                    nice_bg = out.parse::<i32>().ok();
+                }
+            }
+        }
+    }
+
+    assert_eq!(nice_low, Some(10), "low priority should set nice=10, stdout: {stdout}");
+    assert_eq!(nice_bg, Some(19), "background priority should set nice=19, stdout: {stdout}");
+
+    // mem-ok should have succeeded (stdout contains "mem-ok-passed")
+    assert!(stdout.contains("mem-ok-passed"), "mem-ok command should succeed: {stdout}");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn e2e_resource_limits_oom() {
+    let dir = setup_case("resource-limits-oom");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    let r = run_in(dir.path());
+    // Command should fail — 8MB RLIMIT_AS is too small for sh
+    assert!(!r.status.success(), "oom command should fail");
+    let out = String::from_utf8_lossy(&r.stdout);
+    assert!(!out.contains("should-not-reach"), "command should not produce output");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn e2e_resource_limits_sandbox_inherit() {
+    let dir = setup_case("resource-limits-sandbox");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    let r = run_in_with_args(dir.path(), &["-l", "json"]);
+    let err = stderr(&r);
+    assert!(r.status.success(), "run: {err}");
+
+    let stdout = String::from_utf8_lossy(&r.stdout);
+    let mut nice_inherited = None;
+    let mut nice_override = None;
+    for line in stdout.lines() {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+            if v["event"] == "command_output" {
+                let name = v["name"].as_str().unwrap_or("");
+                let out = v["stdout"].as_str().unwrap_or("").trim();
+                if name == "check-inherited" && !out.is_empty() {
+                    nice_inherited = out.parse::<i32>().ok();
+                }
+                if name == "check-override" && !out.is_empty() {
+                    nice_override = out.parse::<i32>().ok();
+                }
+            }
+        }
+    }
+
+    assert_eq!(nice_inherited, Some(10), "sandbox low should inherit nice=10, stdout: {stdout}");
+    assert_eq!(nice_override, Some(19), "command background should override to nice=19, stdout: {stdout}");
+}
+
 // ─── parallel-commands ──────────────────────────────────────────────
 
 // parallel-commands: manual test only (3 workers × 100 steps × 1s = ~100s)

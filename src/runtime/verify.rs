@@ -30,14 +30,14 @@ pub enum DiffKind {
     ExecFailed { error: String },
 }
 
-enum OutputValue {
+pub(crate) enum OutputValue {
     ExitCode(i32),
     FileHash(String),
     StdContent(String),
 }
 
 /// Collect only declared child node values for a command.
-fn collect_declared_outputs(
+pub(crate) fn collect_declared_outputs(
     command_name: &str,
     command_id: &ContentId,
     ir_nodes: &[ResolvedNode],
@@ -75,7 +75,7 @@ fn collect_declared_outputs(
     outputs
 }
 
-fn diff_outputs(run1: &HashMap<String, OutputValue>, run2: &HashMap<String, OutputValue>) -> Vec<NodeDiff> {
+pub(crate) fn diff_outputs(run1: &HashMap<String, OutputValue>, run2: &HashMap<String, OutputValue>) -> Vec<NodeDiff> {
     let mut diffs = Vec::new();
     for (label, v1) in run1 {
         let Some(v2) = run2.get(label) else {
@@ -113,12 +113,12 @@ pub fn verify_command(
     let stderr1 = String::from_utf8_lossy(&first_result.stderr).to_string();
     let outputs1 = collect_declared_outputs(command_name, command_id, ir_nodes, &stdout1, &stderr1, first_result.exit_code);
 
-    let result2 = match crate::tracer::execute_traced(run, env, sandbox, workdir) {
+    let result2 = match crate::tracer::execute_traced(run, env, sandbox, workdir, &crate::ir::ResourceLimits::default()) {
         Ok(r) => r,
         Err(e) => {
             return VerifyResult {
                 command_name: command_name.to_string(), idempotent: false,
-                diffs: vec![NodeDiff { label: "execution".into(), kind: DiffKind::ExecFailed { error: e } }],
+                diffs: vec![NodeDiff { label: "execution".into(), kind: DiffKind::ExecFailed { error: e.to_string() } }],
             };
         }
     };

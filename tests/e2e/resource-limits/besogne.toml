@@ -1,0 +1,41 @@
+name = "resource-limits"
+description = "Test priority + memory_limit on commands"
+
+# Verify nice level is applied (Linux: /proc/self/stat field 19 = nice)
+[nodes.check-nice]
+type = "command"
+phase = "exec"
+priority = "low"
+run = ["sh", "-c", "cat /proc/self/stat | awk '{print $19}'"]
+
+[nodes.nice-stdout]
+type = "std"
+stream = "stdout"
+parents = ["check-nice"]
+
+# Verify background nice level
+[nodes.check-nice-bg]
+type = "command"
+phase = "exec"
+priority = "background"
+run = ["sh", "-c", "cat /proc/self/stat | awk '{print $19}'"]
+parents = ["check-nice"]
+
+[nodes.bg-stdout]
+type = "std"
+stream = "stdout"
+parents = ["check-nice-bg"]
+
+# Command with generous memory limit — should succeed
+[nodes.mem-ok]
+type = "command"
+phase = "exec"
+memory_limit = "1GB"
+run = ["echo", "mem-ok-passed"]
+parents = ["check-nice-bg"]
+
+[nodes.mem-ok-stdout]
+type = "std"
+stream = "stdout"
+contains = ["mem-ok-passed"]
+parents = ["mem-ok"]

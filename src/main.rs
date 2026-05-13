@@ -1,5 +1,6 @@
 mod adopt;
 mod compile;
+pub mod error;
 mod ir;
 mod manifest;
 mod output;
@@ -84,13 +85,13 @@ enum Commands {
 }
 
 /// Resolve inputs: use explicit paths or auto-discover.
-fn resolve_manifests(explicit: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
+fn resolve_manifests(explicit: &[PathBuf]) -> Result<Vec<PathBuf>, crate::error::BesogneError> {
     if !explicit.is_empty() {
         return Ok(explicit.to_vec());
     }
     let discovered = manifest::discover_manifests();
     if discovered.is_empty() {
-        return Err("no manifest found. Provide --input or create a besogne.{json,yaml,yml,toml} file.".into());
+        return Err(crate::error::BesogneError::Cli("no manifest found. Provide --input or create a besogne.{json,yaml,yml,toml} file.".into()));
     }
     eprintln!(
         "besogne: discovered {}",
@@ -105,13 +106,13 @@ fn resolve_manifests(explicit: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
 fn resolve_single_input_quiet<'a>(
     explicit: &Option<PathBuf>,
     args: &'a [String],
-) -> Result<(PathBuf, &'a [String]), String> {
+) -> Result<(PathBuf, &'a [String]), crate::error::BesogneError> {
     if let Some(p) = explicit {
         return Ok((p.clone(), args));
     }
     let discovered = manifest::discover_manifests();
     match discovered.len() {
-        0 => Err("no manifest found. Provide --input or create a besogne.{json,yaml,yml,toml} file.".into()),
+        0 => Err(crate::error::BesogneError::Cli("no manifest found. Provide --input or create a besogne.{json,yaml,yml,toml} file.".into())),
         1 => Ok((discovered[0].clone(), args)),
         _ => {
             // Try to match args[0] as a task name
@@ -136,10 +137,10 @@ fn resolve_single_input_quiet<'a>(
                     Some(stem.strip_suffix(".besogne").unwrap_or(stem).to_string())
                 })
                 .collect();
-            Err(format!(
+            Err(crate::error::BesogneError::Cli(format!(
                 "multiple manifests found — specify which task to run:\n  besogne run <task> [-- args]\n\navailable tasks:\n  {}",
                 names.join("\n  ")
-            ))
+            )))
         }
     }
 }
@@ -301,11 +302,11 @@ fn main() -> ExitCode {
                 let build_start = std::time::Instant::now();
                 eprintln!("besogne: building {} manifests in parallel...", tasks.len());
 
-                let results: std::sync::Mutex<Vec<(String, PathBuf, Result<PathBuf, String>)>> =
+                let results: std::sync::Mutex<Vec<(String, PathBuf, Result<PathBuf, crate::error::BesogneError>)>> =
                     std::sync::Mutex::new(Vec::new());
 
                 crossbeam::scope(|s| {
-                    for (manifest_path, out, name) in &tasks {
+                    for (manifest_path, _out, name) in &tasks {
                         let results = &results;
                         s.spawn(move |_| {
                             let result = compile::compile_quiet(manifest_path, force);
