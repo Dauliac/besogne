@@ -68,6 +68,11 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
     let cache_hash = compile_cache_key(&ir_json);
     let store_binary = store_binary_path(&cache_hash);
 
+    // Ensure output directory exists
+    if let Some(parent) = output_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
     if !force && store_binary.exists() {
         // Store hit — copy or symlink to output
         std::fs::copy(&store_binary, output_path)
