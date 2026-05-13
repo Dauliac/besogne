@@ -54,11 +54,45 @@ pub trait OutputRenderer {
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64);
 }
 
-pub fn renderer_for_format(format: &LogFormat, verbose: bool) -> Box<dyn OutputRenderer> {
+/// Enum dispatch for renderers — compile-time monomorphized, no vtable.
+pub enum Renderer {
+    Human(HumanRenderer),
+    Json(JsonRenderer),
+    Ci(CiRenderer),
+}
+
+/// Delegate every OutputRenderer method to the inner variant.
+macro_rules! delegate_renderer {
+    ($self:ident, $method:ident ( $($arg:ident),* )) => {
+        match $self {
+            Renderer::Human(r) => r.$method($($arg),*),
+            Renderer::Json(r) => r.$method($($arg),*),
+            Renderer::Ci(r) => r.$method($($arg),*),
+        }
+    };
+}
+
+impl OutputRenderer for Renderer {
+    fn on_start(&mut self, ir: &BesogneIR) { delegate_renderer!(self, on_start(ir)); }
+    fn on_phase_start(&mut self, phase: &str, count: usize) { delegate_renderer!(self, on_phase_start(phase, count)); }
+    fn on_probe_result(&mut self, input: &ResolvedNode, result: &ProbeResult, status: ProbeStatus) { delegate_renderer!(self, on_probe_result(input, result, status)); }
+    fn on_phase_end(&mut self, phase: &str) { delegate_renderer!(self, on_phase_end(phase)); }
+    fn on_command_start(&mut self, name: &str, exec: &[String], ctx: &CommandContext) { delegate_renderer!(self, on_command_start(name, exec, ctx)); }
+    fn on_command_output(&mut self, name: &str, stdout: &str, stderr: &str) { delegate_renderer!(self, on_command_output(name, stdout, stderr)); }
+    fn on_command_end(&mut self, name: &str, result: &CommandResult) { delegate_renderer!(self, on_command_end(name, result)); }
+    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand, ctx: &CommandContext) { delegate_renderer!(self, on_command_cached(name, exec, cached, ctx)); }
+    fn on_build_pinned_summary(&mut self, nodes: &[&ResolvedNode]) { delegate_renderer!(self, on_build_pinned_summary(nodes)); }
+    fn on_changed_probes(&mut self, changed: &[String]) { delegate_renderer!(self, on_changed_probes(changed)); }
+    fn on_skip(&mut self, total_nodes: usize, ran_at: &str, duration_ms: u64) { delegate_renderer!(self, on_skip(total_nodes, ran_at, duration_ms)); }
+    fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]) { delegate_renderer!(self, on_undeclared_deps(binaries, env_vars)); }
+    fn on_summary(&mut self, exit_code: i32, wall_ms: u64) { delegate_renderer!(self, on_summary(exit_code, wall_ms)); }
+}
+
+pub fn renderer_for_format(format: &LogFormat, verbose: bool) -> Renderer {
     match format {
-        LogFormat::Human => Box::new(HumanRenderer::new(verbose)),
-        LogFormat::Json => Box::new(JsonRenderer::new()),
-        LogFormat::Ci => Box::new(CiRenderer::new()),
+        LogFormat::Human => Renderer::Human(HumanRenderer::new(verbose)),
+        LogFormat::Json => Renderer::Json(JsonRenderer::new()),
+        LogFormat::Ci => Renderer::Ci(CiRenderer::new()),
     }
 }
 
@@ -539,11 +573,17 @@ pub struct HumanRenderer {
     cached_commands: usize,
     last_cached_at: Option<String>,
     phase_start: Option<std::time::Instant>,
+    /// Collect executed command metrics for end-of-run summary
+    command_metrics: Vec<(String, Metrics, i32)>, // (name, metrics, exit_code)
 }
 
 impl HumanRenderer {
     pub fn new(verbose: bool) -> Self {
-        Self { verbose, cached_probes: 0, cached_commands: 0, last_cached_at: None, phase_start: None }
+        Self {
+            verbose, cached_probes: 0, cached_commands: 0,
+            last_cached_at: None, phase_start: None,
+            command_metrics: Vec::new(),
+        }
     }
 }
 
@@ -602,14 +642,15 @@ impl OutputRenderer for HumanRenderer {
     }
 
     fn on_command_end(&mut self, name: &str, result: &CommandResult) {
-        let metrics = format_metrics_human(&Metrics::from(result));
+        // Just show pass/fail inline — metrics summary at the end
         if result.exit_code == 0 {
-            eprintln!("  {} {name}  {metrics}", styled(status::FRESH, label::FRESH));
+            eprintln!("  {} {name}", styled(status::FRESH, label::FRESH));
         } else {
-            eprintln!("  {} {name}  exit {}  {metrics}",
+            eprintln!("  {} {name}  exit {}",
                 styled(status::FAILED, label::FAILED), result.exit_code);
         }
-        // Process tree only shown in --status view, not during live execution
+        // Store metrics for end-of-run summary
+        self.command_metrics.push((name.to_string(), Metrics::from(result), result.exit_code));
     }
 
     fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand, ctx: &CommandContext) {
@@ -668,14 +709,60 @@ impl OutputRenderer for HumanRenderer {
 
     fn on_summary(&mut self, exit_code: i32, wall_ms: u64) {
         let total = self.cached_probes + self.cached_commands;
-        if !self.verbose && self.cached_commands > 0 && exit_code == 0 {
+        if !self.verbose && self.cached_commands > 0 && exit_code == 0 && self.command_metrics.is_empty() {
             let ago = self.last_cached_at.as_deref()
                 .map(|t| format!(", ran {}", format_relative_time(t)))
                 .unwrap_or_default();
             eprintln!("{} {}",
                 styled(status::FRESH, label::NOTHING_TO_DO),
                 dim(&format!("({total} {}{ago}, {})", message::NODES_CACHED, message::STATUS_HINT)));
-        } else if exit_code == 0 {
+            return;
+        }
+
+        // Per-command metrics summary (only significant values)
+        if !self.command_metrics.is_empty() {
+            eprintln!();
+            for (name, m, code) in &self.command_metrics {
+                let mut parts = Vec::new();
+
+                // Only include metrics with significant values
+                if m.wall_ms >= 10 {
+                    parts.push(format!("{}{} {:.3}s{}",
+                        telemetry::TIME, telemetry::TIME_ICON, m.wall_ms as f64 / 1000.0, RESET));
+                }
+                if m.user_ms >= 10 || m.sys_ms >= 10 {
+                    let cores = if m.wall_ms > 0 { (m.user_ms + m.sys_ms) as f64 / m.wall_ms as f64 } else { 0.0 };
+                    parts.push(format!("{}{} {:.2}s user + {:.2}s kernel ({:.1} cores){}",
+                        telemetry::CPU, telemetry::CPU_ICON,
+                        m.user_ms as f64 / 1000.0, m.sys_ms as f64 / 1000.0, cores, RESET));
+                }
+                if m.max_rss_kb >= 1024 { // >= 1MB
+                    parts.push(format!("{}{} {}{}",
+                        telemetry::MEMORY, telemetry::MEMORY_ICON, format_bytes(m.max_rss_kb * 1024), RESET));
+                }
+                if m.disk_read_bytes >= 1024 || m.disk_write_bytes >= 1024 {
+                    parts.push(format!("{}{} \u{2b07}{}  \u{2b06}{}{}",
+                        telemetry::DISK, telemetry::DISK_ICON,
+                        format_bytes(m.disk_read_bytes), format_bytes(m.disk_write_bytes), RESET));
+                }
+                if m.net_read_bytes >= 1024 || m.net_write_bytes >= 1024 {
+                    parts.push(format!("{}{} \u{2b07}{}  \u{2b06}{}{}",
+                        telemetry::NETWORK, telemetry::NETWORK_ICON,
+                        format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes), RESET));
+                }
+
+                if parts.is_empty() { continue; } // skip commands with no significant metrics
+
+                let status_tag = if *code == 0 {
+                    styled(status::FRESH, label::FRESH)
+                } else {
+                    styled(status::FAILED, &format!("{} exit {code}", label::FAILED))
+                };
+                eprintln!("  {status_tag} {name}  {}", parts.join("  "));
+            }
+        }
+
+        if exit_code == 0 {
             eprintln!("\n{} {:.3}s", styled(status::FRESH, label::DONE), wall_ms as f64 / 1000.0);
         } else {
             eprintln!("\n{} exit {exit_code}  {:.3}s",
