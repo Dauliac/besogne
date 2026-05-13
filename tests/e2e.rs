@@ -815,8 +815,8 @@ fn e2e_parallel_commands() {
     assert!(r.status.success(), "run: {err}");
 
     // Both workers should have produced output
-    assert!(err.contains("[A] step 5"), "worker-a output missing: {err}");
-    assert!(err.contains("[B] step 5"), "worker-b output missing: {err}");
+    assert!(err.contains("[A] step 100"), "worker-a output missing: {err}");
+    assert!(err.contains("[B] step 100"), "worker-b output missing: {err}");
 
     // Merge should have seen both results
     assert!(err.contains("done-a"), "merge missing done-a: {err}");

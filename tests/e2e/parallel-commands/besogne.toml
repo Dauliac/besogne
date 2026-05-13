@@ -21,7 +21,7 @@ parents = ["setup"]
 [nodes.worker-a]
 type = "command"
 phase = "exec"
-run = ["sh", "-c", "for i in 1 2 3 4 5; do echo \"[A] step $i\"; sleep 0.1; done; echo done-a > results/a.txt"]
+run = ["sh", "-c", "for i in $(seq 1 100); do echo \"[A] step $i\"; sleep 0.01; done; echo done-a > results/a.txt"]
 parents = ["setup-exit"]
 
 [nodes.worker-a-exit]
@@ -33,13 +33,13 @@ parents = ["worker-a"]
 [nodes.worker-a-stdout]
 type = "std"
 stream = "stdout"
-contains = ["[A] step 5"]
+contains = ["[A] step 100"]
 parents = ["worker-a"]
 
 [nodes.worker-b]
 type = "command"
 phase = "exec"
-run = ["sh", "-c", "for i in 1 2 3 4 5; do echo \"[B] step $i\"; sleep 0.1; done; echo done-b > results/b.txt"]
+run = ["sh", "-c", "for i in $(seq 1 100); do echo \"[B] step $i\"; sleep 0.01; done; echo done-b > results/b.txt"]
 parents = ["setup-exit"]
 
 [nodes.worker-b-exit]
@@ -51,7 +51,7 @@ parents = ["worker-b"]
 [nodes.worker-b-stdout]
 type = "std"
 stream = "stdout"
-contains = ["[B] step 5"]
+contains = ["[B] step 100"]
 parents = ["worker-b"]
 
 # merge waits for both workers
