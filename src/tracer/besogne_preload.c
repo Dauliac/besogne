@@ -184,11 +184,51 @@ pid_t vfork(void) {
 }
 
 /* ── Per-process network I/O counters ─────────────────────────────── */
-/* Atomic counters — ~5ns per send/recv call (just an atomic add).    */
-/* Emitted as a single 'N' event on _exit with the totals.           */
+/* Only count on internet sockets (AF_INET/AF_INET6), not Unix domain. */
+/* Track which fds are internet sockets via a bitset.                   */
 
 static volatile uint64_t net_rx_total = 0;
 static volatile uint64_t net_tx_total = 0;
+
+/* Bitset: fd N is an internet socket if bit N is set. Supports fd 0..1023. */
+#define MAX_TRACKED_FD 1024
+static volatile uint64_t inet_fd_bits[MAX_TRACKED_FD / 64] = {0};
+
+static inline void mark_inet_fd(int fd) {
+    if (fd >= 0 && fd < MAX_TRACKED_FD)
+        __atomic_fetch_or(&inet_fd_bits[fd / 64], 1ULL << (fd % 64), __ATOMIC_RELAXED);
+}
+static inline void clear_inet_fd(int fd) {
+    if (fd >= 0 && fd < MAX_TRACKED_FD)
+        __atomic_fetch_and(&inet_fd_bits[fd / 64], ~(1ULL << (fd % 64)), __ATOMIC_RELAXED);
+}
+static inline int is_inet_fd(int fd) {
+    if (fd < 0 || fd >= MAX_TRACKED_FD) return 0;
+    return (__atomic_load_n(&inet_fd_bits[fd / 64], __ATOMIC_RELAXED) >> (fd % 64)) & 1;
+}
+
+/* Hook socket() to track which fds are internet sockets */
+int socket(int domain, int type, int protocol) {
+    static int (*real)(int, int, int) = NULL;
+    if (!real) real = dlsym(RTLD_NEXT, "socket");
+    if (!real) return -1;
+
+    int fd = real(domain, type, protocol);
+    if (fd >= 0 && (domain == AF_INET || domain == AF_INET6)) {
+        mark_inet_fd(fd);
+    }
+    return fd;
+}
+
+/* Hook close() to clear the bitset */
+int close(int fd) {
+    static int (*real)(int) = NULL;
+    if (!real) real = dlsym(RTLD_NEXT, "close");
+    if (!real) return -1;
+
+    clear_inet_fd(fd);
+    return real(fd);
+}
 
 /* ── _exit ───────────────────────────────────────────────────────── */
 
@@ -397,7 +437,8 @@ ssize_t send(int fd, const void *buf, size_t len, int flags) {
     if (!real) return -1;
 
     ssize_t n = real(fd, buf, len, flags);
-    if (n > 0) __atomic_fetch_add(&net_tx_total, (uint64_t)n, __ATOMIC_RELAXED);
+    if (n > 0 && is_inet_fd(fd))
+        __atomic_fetch_add(&net_tx_total, (uint64_t)n, __ATOMIC_RELAXED);
     return n;
 }
 
@@ -409,7 +450,8 @@ ssize_t sendto(int fd, const void *buf, size_t len, int flags,
     if (!real) return -1;
 
     ssize_t n = real(fd, buf, len, flags, addr, addrlen);
-    if (n > 0) __atomic_fetch_add(&net_tx_total, (uint64_t)n, __ATOMIC_RELAXED);
+    if (n > 0 && is_inet_fd(fd))
+        __atomic_fetch_add(&net_tx_total, (uint64_t)n, __ATOMIC_RELAXED);
     return n;
 }
 
@@ -419,7 +461,8 @@ ssize_t recv(int fd, void *buf, size_t len, int flags) {
     if (!real) return -1;
 
     ssize_t n = real(fd, buf, len, flags);
-    if (n > 0) __atomic_fetch_add(&net_rx_total, (uint64_t)n, __ATOMIC_RELAXED);
+    if (n > 0 && is_inet_fd(fd))
+        __atomic_fetch_add(&net_rx_total, (uint64_t)n, __ATOMIC_RELAXED);
     return n;
 }
 
@@ -431,6 +474,7 @@ ssize_t recvfrom(int fd, void *buf, size_t len, int flags,
     if (!real) return -1;
 
     ssize_t n = real(fd, buf, len, flags, addr, addrlen);
-    if (n > 0) __atomic_fetch_add(&net_rx_total, (uint64_t)n, __ATOMIC_RELAXED);
+    if (n > 0 && is_inet_fd(fd))
+        __atomic_fetch_add(&net_rx_total, (uint64_t)n, __ATOMIC_RELAXED);
     return n;
 }
