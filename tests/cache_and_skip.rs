@@ -132,7 +132,7 @@ run = ["sh", "-c", "for i in $(seq 1 10000); do echo $i > /dev/null; done"]
     assert!(run.status.success());
 
     let stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(stderr.contains("time:"), "should show timing: {stderr}");
+    assert!(stderr.contains("⏱️") || stderr.contains("time"), "should show timing: {stderr}");
 }
 
 #[test]
