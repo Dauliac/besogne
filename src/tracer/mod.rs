@@ -6,6 +6,7 @@
 /// A background /proc scanner captures command names and ppid for tree structure.
 
 pub mod envtrack;
+pub mod output_sync;
 pub mod preload;
 
 use std::collections::{HashMap, HashSet};
@@ -75,6 +76,44 @@ pub struct CommandResult {
 }
 
 /// Execute a command with wait4 for rusage metrics collection
+/// Execute with synchronized output for parallel commands.
+/// Lines are buffered in `sync` and flushed in blocks with headers.
+pub fn execute_traced_parallel(
+    args: &[String],
+    env: &HashMap<String, String>,
+    env_isolation: &crate::ir::EnvSandboxResolved,
+    workdir: Option<&str>,
+    sync: &output_sync::OutputSync,
+    cmd_name: &str,
+) -> Result<CommandResult, String> {
+    // Set thread-local output sync for reader threads
+    OUTPUT_SYNC.with(|cell| {
+        *cell.borrow_mut() = Some((sync.clone(), cmd_name.to_string()));
+    });
+    let result = execute_traced(args, env, env_isolation, workdir);
+    OUTPUT_SYNC.with(|cell| { *cell.borrow_mut() = None; });
+    // Final flush for this command
+    sync.flush_command(cmd_name);
+    result
+}
+
+// Thread-local output sync context (set by execute_traced_parallel)
+thread_local! {
+    static OUTPUT_SYNC: std::cell::RefCell<Option<(output_sync::OutputSync, String)>> = std::cell::RefCell::new(None);
+}
+
+/// Write a line to either OutputSync (parallel) or stderr (sequential).
+fn emit_output_line(line: &str) {
+    OUTPUT_SYNC.with(|cell| {
+        let borrow = cell.borrow();
+        if let Some((sync, name)) = borrow.as_ref() {
+            sync.push_line(name, line);
+        } else {
+            eprintln!("    {line}");
+        }
+    });
+}
+
 pub fn execute_traced(
     args: &[String],
     env: &HashMap<String, String>,
@@ -404,6 +443,10 @@ fn execute_with_wait4(
     // Read stdout and stderr — stream to terminal while also capturing for cache.
     // Uses threads to read both pipes concurrently (prevents deadlock if child
     // fills one pipe buffer while we're blocked reading the other).
+    // Capture output sync context before spawning (thread-local doesn't transfer)
+    let output_ctx: Option<(output_sync::OutputSync, String)> = OUTPUT_SYNC.with(|cell| cell.borrow().clone());
+    let output_ctx2 = output_ctx.clone();
+
     let stdout_handle = {
         let stdout_file = unsafe { std::fs::File::from_raw_fd(stdout_read) };
         std::thread::spawn(move || {
@@ -412,7 +455,11 @@ fn execute_with_wait4(
             let reader = std::io::BufReader::new(stdout_file);
             for line in reader.lines() {
                 if let Ok(line) = line {
-                    eprintln!("    {line}");
+                    if let Some((ref sync, ref name)) = output_ctx {
+                        sync.push_line(name, &line);
+                    } else {
+                        eprintln!("    {line}");
+                    }
                     buf.extend(line.as_bytes());
                     buf.push(b'\n');
                 }
@@ -428,7 +475,11 @@ fn execute_with_wait4(
             let reader = std::io::BufReader::new(stderr_file);
             for line in reader.lines() {
                 if let Ok(line) = line {
-                    eprintln!("    {line}");
+                    if let Some((ref sync, ref name)) = output_ctx2 {
+                        sync.push_line(name, &line);
+                    } else {
+                        eprintln!("    {line}");
+                    }
                     buf.extend(line.as_bytes());
                     buf.push(b'\n');
                 }

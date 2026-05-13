@@ -612,20 +612,29 @@ fn execute_dag(
 
         // ── Phase 2: Execute commands in parallel (tracer streams output) ──
         let exec_results: Vec<(CmdJob, Result<tracer::CommandResult, String>)> = if jobs.len() > 1 {
-            // Multiple commands in tier → parallel execution
-            crossbeam::scope(|s| {
+            // Multiple commands in tier → parallel execution with synchronized output
+            let sync = tracer::output_sync::OutputSync::new();
+            let flusher = sync.start_flusher();
+
+            let results = crossbeam::scope(|s| {
                 let sandbox = &ir.sandbox.env;
                 let handles: Vec<_> = jobs.into_iter().map(|job| {
+                    let sync = &sync;
+                    let cmd_name = job.name.clone();
                     s.spawn(move |_| {
-                        let r = tracer::execute_traced(
-                            &job.effective_run, &job.cmd_env, sandbox, job.workdir.as_deref());
+                        let r = tracer::execute_traced_parallel(
+                            &job.effective_run, &job.cmd_env, sandbox, job.workdir.as_deref(),
+                            sync, &cmd_name);
                         (job, r)
                     })
                 }).collect();
-                handles.into_iter().map(|h| h.join().unwrap()).collect()
-            }).unwrap()
+                handles.into_iter().map(|h| h.join().unwrap()).collect::<Vec<_>>()
+            }).unwrap();
+
+            flusher.stop();
+            results
         } else {
-            // Single command or empty → sequential (no thread overhead)
+            // Single command or empty → sequential (direct streaming, no sync overhead)
             jobs.into_iter().map(|job| {
                 let r = tracer::execute_traced(
                     &job.effective_run, &job.cmd_env, &ir.sandbox.env, job.workdir.as_deref());
