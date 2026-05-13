@@ -320,7 +320,8 @@ fn format_metrics_human(m: &Metrics) -> String {
     if m.max_rss_kb > 0 {
         parts.push(format!("{MEMORY}{MEMORY_ICON} {}:{}{RESET}", ml::MEMORY, format_bytes(m.max_rss_kb * 1024)));
     }
-    if m.disk_read_bytes > 0 || m.disk_write_bytes > 0 {
+    // >= 50MB read or >= 1MB write — filters out library loading noise (~13MB per process)
+    if m.disk_read_bytes >= 50 * 1_048_576 || m.disk_write_bytes >= 1_048_576 {
         parts.push(format!(
             "{DISK}{DISK_ICON} \u{2b07} {}:{} \u{2b06} {}:{}{RESET}",
             ml::READ, format_bytes(m.disk_read_bytes), ml::WRITE, format_bytes(m.disk_write_bytes),
@@ -742,7 +743,8 @@ impl OutputRenderer for HumanRenderer {
                     parts.push(format!("{}{} {}{}",
                         telemetry::MEMORY, telemetry::MEMORY_ICON, format_bytes(m.max_rss_kb * 1024), RESET));
                 }
-                if m.disk_read_bytes >= 1024 || m.disk_write_bytes >= 1024 {
+                // >= 50MB read or >= 1MB write — filters out library loading noise (~13MB)
+                if m.disk_read_bytes >= 50 * 1_048_576 || m.disk_write_bytes >= 1_048_576 {
                     parts.push(format!("{}{} \u{2b07}{}  \u{2b06}{}{}",
                         telemetry::DISK, telemetry::DISK_ICON,
                         format_bytes(m.disk_read_bytes), format_bytes(m.disk_write_bytes), RESET));
