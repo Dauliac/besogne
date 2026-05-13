@@ -86,12 +86,14 @@ pub fn execute_traced_parallel(
     sync: &output_sync::OutputSync,
     cmd_name: &str,
 ) -> Result<CommandResult, String> {
-    // Set thread-local output sync for reader threads
+    // Set thread-local state for parallel execution
+    PARALLEL_MODE.with(|c| c.set(true));
     OUTPUT_SYNC.with(|cell| {
         *cell.borrow_mut() = Some((sync.clone(), cmd_name.to_string()));
     });
     let result = execute_traced(args, env, env_isolation, workdir);
     OUTPUT_SYNC.with(|cell| { *cell.borrow_mut() = None; });
+    PARALLEL_MODE.with(|c| c.set(false));
     // Final flush for this command
     sync.flush_command(cmd_name);
     result
@@ -112,6 +114,12 @@ fn emit_output_line(line: &str) {
             eprintln!("    {line}");
         }
     });
+}
+
+/// Whether we're in parallel mode (multiple commands in same tier).
+/// When true, skip PR_SET_CHILD_SUBREAPER and wait4(-1) to avoid cross-thread reaping.
+thread_local! {
+    static PARALLEL_MODE: std::cell::Cell<bool> = std::cell::Cell::new(false);
 }
 
 pub fn execute_traced(
@@ -315,7 +323,12 @@ fn execute_with_wait4(
 
     // Become subreaper: all orphaned descendants will be reparented to us
     // so we can wait4 them and collect their rusage.
-    unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); }
+    // Skip in parallel mode: subreaper is per-process, wait4(-1) would steal
+    // children from other threads.
+    let is_parallel = PARALLEL_MODE.with(|c| c.get());
+    if !is_parallel {
+        unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); }
+    }
 
     // Set up env tracking (LD_PRELOAD interposer)
     let env_tracker = envtrack::EnvTracker::setup();
@@ -523,8 +536,9 @@ fn execute_with_wait4(
         ..rusage_to_metrics(pid as u32, &rusage, main_exit, root_snapshot.as_ref(), main_wall_ms)
     }];
 
-    // Reap all orphaned descendants (adopted via PR_SET_CHILD_SUBREAPER)
-    loop {
+    // Reap all orphaned descendants (adopted via PR_SET_CHILD_SUBREAPER).
+    // Skip in parallel mode to avoid cross-thread child stealing.
+    while !is_parallel {
         let mut child_status: libc::c_int = 0;
         let mut child_rusage: libc::rusage = unsafe { std::mem::zeroed() };
         let child_pid = unsafe {
@@ -546,8 +560,10 @@ fn execute_with_wait4(
         ));
     }
 
-    // Disable subreaper
-    unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0); }
+    // Disable subreaper (only if we set it)
+    if !is_parallel {
+        unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0); }
+    }
 
     let (net_rx_after, net_tx_after) = read_net_dev();
     let net_read_bytes = net_rx_after.saturating_sub(net_rx_before);
