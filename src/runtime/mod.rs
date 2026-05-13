@@ -614,6 +614,10 @@ fn execute_dag(
         let exec_results: Vec<(CmdJob, Result<tracer::CommandResult, crate::error::BesogneError>)> = if jobs.len() > 1 {
             // Multiple commands in tier → parallel execution with synchronized output
             let sync = tracer::output_sync::OutputSync::new();
+            // Register start times for elapsed display in headers
+            for job in &jobs {
+                sync.register_start(&job.name);
+            }
             let flusher = sync.start_flusher();
 
             let results = crossbeam::scope(|s| {

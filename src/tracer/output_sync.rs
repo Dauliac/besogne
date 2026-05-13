@@ -8,8 +8,11 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 const FLUSH_INTERVAL_MS: u64 = 200;
+/// Show elapsed time in header after this threshold
+const ELAPSED_THRESHOLD_SECS: u64 = 5;
 
 /// Shared output synchronizer for parallel commands.
 #[derive(Clone)]
@@ -20,6 +23,8 @@ pub struct OutputSync {
 struct OutputSyncInner {
     /// Buffered lines per command name
     buffers: HashMap<String, Vec<String>>,
+    /// Start time per command (for elapsed display)
+    start_times: HashMap<String, Instant>,
     /// Which command was last flushed (for header elision)
     last_flushed: Option<String>,
 }
@@ -29,8 +34,16 @@ impl OutputSync {
         Self {
             inner: Arc::new(Mutex::new(OutputSyncInner {
                 buffers: HashMap::new(),
+                start_times: HashMap::new(),
                 last_flushed: None,
             })),
+        }
+    }
+
+    /// Register a command's start time.
+    pub fn register_start(&self, name: &str) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.start_times.insert(name.to_string(), Instant::now());
         }
     }
 
@@ -43,17 +56,29 @@ impl OutputSync {
         }
     }
 
+    /// Format header with optional elapsed time.
+    fn format_header(name: &str, start_times: &HashMap<String, Instant>) -> String {
+        if let Some(start) = start_times.get(name) {
+            let elapsed = start.elapsed().as_secs();
+            if elapsed >= ELAPSED_THRESHOLD_SECS {
+                return format!("    \x1b[2m── {} ({elapsed}s) ──\x1b[0m", name);
+            }
+        }
+        format!("    \x1b[2m── {} ──\x1b[0m", name)
+    }
+
     /// Flush all buffered lines, grouped by command with headers.
     pub fn flush_all(&self) {
         if let Ok(mut inner) = self.inner.lock() {
             let names: Vec<String> = inner.buffers.keys().cloned().collect();
             for name in names {
                 let last = inner.last_flushed.clone();
+                let header = Self::format_header(&name, &inner.start_times);
                 if let Some(lines) = inner.buffers.get_mut(&name) {
                     if lines.is_empty() { continue; }
 
                     if last.as_deref() != Some(&name) {
-                        eprintln!("    \x1b[2m── {} ──\x1b[0m", name);
+                        eprintln!("{header}");
                     }
 
                     for line in lines.drain(..) {
@@ -70,11 +95,12 @@ impl OutputSync {
     pub fn flush_command(&self, name: &str) {
         if let Ok(mut inner) = self.inner.lock() {
             let last = inner.last_flushed.clone();
+            let header = Self::format_header(name, &inner.start_times);
             if let Some(lines) = inner.buffers.get_mut(name) {
                 if lines.is_empty() { return; }
 
                 if last.as_deref() != Some(name) {
-                    eprintln!("    \x1b[2m── {} ──\x1b[0m", name);
+                    eprintln!("{header}");
                 }
 
                 for line in lines.drain(..) {
