@@ -269,20 +269,24 @@ fn exec_node_tree(
                 }
             }
 
-            // Cached stdout (L3 dim — old data, max 10 lines)
+            // Cached output (L3 dim — single block, not tree branches)
             let stdout_lines: Vec<&str> = cached.stdout.lines().collect();
             let stderr_lines: Vec<&str> = cached.stderr.lines().collect();
+            let mut output_lines: Vec<String> = Vec::new();
             for line in stdout_lines.iter().take(10) {
-                tree.push(Tree::new(dim(line)));
+                output_lines.push(dim(line));
             }
             if stdout_lines.len() > 10 {
-                tree.push(Tree::new(dim(&format!("...{} more lines", stdout_lines.len() - 10))));
+                output_lines.push(dim(&format!("...{} more lines", stdout_lines.len() - 10)));
             }
             for line in stderr_lines.iter().take(5) {
-                tree.push(Tree::new(dim(line)));
+                output_lines.push(dim(line));
             }
             if stderr_lines.len() > 5 {
-                tree.push(Tree::new(dim(&format!("...{} more lines", stderr_lines.len() - 5))));
+                output_lines.push(dim(&format!("...{} more lines", stderr_lines.len() - 5)));
+            }
+            if !output_lines.is_empty() {
+                tree.push(Tree::new(output_lines.join("\n")));
             }
 
             // Verification result
@@ -297,7 +301,7 @@ fn exec_node_tree(
                 }
             }
 
-            // Process tree children (L3)
+            // Process tree children (L3) — after output
             render_process_children(&mut tree, &cached.process_tree);
         }
     }
