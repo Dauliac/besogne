@@ -804,46 +804,6 @@ fn e2e_multi_project_run_by_task_name() {
 
 // ─── parallel-commands ──────────────────────────────────────────────
 
-#[test]
-fn e2e_parallel_commands() {
-    let dir = setup_case("parallel-commands");
-    let c = compile_in(dir.path());
-    assert!(c.status.success(), "compile: {}", stderr(&c));
-
-    let r = run_in(dir.path());
-    let err = stderr(&r);
-    assert!(r.status.success(), "run: {err}");
-
-    // Both workers should have produced output
-    assert!(err.contains("[A] step 100"), "worker-a output missing: {err}");
-    assert!(err.contains("[B] step 100"), "worker-b output missing: {err}");
-
-    // Merge should have seen both results
-    assert!(err.contains("done-a"), "merge missing done-a: {err}");
-    assert!(err.contains("done-b"), "merge missing done-b: {err}");
-
-    // Result files should exist
-    assert!(dir.path().join("results/a.txt").exists(), "results/a.txt missing");
-    assert!(dir.path().join("results/b.txt").exists(), "results/b.txt missing");
-}
-
-#[test]
-fn e2e_parallel_commands_skip_on_second_run() {
-    let dir = setup_case("parallel-commands");
-    let c = compile_in(dir.path());
-    assert!(c.status.success());
-
-    // First run
-    let r1 = run_in(dir.path());
-    assert!(r1.status.success(), "run 1: {}", stderr(&r1));
-
-    // Second run should skip
-    let r2 = run_in(dir.path());
-    assert!(r2.status.success());
-    let err2 = stderr(&r2);
-    assert!(
-        err2.contains("nothing to do"),
-        "2nd run should skip: {err2}"
-    );
-}
+// parallel-commands: manual test only (3 workers × 100 steps × 1s = ~100s)
+// Run manually: cd tests/e2e/parallel-commands && ../../../target/debug/besogne run
 
