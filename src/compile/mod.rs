@@ -12,7 +12,7 @@ use std::time::Instant;
 /// Compile a manifest into a self-contained binary in the global store.
 /// Returns the store path of the binary.
 /// Uses a content-addressed cache in $XDG_CACHE_HOME/besogne/store/ — same IR = same binary.
-pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, String> {
+pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<PathBuf, String> {
     let build_start = Instant::now();
 
     use crate::output::style::l3;
@@ -68,7 +68,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path) -> Result<PathBuf, Stri
     let cache_hash = compile_cache_key(&ir_json);
     let store_binary = store_binary_path(&cache_hash);
 
-    if store_binary.exists() {
+    if !force && store_binary.exists() {
         // Store hit — copy or symlink to output
         std::fs::copy(&store_binary, output_path)
             .map_err(|e| format!("cannot copy from store: {e}"))?;

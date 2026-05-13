@@ -29,6 +29,10 @@ enum Commands {
         /// Output binary path (only valid with a single input)
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Force rebuild — ignore content-addressed store cache
+        #[arg(short, long)]
+        force: bool,
     },
 
     /// Adopt scripts from package.json (or other task runners) into a besogne manifest.
@@ -239,7 +243,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Build { input, output }) => {
+        Some(Commands::Build { input, output, force }) => {
             let manifests = match resolve_manifests(&input) {
                 Ok(i) => i,
                 Err(e) => { eprintln!("{}", output::style::error_diag(&e.to_string())); return ExitCode::from(2); }
@@ -269,7 +273,7 @@ fn main() -> ExitCode {
             if tasks.len() == 1 {
                 // Single manifest: compile with progress output
                 let (manifest_path, out, name) = &tasks[0];
-                match compile::compile(manifest_path, out) {
+                match compile::compile(manifest_path, out, force) {
                     Ok(store_path) => {
                         if output.is_none() {
                             create_besogne_symlink(&cwd, name, &store_path);
