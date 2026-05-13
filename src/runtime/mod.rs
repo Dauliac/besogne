@@ -212,7 +212,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         .to_hex()
         .to_string();
 
-    if !has_side_effects(&ir) && context.can_skip(&input_hash) {
+    if !args.force && !has_side_effects(&ir) && context.can_skip(&input_hash) {
         replay_cached_commands(&ir, &context, &mut *renderer, &all_variables);
         let wall_ms = start.elapsed().as_millis() as u64;
         renderer.on_summary(0, wall_ms);

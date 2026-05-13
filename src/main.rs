@@ -73,6 +73,10 @@ enum Commands {
         #[arg(short, long)]
         input: Option<PathBuf>,
 
+        /// Force rebuild + re-execute (bypass all caches)
+        #[arg(short, long)]
+        force: bool,
+
         /// All remaining arguments forwarded to the besogne binary
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -339,7 +343,7 @@ fn main() -> ExitCode {
             }
         }
 
-        Some(Commands::Run { input, args }) => {
+        Some(Commands::Run { input, force, args }) => {
             // If --help is in args, we need to build first then forward --help
             // to show the produced binary's help (which includes all flags)
             let wants_help = args.iter().any(|a| a == "--help" || a == "-h");
@@ -361,8 +365,10 @@ fn main() -> ExitCode {
                 }
             };
 
-            // Detect -f/--force in forwarded args to force rebuild
-            let force_rebuild = forwarded_args.iter().any(|a| a == "-f" || a == "--force");
+            // Force flag: parsed by clap, forwarded to binary
+            let force_rebuild = force;
+            let mut forwarded_args = forwarded_args;
+            if force { forwarded_args.push("--force".to_string()); }
 
             // Detect JSON output mode from forwarded args
             let json_mode = forwarded_args.windows(2).any(|w| {

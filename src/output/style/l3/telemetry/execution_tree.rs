@@ -165,7 +165,7 @@ fn exec_phase_node(
                     let Some(n) = node_by_id.get(content_id) else { continue };
 
                     let node_tree = exec_node_tree(
-                        n, cache, &node_by_id, &exec_ids, &binary_map, tier_idx);
+                        n, cache, &node_by_id, &exec_ids, &binary_map, tier_idx, ir);
                     tier_tree.push(node_tree);
                 }
                 tree.push(tier_tree);
@@ -184,6 +184,7 @@ fn exec_node_tree(
     exec_ids: &HashSet<&ContentId>,
     binary_map: &HashMap<&str, (&str, Option<&str>)>,
     tier_idx: usize,
+    ir: &BesogneIR,
 ) -> Tree<String> {
     let node_status = crate::output::get_node_status(n, cache);
     let status_badge = crate::output::node_status_badge(&node_status);
@@ -224,11 +225,40 @@ fn exec_node_tree(
     // Command-specific children: binary refs, output, verify, process tree
     if let ResolvedNativeNode::Command { name, run, .. } = &n.node {
         if let Some(cached) = cache.get_command(name) {
-            // Binary refs (L3)
+            // Binary refs (L3) — show resolved paths for args that match declared binaries
             for arg in run {
                 if let Some(&(path, ver)) = binary_map.get(arg.as_str()) {
                     tree.push(Tree::new(
                         atoms::binary_ref::render(arg, &crate::output::crop_path(path, 60), ver)));
+                }
+            }
+
+            // Env vars (L3 dim — show values, mask secrets)
+            if !cached.stdout.is_empty() || !cached.stderr.is_empty() {
+                let secret_vars: HashSet<&str> = ir.nodes.iter()
+                    .filter_map(|n| match &n.node {
+                        ResolvedNativeNode::Env { name, secret: true, .. } => Some(name.as_str()),
+                        _ => None,
+                    }).collect();
+
+                let mut env_display: Vec<String> = Vec::new();
+                for probe_node in &ir.nodes {
+                    if let ResolvedNativeNode::Env { name, secret, .. } = &probe_node.node {
+                        if let Some(probe) = cache.get_probe(&probe_node.id.0) {
+                            for (k, v) in &probe.variables {
+                                if secret_vars.contains(name.as_str()) || secret_vars.contains(k.as_str()) {
+                                    env_display.push(format!("{k}=*****"));
+                                } else {
+                                    let display_v = if v.len() > 50 { format!("{}...", &v[..47]) } else { v.clone() };
+                                    env_display.push(format!("{k}={display_v}"));
+                                }
+                            }
+                        }
+                    }
+                }
+                if !env_display.is_empty() {
+                    env_display.sort();
+                    tree.push(Tree::new(dim(&env_display.join("  "))));
                 }
             }
 
