@@ -326,12 +326,9 @@ fn format_metrics_human(m: &Metrics) -> String {
             ml::READ, format_bytes(m.disk_read_bytes), ml::WRITE, format_bytes(m.disk_write_bytes),
         ));
     }
-    if m.net_read_bytes > 0 || m.net_write_bytes > 0 {
-        parts.push(format!(
-            "{NETWORK}{NETWORK_ICON} \u{2b07} {}:{} \u{2b06} {}:{}{RESET}",
-            ml::DOWNLOAD, format_bytes(m.net_read_bytes), ml::UPLOAD, format_bytes(m.net_write_bytes),
-        ));
-    }
+    // Network metrics intentionally omitted from per-command display.
+    // /proc/net/dev is system-wide, not per-process — attributing system
+    // network traffic to individual commands is misleading.
     if m.processes_spawned > 0 {
         parts.push(format!("{PROCESS}{PROCESS_ICON} {}:{}{RESET}", ml::PROCESSES, m.processes_spawned + 1));
     }
@@ -745,11 +742,7 @@ impl OutputRenderer for HumanRenderer {
                         telemetry::DISK, telemetry::DISK_ICON,
                         format_bytes(m.disk_read_bytes), format_bytes(m.disk_write_bytes), RESET));
                 }
-                if m.net_read_bytes >= 1024 || m.net_write_bytes >= 1024 {
-                    parts.push(format!("{}{} \u{2b07}{}  \u{2b06}{}{}",
-                        telemetry::NETWORK, telemetry::NETWORK_ICON,
-                        format_bytes(m.net_read_bytes), format_bytes(m.net_write_bytes), RESET));
-                }
+                // Network omitted — /proc/net/dev is system-wide, not per-process
 
                 if parts.is_empty() { continue; } // skip commands with no significant metrics
 
