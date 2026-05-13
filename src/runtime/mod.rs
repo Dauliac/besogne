@@ -556,6 +556,7 @@ fn execute_dag(
             cmd_env: HashMap<String, String>,
             workdir: Option<String>,
             side_effects: bool,
+            verify: Option<bool>,
         }
         let mut jobs: Vec<CmdJob> = Vec::new();
 
@@ -565,7 +566,7 @@ fn execute_dag(
             let Some(input) = input_by_id.get(content_id) else { continue };
 
             if let ResolvedNativeNode::Command {
-                name, run, env, side_effects, workdir, force_args, debug_args, ..
+                name, run, env, side_effects, workdir, force_args, debug_args, verify, ..
             } = &input.node {
                 if last_exit_code != 0 && !side_effects { continue; }
 
@@ -606,6 +607,7 @@ fn execute_dag(
                     node_idx, name: name.clone(), run: run.clone(),
                     effective_run, cmd_env,
                     workdir: workdir.clone(), side_effects: *side_effects,
+                    verify: *verify,
                 });
             }
         }
@@ -676,12 +678,15 @@ fn execute_dag(
             renderer.on_command_output(name, &stdout, &cmd_stderr);
             renderer.on_command_end(name, &result);
 
-            // Idempotency verification — skip for long-running commands (>10s)
-            // to avoid doubling execution time. Use --force to re-verify.
+            // Idempotency verification: verify=true → always, verify=false → never,
+            // verify=None → auto (skip if >10s to avoid doubling execution time).
             const VERIFY_THRESHOLD_MS: u64 = 10_000;
-            if first_run && !job.side_effects && result.exit_code == 0
-                && result.wall_ms < VERIFY_THRESHOLD_MS
-            {
+            let should_verify = match job.verify {
+                Some(true) => true,
+                Some(false) => false,
+                None => result.wall_ms < VERIFY_THRESHOLD_MS,
+            };
+            if first_run && !job.side_effects && result.exit_code == 0 && should_verify {
                 eprintln!("    {}", output::style::styled(
                     output::style::diagnostic::VERIFYING,
                     output::style::message::VERIFY_RUN2,

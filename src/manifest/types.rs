@@ -290,6 +290,13 @@ pub struct CommandInput {
     /// Retry configuration for transient failures
     #[serde(default)]
     pub retry: Option<RetryConfig>,
+
+    /// Explicit idempotency verification toggle.
+    /// - `true`: always verify on first run (even if >10s)
+    /// - `false`: never verify
+    /// - omitted (None): auto — verify if <10s, skip if >=10s
+    #[serde(default)]
+    pub verify: Option<bool>,
 }
 
 

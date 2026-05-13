@@ -4,11 +4,11 @@ use crate::output::style::{self, DiagBuilder};
 use std::collections::{HashMap, HashSet};
 
 /// Lower a parsed manifest into the intermediate representation
-pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::Path) -> Result<BesogneIR, String> {
+pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::Path) -> Result<BesogneIR, crate::error::BesogneError> {
     // Version is the content hash of the manifest — deterministic, no user-specified version.
     // Serialize to canonical JSON with sorted keys to avoid HashMap ordering non-determinism.
     let manifest_json = canonical_json(manifest)
-        .map_err(|e| format!("cannot serialize manifest for hashing: {e}"))?;
+        .map_err(|e| crate::error::BesogneError::Compile(format!("cannot serialize manifest for hashing: {e}")))?;
     let version = blake3::hash(&manifest_json).to_hex()[..16].to_string();
 
     let workdir = manifest_path
@@ -56,9 +56,9 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
     for (key, input) in &manifest.nodes {
         match input {
             Node::Component(_) => {
-                return Err(format!(
+                return Err(crate::error::BesogneError::Compile(format!(
                     "input '{key}': component not expanded before lowering (bug in compile pipeline)"
-                ));
+                )));
             }
             _ => {
                 let resolved = lower_input(key, input, &metadata.workdir)?;
@@ -90,7 +90,7 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
 }
 
 /// Lower a manifest input to IR. The `key` is the map key (= the input's name).
-fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNode, String> {
+fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNode, crate::error::BesogneError> {
     let (native, phase, id) = match input {
         Node::Env(e) => {
             let env_name = e.name.clone().unwrap_or_else(|| key.to_string());
@@ -172,6 +172,7 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
                 force_args: c.force_args.clone().unwrap_or_default(),
                 debug_args: c.debug_args.clone().unwrap_or_default(),
                 retry: lower_retry(&c.retry)?,
+                verify: c.verify,
             };
             let phase = c.phase.clone().unwrap_or(Phase::Exec);
             let id = ContentId::from_content("command", key, key.as_bytes());
@@ -238,7 +239,7 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
         }
 
         Node::Component(_) => {
-            return Err("components should be expanded before lowering".into());
+            return Err(crate::error::BesogneError::Compile("components should be expanded before lowering".into()));
         }
     };
 
@@ -265,7 +266,7 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
 fn validate_script_commands(
     nodes: &[ResolvedNode],
     workdir: &str,
-) -> Result<(), String> {
+) -> Result<(), crate::error::BesogneError> {
     // Collect file paths (relative → absolute)
     let file_paths: HashMap<String, String> = nodes
         .iter()
@@ -409,10 +410,10 @@ fn validate_script_commands(
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(format!(
+        Err(crate::error::BesogneError::Compile(format!(
             "script validation failed:\n  {}",
             errors.join("\n  ")
-        ))
+        )))
     }
 }
 
@@ -435,7 +436,7 @@ fn resolve_run_spec(spec: &manifest::ExecSpec) -> Vec<String> {
 fn resolve_ordering(
     nodes: &mut Vec<ResolvedNode>,
     manifest_nodes: &HashMap<String, manifest::Node>,
-) -> Result<(), String> {
+) -> Result<(), crate::error::BesogneError> {
     // Build name→id map for exec-phase inputs + source nodes (any phase)
     let name_to_id: HashMap<String, ContentId> = nodes
         .iter()
@@ -527,7 +528,7 @@ fn resolve_ordering(
             }?;
 
             let parent_names = parents_by_name.get(cmd_name)?;
-            let resolved: Result<Vec<ContentId>, String> = parent_names
+            let resolved: Result<Vec<ContentId>, crate::error::BesogneError> = parent_names
                 .iter()
                 .map(|dep_name| {
                     name_to_id.get(dep_name).cloned().ok_or_else(|| {
@@ -538,7 +539,7 @@ fn resolve_ordering(
                         if let Some(closest) = suggestion {
                             msg.push_str(&format!("\n   = hint: did you mean '{closest}'?"));
                         }
-                        msg
+                        crate::error::BesogneError::Compile(msg)
                     })
                 })
                 .collect();
@@ -651,7 +652,7 @@ fn derive_short(name: &str, taken: &HashSet<char>) -> Option<char> {
 fn lower_and_validate_flags(
     flags: &[Flag],
     besogne_name_upper: &str,
-) -> Result<Vec<ResolvedFlag>, String> {
+) -> Result<Vec<ResolvedFlag>, crate::error::BesogneError> {
     let mut by_scope: HashMap<Option<String>, Vec<&Flag>> = HashMap::new();
     for flag in flags {
         by_scope.entry(flag.subcommand.clone()).or_default().push(flag);
@@ -669,10 +670,10 @@ fn lower_and_validate_flags(
             if let Some(s) = flag.short {
                 if !shorts_taken.insert(s) {
                     let scope_label = scope.as_deref().unwrap_or("global");
-                    return Err(format!(
+                    return Err(crate::error::BesogneError::Compile(format!(
                         "flag '{}' in scope '{scope_label}': short '-{s}' conflicts",
                         flag.name
-                    ));
+                    )));
                 }
             }
         }
@@ -681,12 +682,12 @@ fn lower_and_validate_flags(
             let scope_label = scope.as_deref().unwrap_or("global");
 
             if !names.insert(flag.name.clone()) {
-                return Err(format!("duplicate flag name '{}' in scope '{scope_label}'", flag.name));
+                return Err(crate::error::BesogneError::Compile(format!("duplicate flag name '{}' in scope '{scope_label}'", flag.name)));
             }
 
             let env_var = compute_flag_env_var(flag, besogne_name_upper);
             if !all_env_vars.insert(env_var.clone()) {
-                return Err(format!("flag '{}': env var '{env_var}' conflicts", flag.name));
+                return Err(crate::error::BesogneError::Compile(format!("flag '{}': env var '{env_var}' conflicts", flag.name)));
             }
 
             let short = match flag.kind {
@@ -776,7 +777,7 @@ fn resolve_sandbox(sandbox: &Option<manifest::Sandbox>) -> SandboxResolved {
 
 /// Parse a human-readable duration string into milliseconds.
 /// Supported: "500ms", "1s", "2m", "1h", "1m30s"
-fn parse_duration_proper(s: &str) -> Result<u64, String> {
+fn parse_duration_proper(s: &str) -> Result<u64, crate::error::BesogneError> {
     let s = s.trim();
     let mut total_ms: u64 = 0;
     let mut rest = s;
@@ -785,9 +786,11 @@ fn parse_duration_proper(s: &str) -> Result<u64, String> {
         // Consume digits
         let num_end = rest.find(|c: char| !c.is_ascii_digit() && c != '.').unwrap_or(rest.len());
         if num_end == 0 {
-            return Err(format!("invalid duration: '{s}'"));
+            return Err(crate::error::BesogneError::Compile(format!("invalid duration: '{s}'")));
         }
-        let val: f64 = rest[..num_end].parse().map_err(|_| format!("invalid duration: '{s}'"))?;
+        let val: f64 = rest[..num_end]
+            .parse()
+            .map_err(|_| crate::error::BesogneError::Compile(format!("invalid duration: '{s}'")))?;
         rest = &rest[num_end..];
 
         if rest.is_empty() {
@@ -810,19 +813,19 @@ fn parse_duration_proper(s: &str) -> Result<u64, String> {
             total_ms += (val * 3_600_000.0) as u64;
             rest = &rest[1..];
         } else {
-            return Err(format!("unknown duration unit in '{s}'"));
+            return Err(crate::error::BesogneError::Compile(format!("unknown duration unit in '{s}'")));
         }
     }
 
     if total_ms == 0 && s != "0" && s != "0s" && s != "0ms" {
-        return Err(format!("duration parsed to zero: '{s}'"));
+        return Err(crate::error::BesogneError::Compile(format!("duration parsed to zero: '{s}'")));
     }
 
     Ok(total_ms)
 }
 
 /// Lower manifest RetryConfig to IR RetryResolved
-fn lower_retry(retry: &Option<manifest::RetryConfig>) -> Result<Option<RetryResolved>, String> {
+fn lower_retry(retry: &Option<manifest::RetryConfig>) -> Result<Option<RetryResolved>, crate::error::BesogneError> {
     let rc = match retry {
         Some(r) => r,
         None => return Ok(None),
@@ -834,9 +837,9 @@ fn lower_retry(retry: &Option<manifest::RetryConfig>) -> Result<Option<RetryReso
         None | Some("fixed") => RetryBackoff::Fixed,
         Some("linear") => RetryBackoff::Linear,
         Some("exponential") | Some("expo") => RetryBackoff::Exponential,
-        Some(other) => return Err(format!(
+        Some(other) => return Err(crate::error::BesogneError::Compile(format!(
             "unknown backoff strategy '{other}': expected fixed, linear, or exponential"
-        )),
+        ))),
     };
 
     let max_interval_ms = rc.max_interval.as_ref()
@@ -848,7 +851,7 @@ fn lower_retry(retry: &Option<manifest::RetryConfig>) -> Result<Option<RetryReso
         .transpose()?;
 
     if rc.attempts < 1 {
-        return Err("retry.attempts must be >= 1".into());
+        return Err(crate::error::BesogneError::Compile("retry.attempts must be >= 1".into()));
     }
 
     Ok(Some(RetryResolved {
@@ -867,7 +870,7 @@ fn lower_retry(retry: &Option<manifest::RetryConfig>) -> Result<Option<RetryReso
 /// 2. `std(stdout/stderr/exit_code)` must have exactly 1 command parent
 /// 3. `std(stdin)` must have 0 parents (stdin comes from binary input)
 /// 4. `source` must be exec phase (needs DAG ordering for env var delivery)
-fn validate_node_compositions(nodes: &[ResolvedNode]) -> Result<(), String> {
+fn validate_node_compositions(nodes: &[ResolvedNode]) -> Result<(), crate::error::BesogneError> {
     let node_by_id: HashMap<&ContentId, &ResolvedNode> = nodes.iter()
         .map(|n| (&n.id, n)).collect();
 
@@ -1011,7 +1014,7 @@ fn validate_node_compositions(nodes: &[ResolvedNode]) -> Result<(), String> {
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(errors.join("\n\n"))
+        Err(crate::error::BesogneError::Compile(errors.join("\n\n")))
     }
 }
 

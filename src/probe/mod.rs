@@ -514,6 +514,7 @@ mod tests {
                 force_args: vec![],
                 debug_args: vec![],
                 retry: None,
+                verify: None,
             },
             ResolvedNativeNode::Source {
                 format: "dotenv".into(),

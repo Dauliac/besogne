@@ -212,6 +212,9 @@ pub enum ResolvedNativeNode {
         debug_args: Vec<String>,
         #[serde(default)]
         retry: Option<RetryResolved>,
+        /// Explicit idempotency toggle: true=always, false=never, None=auto (<10s)
+        #[serde(default)]
+        verify: Option<bool>,
     },
 
     Platform {
