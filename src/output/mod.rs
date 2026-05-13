@@ -310,14 +310,16 @@ fn format_metrics_human(m: &Metrics) -> String {
     use metric_label as ml;
     let mut parts = Vec::new();
     parts.push(format!("{TIME}{TIME_ICON} {}:{:.3}s{RESET}", ml::TIME, m.wall_ms as f64 / 1000.0));
-    if m.user_ms > 0 || m.sys_ms > 0 {
+    // CPU: only show if >= 1s total (filters out bash/shell startup overhead)
+    if m.user_ms >= 1000 || m.sys_ms >= 1000 {
         let cores = if m.wall_ms > 0 { (m.user_ms + m.sys_ms) as f64 / m.wall_ms as f64 } else { 0.0 };
         parts.push(format!(
             "{CPU}{CPU_ICON} {}:{:.2}s {} + {:.2}s {} ({:.1} {}){RESET}",
             ml::CPU, m.user_ms as f64 / 1000.0, ml::USER, m.sys_ms as f64 / 1000.0, ml::KERNEL, cores, ml::CORES,
         ));
     }
-    if m.max_rss_kb > 0 {
+    // Memory: only show if >= 50MB (filters out shell/runtime baseline ~4MB)
+    if m.max_rss_kb >= 50 * 1024 {
         parts.push(format!("{MEMORY}{MEMORY_ICON} {}:{}{RESET}", ml::MEMORY, format_bytes(m.max_rss_kb * 1024)));
     }
     // >= 50MB read or >= 1MB write — filters out library loading noise (~13MB per process)
@@ -733,13 +735,13 @@ impl OutputRenderer for HumanRenderer {
                     parts.push(format!("{}{} {:.3}s{}",
                         telemetry::TIME, telemetry::TIME_ICON, m.wall_ms as f64 / 1000.0, RESET));
                 }
-                if m.user_ms >= 10 || m.sys_ms >= 10 {
+                if m.user_ms >= 1000 || m.sys_ms >= 1000 {
                     let cores = if m.wall_ms > 0 { (m.user_ms + m.sys_ms) as f64 / m.wall_ms as f64 } else { 0.0 };
                     parts.push(format!("{}{} {:.2}s user + {:.2}s kernel ({:.1} cores){}",
                         telemetry::CPU, telemetry::CPU_ICON,
                         m.user_ms as f64 / 1000.0, m.sys_ms as f64 / 1000.0, cores, RESET));
                 }
-                if m.max_rss_kb >= 1024 { // >= 1MB
+                if m.max_rss_kb >= 50 * 1024 { // >= 50MB
                     parts.push(format!("{}{} {}{}",
                         telemetry::MEMORY, telemetry::MEMORY_ICON, format_bytes(m.max_rss_kb * 1024), RESET));
                 }
