@@ -6,7 +6,7 @@ mod verify;
 use crate::ir::{BesogneIR, ContentId, ResolvedNode, ResolvedNativeNode};
 use crate::ir::dag;
 use crate::manifest::Phase;
-use crate::output;
+use crate::output::{self, OutputRenderer};
 use crate::probe;
 use crate::tracer;
 use cache::ContextCache;
@@ -133,7 +133,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         // Build phase: never shown by runtime — compiler already showed it.
         // Seal phase: all probes cached → skip display entirely.
         // Go straight to exec DAG.
-        return execute_dag(&ir, all_vars, input_hash, &mut *renderer, &mut context, start, args.force, args.debug, &std::collections::HashSet::new());
+        return execute_dag(&ir, all_vars, input_hash, &mut renderer, &mut context, start, args.force, args.debug, &std::collections::HashSet::new());
     }
 
     // Full warmup: probe all seals in parallel
@@ -246,7 +246,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
                 }
             }
         }
-        replay_cached_commands(&ir, &context, &mut *renderer, &replay_vars);
+        replay_cached_commands(&ir, &context, &mut renderer, &replay_vars);
         let wall_ms = start.elapsed().as_millis() as u64;
         renderer.on_summary(0, wall_ms);
         return ExitCode::SUCCESS;
@@ -275,7 +275,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         }
     }
 
-    execute_dag(&ir, all_variables, input_hash, &mut *renderer, &mut context, start, args.force, args.debug, &skipped_node_ids)
+    execute_dag(&ir, all_variables, input_hash, &mut renderer, &mut context, start, args.force, args.debug, &skipped_node_ids)
 }
 
 /// Compute the forward hash for a command: BLAKE3 of its parents' hashes.
@@ -415,7 +415,7 @@ fn execute_dag(
     ir: &BesogneIR,
     mut all_variables: HashMap<String, String>,
     input_hash: String,
-    renderer: &mut dyn output::OutputRenderer,
+    renderer: &mut output::Renderer,
     context: &mut ContextCache,
     start: Instant,
     force: bool,
@@ -611,7 +611,7 @@ fn execute_dag(
         }
 
         // ── Phase 2: Execute commands in parallel (tracer streams output) ──
-        let exec_results: Vec<(CmdJob, Result<tracer::CommandResult, String>)> = if jobs.len() > 1 {
+        let exec_results: Vec<(CmdJob, Result<tracer::CommandResult, crate::error::BesogneError>)> = if jobs.len() > 1 {
             // Multiple commands in tier → parallel execution with synchronized output
             let sync = tracer::output_sync::OutputSync::new();
             let flusher = sync.start_flusher();
@@ -651,7 +651,7 @@ fn execute_dag(
             let result = match exec_result {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("{}", crate::output::style::error_diag(&e));
+                    eprintln!("{}", crate::output::style::error_diag(&e.to_string()));
                     last_exit_code = 126;
                     continue;
                 }
@@ -663,8 +663,12 @@ fn execute_dag(
             renderer.on_command_output(name, &stdout, &cmd_stderr);
             renderer.on_command_end(name, &result);
 
-            // Idempotency verification
-            if first_run && !job.side_effects && result.exit_code == 0 {
+            // Idempotency verification — skip for long-running commands (>10s)
+            // to avoid doubling execution time. Use --force to re-verify.
+            const VERIFY_THRESHOLD_MS: u64 = 10_000;
+            if first_run && !job.side_effects && result.exit_code == 0
+                && result.wall_ms < VERIFY_THRESHOLD_MS
+            {
                 eprintln!("    {}", output::style::styled(
                     output::style::diagnostic::VERIFYING,
                     output::style::message::VERIFY_RUN2,
@@ -916,7 +920,7 @@ fn execute_command_with_retry(
     sandbox_env: &crate::ir::EnvSandboxResolved,
     workdir: Option<&str>,
     retry: Option<&crate::ir::RetryResolved>,
-    _renderer: &mut dyn output::OutputRenderer,
+    _renderer: &mut output::Renderer,
 ) -> (Option<tracer::CommandResult>, String, String) {
     let max_attempts = retry.map(|r| r.attempts).unwrap_or(1);
     let deadline = retry.and_then(|r| r.timeout_ms.map(|t| {
@@ -1034,7 +1038,7 @@ fn handle_dump(ir: &BesogneIR, mode: &DumpMode) -> ExitCode {
 fn replay_cached_commands(
     ir: &BesogneIR,
     context: &ContextCache,
-    renderer: &mut dyn output::OutputRenderer,
+    renderer: &mut output::Renderer,
     all_variables: &HashMap<String, String>,
 ) {
     // Build context maps (same as execute_dag)
