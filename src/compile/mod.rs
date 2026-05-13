@@ -18,6 +18,13 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
     use crate::output::style::l3;
     use crate::output::style::phase::Phase as StylePhase;
 
+    // 0. Quick check: if output binary exists and manifest hasn't changed, skip entirely.
+    if !force {
+        if let Some(store_path) = check_build_lock(manifest_path, output_path) {
+            return Ok(store_path);
+        }
+    }
+
     // 1. Parse manifest
     let step = Instant::now();
     let mut manifest = manifest::load_manifest(manifest_path)?;
@@ -88,6 +95,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
         eprintln!("{}", l3::items::progress_step::render(
             &format!("store hit {} ({}ms total)", &cache_hash[..16], total_ms)));
         eprintln!("  {}", l3::sections::footer_line::render(0, total_ms as u64));
+        write_build_lock(manifest_path, output_path, &cache_hash);
         return Ok(store_binary);
     }
 
@@ -111,6 +119,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
     eprintln!("{}", l3::items::progress_step::render(
         &format!("emitted {} ({}, {}ms, {}ms total)", &cache_hash[..16], format_size(binary_size), emit_ms, total_ms)));
     eprintln!("  {}", l3::sections::footer_line::render(0, total_ms as u64));
+    write_build_lock(manifest_path, output_path, &cache_hash);
 
     Ok(store_binary)
 }
@@ -519,5 +528,64 @@ fn format_size(bytes: u64) -> String {
         format!("{:.1}KB", bytes as f64 / 1024.0)
     } else {
         format!("{bytes}B")
+    }
+}
+
+/// Build lock: maps manifest content hash → store hash.
+/// Stored next to the output binary as `<output>.lock`.
+/// Allows skipping the entire build pipeline when nothing changed.
+fn build_lock_path(output_path: &Path) -> PathBuf {
+    let mut p = output_path.to_path_buf();
+    let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+    p.set_file_name(format!("{name}.lock"));
+    p
+}
+
+/// Hash the manifest file + all component files it references.
+/// This is a cheap check (just file content hashing, no parsing).
+fn manifest_content_hash(manifest_path: &Path) -> Option<String> {
+    let content = std::fs::read(manifest_path).ok()?;
+    Some(blake3::hash(&content).to_hex().to_string())
+}
+
+/// Check if the build lock is valid: manifest unchanged AND store binary exists.
+fn check_build_lock(manifest_path: &Path, output_path: &Path) -> Option<PathBuf> {
+    let lock_path = build_lock_path(output_path);
+    let lock_content = std::fs::read_to_string(&lock_path).ok()?;
+    let lock: serde_json::Value = serde_json::from_str(&lock_content).ok()?;
+
+    let cached_manifest_hash = lock.get("manifest_hash")?.as_str()?;
+    let cached_store_hash = lock.get("store_hash")?.as_str()?;
+
+    // Check manifest content unchanged
+    let current_hash = manifest_content_hash(manifest_path)?;
+    if current_hash != cached_manifest_hash {
+        return None;
+    }
+
+    // Check store binary still exists
+    let store_bin = store_binary_path(cached_store_hash);
+    if !store_bin.exists() {
+        return None;
+    }
+
+    // Check output binary still exists
+    if !output_path.exists() {
+        // Re-copy from store
+        let _ = std::fs::copy(&store_bin, output_path);
+    }
+
+    Some(store_bin)
+}
+
+/// Write build lock after successful compilation.
+fn write_build_lock(manifest_path: &Path, output_path: &Path, store_hash: &str) {
+    if let Some(manifest_hash) = manifest_content_hash(manifest_path) {
+        let lock_path = build_lock_path(output_path);
+        let lock = serde_json::json!({
+            "manifest_hash": manifest_hash,
+            "store_hash": store_hash,
+        });
+        let _ = std::fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap_or_default());
     }
 }
