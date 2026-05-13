@@ -23,6 +23,7 @@
  *   'U' = unlink      (payload = path)
  *   'R' = rename      (payload = old_len:u16 + old + new)
  *   'L' = dlopen      (payload = library path)
+ *   'N' = net_io      (payload = rx_bytes:u64 LE + tx_bytes:u64 LE) — emitted on _exit
  */
 
 #define _GNU_SOURCE
@@ -182,11 +183,28 @@ pid_t vfork(void) {
     return fork();
 }
 
+/* ── Per-process network I/O counters ─────────────────────────────── */
+/* Atomic counters — ~5ns per send/recv call (just an atomic add).    */
+/* Emitted as a single 'N' event on _exit with the totals.           */
+
+static volatile uint64_t net_rx_total = 0;
+static volatile uint64_t net_tx_total = 0;
+
 /* ── _exit ───────────────────────────────────────────────────────── */
 
 void _exit(int status) {
     static void (*real)(int) __attribute__((noreturn)) = NULL;
     if (!real) real = dlsym(RTLD_NEXT, "_exit");
+
+    /* Emit network I/O totals before exit */
+    uint64_t rx = __atomic_load_n(&net_rx_total, __ATOMIC_RELAXED);
+    uint64_t tx = __atomic_load_n(&net_tx_total, __ATOMIC_RELAXED);
+    if (rx > 0 || tx > 0) {
+        uint8_t buf[16];
+        memcpy(buf, &rx, 8);
+        memcpy(buf + 8, &tx, 8);
+        emit('N', buf, 16);
+    }
 
     int32_t code = (int32_t)status;
     emit('Q', &code, 4);
@@ -367,4 +385,52 @@ void *dlopen(const char *path, int flags) {
     }
 
     return real(path, flags);
+}
+
+/* ── send / recv — per-process network byte counting ─────────────── */
+/* Only hook socket-specific calls (not read/write which also hit files). */
+/* ~5ns overhead per call: just an atomic add on the counter.            */
+
+ssize_t send(int fd, const void *buf, size_t len, int flags) {
+    static ssize_t (*real)(int, const void *, size_t, int) = NULL;
+    if (!real) real = dlsym(RTLD_NEXT, "send");
+    if (!real) return -1;
+
+    ssize_t n = real(fd, buf, len, flags);
+    if (n > 0) __atomic_fetch_add(&net_tx_total, (uint64_t)n, __ATOMIC_RELAXED);
+    return n;
+}
+
+ssize_t sendto(int fd, const void *buf, size_t len, int flags,
+               const struct sockaddr *addr, socklen_t addrlen) {
+    static ssize_t (*real)(int, const void *, size_t, int,
+                           const struct sockaddr *, socklen_t) = NULL;
+    if (!real) real = dlsym(RTLD_NEXT, "sendto");
+    if (!real) return -1;
+
+    ssize_t n = real(fd, buf, len, flags, addr, addrlen);
+    if (n > 0) __atomic_fetch_add(&net_tx_total, (uint64_t)n, __ATOMIC_RELAXED);
+    return n;
+}
+
+ssize_t recv(int fd, void *buf, size_t len, int flags) {
+    static ssize_t (*real)(int, void *, size_t, int) = NULL;
+    if (!real) real = dlsym(RTLD_NEXT, "recv");
+    if (!real) return -1;
+
+    ssize_t n = real(fd, buf, len, flags);
+    if (n > 0) __atomic_fetch_add(&net_rx_total, (uint64_t)n, __ATOMIC_RELAXED);
+    return n;
+}
+
+ssize_t recvfrom(int fd, void *buf, size_t len, int flags,
+                 struct sockaddr *addr, socklen_t *addrlen) {
+    static ssize_t (*real)(int, void *, size_t, int,
+                           struct sockaddr *, socklen_t *) = NULL;
+    if (!real) real = dlsym(RTLD_NEXT, "recvfrom");
+    if (!real) return -1;
+
+    ssize_t n = real(fd, buf, len, flags, addr, addrlen);
+    if (n > 0) __atomic_fetch_add(&net_rx_total, (uint64_t)n, __ATOMIC_RELAXED);
+    return n;
 }

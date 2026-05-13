@@ -648,7 +648,7 @@ fn execute_dag(
             let input = input_by_id.get(content_id).unwrap();
             let name = &job.name;
 
-            let result = match exec_result {
+            let mut result = match exec_result {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("{}", crate::output::style::error_diag(&e.to_string()));
@@ -656,6 +656,15 @@ fn execute_dag(
                     continue;
                 }
             };
+
+            // Use per-process network bytes from preload (accurate) instead of
+            // /proc/net/dev diff (system-wide, misleading for per-command attribution)
+            if let Some(ref preload) = result.preload {
+                if preload.net_rx_bytes > 0 || preload.net_tx_bytes > 0 {
+                    result.net_read_bytes = preload.net_rx_bytes;
+                    result.net_write_bytes = preload.net_tx_bytes;
+                }
+            }
 
             let stdout = String::from_utf8_lossy(&result.stdout).to_string();
             let cmd_stderr = String::from_utf8_lossy(&result.stderr).to_string();

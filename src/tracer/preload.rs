@@ -30,6 +30,7 @@ const TAG_DNS: u8 = b'D';
 const TAG_UNLINK: u8 = b'U';
 const TAG_RENAME: u8 = b'R';
 const TAG_DLOPEN: u8 = b'L';
+const TAG_NET_IO: u8 = b'N';
 
 /// Collected results from the preload interposer.
 #[derive(Debug, Default, Clone)]
@@ -54,6 +55,10 @@ pub struct PreloadResults {
     pub dns_lookups: HashSet<String>,
     /// Shared libraries loaded via dlopen()
     pub loaded_libraries: HashSet<String>,
+    /// Per-process network bytes received (from send/recv hooks, not /proc/net/dev)
+    pub net_rx_bytes: u64,
+    /// Per-process network bytes sent
+    pub net_tx_bytes: u64,
 }
 
 pub fn is_available() -> bool {
@@ -195,6 +200,18 @@ impl Preload {
                     if let Ok(s) = std::str::from_utf8(payload) {
                         r.loaded_libraries.insert(s.to_string());
                     }
+                }
+                TAG_NET_IO if payload_len >= 16 => {
+                    let rx = u64::from_le_bytes([
+                        payload[0], payload[1], payload[2], payload[3],
+                        payload[4], payload[5], payload[6], payload[7],
+                    ]);
+                    let tx = u64::from_le_bytes([
+                        payload[8], payload[9], payload[10], payload[11],
+                        payload[12], payload[13], payload[14], payload[15],
+                    ]);
+                    r.net_rx_bytes += rx;
+                    r.net_tx_bytes += tx;
                 }
                 _ => {}
             }
