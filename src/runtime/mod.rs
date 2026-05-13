@@ -662,12 +662,12 @@ fn execute_dag(
             };
 
             // Use per-process network bytes from preload (accurate) instead of
-            // /proc/net/dev diff (system-wide, misleading for per-command attribution)
-            if let Some(ref preload) = result.preload {
-                if preload.net_rx_bytes > 0 || preload.net_tx_bytes > 0 {
-                    result.net_read_bytes = preload.net_rx_bytes;
-                    result.net_write_bytes = preload.net_tx_bytes;
-                }
+            // /proc/net/dev diff (system-wide, misleading for per-command attribution).
+            // ALWAYS override when preload is active — even if 0 (means no inet traffic).
+            if result.preload.is_some() {
+                let preload = result.preload.as_ref().unwrap();
+                result.net_read_bytes = preload.net_rx_bytes;
+                result.net_write_bytes = preload.net_tx_bytes;
             }
 
             let stdout = String::from_utf8_lossy(&result.stdout).to_string();
