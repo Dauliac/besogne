@@ -126,7 +126,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
 
 /// Compile with minimal progress. Returns the store path of the binary.
 /// Does NOT copy to output_path — caller should create a symlink or copy.
-pub fn compile_quiet(manifest_path: &Path) -> Result<PathBuf, String> {
+pub fn compile_quiet(manifest_path: &Path, force: bool) -> Result<PathBuf, String> {
     let build_start = Instant::now();
     let mut manifest = manifest::load_manifest(manifest_path)?;
     if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
@@ -140,7 +140,7 @@ pub fn compile_quiet(manifest_path: &Path) -> Result<PathBuf, String> {
     let cache_hash = compile_cache_key(&ir_json);
     let store_bin = store_binary_path(&cache_hash);
 
-    if store_bin.exists() {
+    if !force && store_bin.exists() {
         return Ok(store_bin);
     }
 

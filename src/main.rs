@@ -304,7 +304,7 @@ fn main() -> ExitCode {
                     for (manifest_path, out, name) in &tasks {
                         let results = &results;
                         s.spawn(move |_| {
-                            let result = compile::compile_quiet(manifest_path);
+                            let result = compile::compile_quiet(manifest_path, force);
                             results.lock().unwrap().push((name.clone(), manifest_path.clone(), result));
                         });
                     }
@@ -392,7 +392,7 @@ fn main() -> ExitCode {
             let needs_build = force_rebuild || !bin_path.exists();
 
             if needs_build {
-                match compile::compile_quiet(&manifest_path) {
+                match compile::compile_quiet(&manifest_path, force_rebuild) {
                     Ok(store_path) => {
                         // Copy from store to run cache
                         if let Err(e) = std::fs::copy(&store_path, &bin_path) {
