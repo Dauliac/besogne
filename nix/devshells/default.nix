@@ -13,7 +13,7 @@
           cargo-watch
           cargo-nextest
           bacon
-          nickel
+
           # e2e test dependencies
           nodejs
           go
