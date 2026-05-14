@@ -1,7 +1,10 @@
 { ... }: {
   imports = [
+    ./overlays
     ./packages
     ./devshells
-    ./overlays
+    ./checks
+    ./apps
+    ./modules
   ];
 }

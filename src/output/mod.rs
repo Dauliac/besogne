@@ -96,6 +96,22 @@ pub fn renderer_for_format(format: &LogFormat, verbose: bool) -> Renderer {
     }
 }
 
+fn format_duration_ms(ms: u64) -> String {
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else if ms < 60_000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else if ms < 3_600_000 {
+        let m = ms / 60_000;
+        let s = (ms % 60_000) / 1000;
+        format!("{m}m{s}s")
+    } else {
+        let h = ms / 3_600_000;
+        let m = (ms % 3_600_000) / 60_000;
+        format!("{h}h{m}m")
+    }
+}
+
 fn node_type_name(node: &ResolvedNativeNode) -> &'static str {
     match node {
         ResolvedNativeNode::Binary { .. } => "binary",
@@ -633,7 +649,7 @@ impl OutputRenderer for HumanRenderer {
                 "exec" => phase::EXEC,
                 _ => phase::EXEC,
             };
-            eprintln!("  {} {}", styled(token, &format!("▸ {p}")), dim(&format!("({ms}ms)")));
+            eprintln!("  {} {}", styled(token, &format!("▸ {p}")), dim(&format!("({})", format_duration_ms(ms as u64))));
         }
     }
 
@@ -692,11 +708,11 @@ impl OutputRenderer for HumanRenderer {
     }
 
     fn on_skip(&mut self, total_nodes: usize, ran_at: &str, duration_ms: u64) {
-        eprintln!("{} ({} nodes cached, ran {}, {:.3}s, use {} to show last run)",
+        eprintln!("{} ({} nodes cached, ran {}, {}, use {} to show last run)",
             styled(status::FRESH, label::NOTHING_TO_DO),
             total_nodes,
             format_relative_time(ran_at),
-            duration_ms as f64 / 1000.0,
+            format_duration_ms(duration_ms),
             bold("--status"));
     }
 
@@ -769,10 +785,10 @@ impl OutputRenderer for HumanRenderer {
         }
 
         if exit_code == 0 {
-            eprintln!("\n{} {:.3}s", styled(status::FRESH, label::DONE), wall_ms as f64 / 1000.0);
+            eprintln!("\n{} {}", styled(status::FRESH, label::DONE), format_duration_ms(wall_ms));
         } else {
-            eprintln!("\n{} exit {exit_code}  {:.3}s",
-                styled(status::FAILED, label::FAILED), wall_ms as f64 / 1000.0);
+            eprintln!("\n{} exit {exit_code}  {}",
+                styled(status::FAILED, label::FAILED), format_duration_ms(wall_ms));
         }
     }
 }
@@ -969,7 +985,7 @@ impl OutputRenderer for CiRenderer {
     }
 
     fn on_skip(&mut self, total_nodes: usize, ran_at: &str, duration_ms: u64) {
-        eprintln!("::notice::SKIP ({total_nodes} nodes cached, ran {ran_at}, {:.3}s)", duration_ms as f64 / 1000.0);
+        eprintln!("::notice::SKIP ({total_nodes} nodes cached, ran {ran_at}, {})", format_duration_ms(duration_ms));
     }
 
     fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]) {

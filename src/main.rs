@@ -157,6 +157,13 @@ fn create_besogne_symlink(cwd: &Path, name: &str, target: &Path) {
     }
 }
 
+fn format_duration(ms: u128) -> String {
+    if ms < 1000 { format!("{ms}ms") }
+    else if ms < 60_000 { format!("{:.1}s", ms as f64 / 1000.0) }
+    else if ms < 3_600_000 { let m = ms / 60_000; let s = (ms % 60_000) / 1000; format!("{m}m{s}s") }
+    else { let h = ms / 3_600_000; let m = (ms % 3_600_000) / 60_000; format!("{h}h{m}m") }
+}
+
 fn store_path_short(path: &Path) -> String {
     let s = path.display().to_string();
     let tail: String = s.chars().rev().take(40).collect::<String>().chars().rev().collect();
@@ -339,7 +346,7 @@ fn main() -> ExitCode {
                 }
 
                 let total_ms = build_start.elapsed().as_millis();
-                eprintln!("besogne: built {} manifests ({}ms)", results.len(), total_ms);
+                eprintln!("besogne: built {} manifests ({})", results.len(), format_duration(total_ms));
 
                 if failed { ExitCode::from(2) } else { ExitCode::SUCCESS }
             }

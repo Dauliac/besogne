@@ -516,6 +516,7 @@ mod tests {
                 retry: None,
                 verify: None,
                 resources: Default::default(),
+                hide_output: false,
             },
             ResolvedNativeNode::Source {
                 format: "dotenv".into(),

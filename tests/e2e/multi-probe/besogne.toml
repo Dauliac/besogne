@@ -1,6 +1,8 @@
 name = "multi-probe"
 description = "Test all native probe types"
 
+type = "component"
+
 [nodes.HOME]
 type = "env"
 

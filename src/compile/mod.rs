@@ -35,7 +35,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
     eprintln!("\n{}", l3::sections::phase_banner::render(
         StylePhase::Build, total_nodes, None));
     eprintln!("{}", l3::items::progress_step::render(
-        &format!("parsed {} ({}ms)", manifest_path.display(), parse_ms)));
+        &format!("parsed {} ({})", manifest_path.display(), format_duration(parse_ms))));
 
     // 1b. Expand components → native inputs
     let component_count = manifest.nodes.values()
@@ -48,7 +48,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
         let produced = expanded.len();
         manifest.nodes = expanded;
         eprintln!("{}", l3::items::progress_step::render(
-            &format!("expanded {} component → {} nodes ({}ms)", component_count, produced, expand_ms)));
+            &format!("expanded {} component → {} nodes ({})", component_count, produced, format_duration(expand_ms))));
     }
 
     // 2. Lower manifest to IR (resolve types, compute hashes)
@@ -57,7 +57,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
     let lower_ms = step.elapsed().as_millis();
     let node_summary = build_node_summary(&ir);
     eprintln!("{}", l3::items::progress_step::render(
-        &format!("lowered {node_summary} ({}ms)", lower_ms)));
+        &format!("lowered {node_summary} ({})", format_duration(lower_ms))));
 
     // 2b. Build-time binary resolution — shift-left validation
     let step = Instant::now();
@@ -65,7 +65,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
     let pin_ms = step.elapsed().as_millis();
     let pin_summary = build_pin_summary(&ir);
     eprintln!("{}", l3::items::progress_step::render(
-        &format!("pinned {pin_summary} ({}ms)", pin_ms)));
+        &format!("pinned {pin_summary} ({})", format_duration(pin_ms))));
     pin_result?;
 
     // 3. Check content-addressed store
@@ -93,7 +93,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
         }
         let total_ms = build_start.elapsed().as_millis();
         eprintln!("{}", l3::items::progress_step::render(
-            &format!("store hit {} ({}ms total)", &cache_hash[..16], total_ms)));
+            &format!("store hit {} ({} total)", &cache_hash[..16], format_duration(total_ms))));
         eprintln!("  {}", l3::sections::footer_line::render(0, total_ms as u64));
         write_build_lock(manifest_path, output_path, &cache_hash);
         return Ok(store_binary);
@@ -117,7 +117,7 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
     let binary_size = std::fs::metadata(&store_binary).ok().map(|m| m.len()).unwrap_or(0);
     let total_ms = build_start.elapsed().as_millis();
     eprintln!("{}", l3::items::progress_step::render(
-        &format!("emitted {} ({}, {}ms, {}ms total)", &cache_hash[..16], format_size(binary_size), emit_ms, total_ms)));
+        &format!("emitted {} ({}, {}, {} total)", &cache_hash[..16], format_size(binary_size), format_duration(emit_ms), format_duration(total_ms))));
     eprintln!("  {}", l3::sections::footer_line::render(0, total_ms as u64));
     write_build_lock(manifest_path, output_path, &cache_hash);
 
@@ -159,7 +159,7 @@ pub fn compile_quiet(manifest_path: &Path, force: bool) -> Result<PathBuf, crate
         eprintln!("{}", l3::sections::phase_banner::render(
             StylePhase::Build, total_nodes, None));
         eprintln!("{}", l3::items::progress_step::render(
-            &format!("built {node_summary} ({}ms)", total_ms)));
+            &format!("built {node_summary} ({})", format_duration(total_ms))));
         eprintln!("  {}", l3::sections::footer_line::render(0, total_ms as u64));
     }
 
@@ -519,6 +519,22 @@ fn build_pin_summary(ir: &BesogneIR) -> String {
         parts.push(format!("({})", sources.join(", ")));
     }
     parts.join(" ")
+}
+
+fn format_duration(ms: u128) -> String {
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else if ms < 60_000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else if ms < 3_600_000 {
+        let m = ms / 60_000;
+        let s = (ms % 60_000) / 1000;
+        format!("{m}m{s}s")
+    } else {
+        let h = ms / 3_600_000;
+        let m = (ms % 3_600_000) / 60_000;
+        format!("{h}h{m}m")
+    }
 }
 
 fn format_size(bytes: u64) -> String {
