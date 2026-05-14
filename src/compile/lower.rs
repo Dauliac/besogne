@@ -177,6 +177,7 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
                     priority: c.priority.as_ref().map(resolve_priority).unwrap_or_default(),
                     memory_limit: c.memory_limit.as_ref().map(|s| parse_byte_size(s)),
                 },
+                hide_output: c.hide_output.unwrap_or(false),
             };
             let phase = c.phase.clone().unwrap_or(Phase::Exec);
             let id = ContentId::from_content("command", key, key.as_bytes());

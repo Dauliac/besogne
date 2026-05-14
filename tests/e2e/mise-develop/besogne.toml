@@ -1,0 +1,32 @@
+name = "mise-develop"
+description = "Test mise/develop component loads mise env and installed tools"
+
+[nodes."mise/config"]
+type = "component"
+
+[nodes."mise/develop"]
+type = "component"
+
+[nodes.check-env]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo BESOGNE_MISE_TEST=$BESOGNE_MISE_TEST"]
+parents = ["mise/develop.devenv"]
+
+[nodes.check-env-stdout]
+type = "std"
+stream = "stdout"
+contains = ["BESOGNE_MISE_TEST=mise-develop-works"]
+parents = ["check-env"]
+
+[nodes.check-dust]
+type = "command"
+phase = "exec"
+run = ["dust", "--version"]
+parents = ["mise/develop.devenv"]
+
+[nodes.check-dust-stdout]
+type = "std"
+stream = "stdout"
+contains = ["Dust"]
+parents = ["check-dust"]

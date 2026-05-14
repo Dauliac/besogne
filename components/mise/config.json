@@ -1,0 +1,8 @@
+{
+  "name": "mise/config",
+  "description": "Track mise.toml configuration for cache invalidation",
+  "nodes": {
+    "mise/mise": { "type": "component" },
+    "mise-toml": { "type": "file", "path": "mise.toml" }
+  }
+}

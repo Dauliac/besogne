@@ -1,0 +1,21 @@
+{
+  "name": "docker/healthcheck",
+  "description": "Wait for a Docker container health check to pass.",
+  "nodes": {
+    "docker/docker": { "type": "component" },
+    "wait-healthy": {
+      "type": "command",
+      "run": ["docker", "inspect", "--format={{.State.Health.Status}}", "mycontainer"],
+      "phase": "exec",
+      "parents": ["docker/docker.docker"],
+      "side_effects": true,
+      "retry": {
+        "attempts": 30,
+        "interval": "2s",
+        "backoff": "exponential",
+        "max_interval": "15s",
+        "timeout": "3m"
+      }
+    }
+  }
+}

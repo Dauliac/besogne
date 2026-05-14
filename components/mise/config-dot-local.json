@@ -1,0 +1,8 @@
+{
+  "name": "mise/config-dot-local",
+  "description": "Track .mise.local.toml configuration for cache invalidation",
+  "nodes": {
+    "mise/mise": { "type": "component" },
+    "dot-mise-local-toml": { "type": "file", "path": ".mise.local.toml" }
+  }
+}

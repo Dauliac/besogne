@@ -1,0 +1,7 @@
+{
+  "name": "mise/mise",
+  "description": "Ensure mise binary is available",
+  "nodes": {
+    "mise": { "type": "binary" }
+  }
+}

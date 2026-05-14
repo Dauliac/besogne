@@ -225,6 +225,9 @@ pub enum ResolvedNativeNode {
         /// Resource limits (priority + memory cap)
         #[serde(default)]
         resources: ResourceLimits,
+        /// Suppress live output streaming to terminal
+        #[serde(default)]
+        hide_output: bool,
     },
 
     Platform {

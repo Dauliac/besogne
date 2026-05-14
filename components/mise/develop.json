@@ -1,0 +1,35 @@
+{
+  "name": "mise/develop",
+  "description": "Install tools and load mise environment into commands",
+  "nodes": {
+    "mise/mise": { "type": "component" },
+    "install": {
+      "type": "command",
+      "description": "Install mise tools",
+      "run": ["mise", "install", "--yes"],
+      "phase": "exec",
+      "env": { "MISE_TRUSTED_CONFIG_PATHS": "." },
+      "hide_output": true
+    },
+    "env": {
+      "type": "command",
+      "description": "Capture mise environment",
+      "run": ["mise", "env", "--json"],
+      "phase": "exec",
+      "env": { "MISE_TRUSTED_CONFIG_PATHS": "." },
+      "parents": ["install"],
+      "hide_output": true,
+      "verify": false
+    },
+    "env-stdout": {
+      "type": "std",
+      "stream": "stdout",
+      "parents": ["env"]
+    },
+    "devenv": {
+      "type": "source",
+      "format": "json",
+      "parents": ["env-stdout"]
+    }
+  }
+}

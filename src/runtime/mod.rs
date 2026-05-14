@@ -558,6 +558,7 @@ fn execute_dag(
             side_effects: bool,
             verify: Option<bool>,
             resources: crate::ir::ResourceLimits,
+            hide_output: bool,
         }
         let mut jobs: Vec<CmdJob> = Vec::new();
 
@@ -567,7 +568,7 @@ fn execute_dag(
             let Some(input) = input_by_id.get(content_id) else { continue };
 
             if let ResolvedNativeNode::Command {
-                name, run, env, side_effects, workdir, force_args, debug_args, verify, resources, ..
+                name, run, env, side_effects, workdir, force_args, debug_args, verify, resources, hide_output, ..
             } = &input.node {
                 if last_exit_code != 0 && !side_effects { continue; }
 
@@ -620,6 +621,7 @@ fn execute_dag(
                     workdir: workdir.clone(), side_effects: *side_effects,
                     verify: *verify,
                     resources: effective_resources,
+                    hide_output: *hide_output,
                 });
             }
         }
@@ -640,9 +642,11 @@ fn execute_dag(
                     let sync = &sync;
                     let cmd_name = job.name.clone();
                     s.spawn(move |_| {
+                        tracer::set_hide_output(job.hide_output);
                         let r = tracer::execute_traced_parallel(
                             &job.effective_run, &job.cmd_env, sandbox, job.workdir.as_deref(),
                             sync, &cmd_name, &job.resources);
+                        tracer::set_hide_output(false);
                         (job, r)
                     })
                 }).collect();
@@ -654,9 +658,11 @@ fn execute_dag(
         } else {
             // Single command or empty → sequential (direct streaming, no sync overhead)
             jobs.into_iter().map(|job| {
+                tracer::set_hide_output(job.hide_output);
                 let r = tracer::execute_traced(
                     &job.effective_run, &job.cmd_env, &ir.sandbox.env, job.workdir.as_deref(),
                     &job.resources);
+                tracer::set_hide_output(false);
                 (job, r)
             }).collect()
         };
@@ -741,11 +747,13 @@ fn execute_dag(
                         output::style::diagnostic::VERIFYING,
                         output::style::message::VERIFY_RUN2,
                     ));
+                    tracer::set_hide_output(job.hide_output);
                     let vresult = verify::verify_command(
                         name, content_id,
                         &job.effective_run, &job.cmd_env, &ir.sandbox.env, job.workdir.as_deref(),
                         &result, &ir.nodes,
                     );
+                    tracer::set_hide_output(false);
                     verify::format_verify_human(&vresult);
                     if !vresult.idempotent {
                         non_idempotent.push(name.clone());
@@ -916,8 +924,48 @@ fn execute_dag(
                 }
 
                 _ => {
-                    // Source nodes are probed eagerly before the DAG loop (for input_hash).
-                    if matches!(&input.node, ResolvedNativeNode::Source { .. }) {
+                    // Source nodes with a std parent: parse the parent command's stdout
+                    if let ResolvedNativeNode::Source { format, select, .. } = &input.node {
+                        // Find std parent → command parent → cached stdout
+                        let std_content = input.parents.iter().find_map(|pid| {
+                            let std_node = input_by_id.get(pid)?;
+                            if let ResolvedNativeNode::Std { stream, .. } = &std_node.node {
+                                // Find the command that owns this std node
+                                let cmd_name = std_node.parents.iter().find_map(|cpid| {
+                                    let cmd_node = input_by_id.get(cpid)?;
+                                    if let ResolvedNativeNode::Command { name, .. } = &cmd_node.node {
+                                        Some(name.clone())
+                                    } else { None }
+                                })?;
+                                let cached = context.get_command(&cmd_name)?;
+                                let content = match stream.as_str() {
+                                    "stdout" => cached.stdout.clone(),
+                                    "stderr" => cached.stderr.clone(),
+                                    _ => return None,
+                                };
+                                Some(content)
+                            } else { None }
+                        });
+
+                        if let Some(content) = std_content {
+                            match crate::probe::source::parse_env_map(format, &content) {
+                                Ok(env) => {
+                                    let filtered = match select {
+                                        Some(keys) => env.into_iter()
+                                            .filter(|(k, _)| keys.contains(k))
+                                            .collect(),
+                                        None => env,
+                                    };
+                                    all_variables.extend(filtered);
+                                }
+                                Err(e) => {
+                                    eprintln!("  {} source: {e}",
+                                        output::style::styled(output::style::status::FAILED, output::style::label::FAILED));
+                                    last_exit_code = 3;
+                                }
+                            }
+                        }
+                        // File-based sources were already probed eagerly
                         continue;
                     }
                     let result = probe::probe_input(&input.node);
@@ -1205,4 +1253,28 @@ fn extract_env_refs(s: &str) -> Vec<String> {
         }
     }
     vars
+}
+
+/// Replace the current process with a besogne binary.
+/// Sets `BESOGNE_RUN_MODE=1` so the binary skips build phase display.
+/// Returns the IO error if exec fails (on Unix, this function doesn't return on success).
+#[cfg(unix)]
+pub fn exec_binary(path: &std::path::Path, args: &[String]) -> std::io::Error {
+    use std::os::unix::process::CommandExt;
+    std::process::Command::new(path)
+        .args(args)
+        .env("BESOGNE_RUN_MODE", "1")
+        .exec()
+}
+
+#[cfg(not(unix))]
+pub fn exec_binary(path: &std::path::Path, args: &[String]) -> std::io::Error {
+    match std::process::Command::new(path)
+        .args(args)
+        .env("BESOGNE_RUN_MODE", "1")
+        .status()
+    {
+        Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+        Err(e) => e,
+    }
 }

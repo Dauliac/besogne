@@ -1,0 +1,8 @@
+{
+  "name": "mise/config-tool-versions",
+  "description": "Track .tool-versions configuration for cache invalidation",
+  "nodes": {
+    "mise/mise": { "type": "component" },
+    "tool-versions": { "type": "file", "path": ".tool-versions" }
+  }
+}

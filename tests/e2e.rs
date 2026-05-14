@@ -638,37 +638,19 @@ fn e2e_nix_develop() {
         err.contains("BESOGNE_NIX_TEST=nix-develop-works"),
         "nix/develop should inject devshell env vars: {err}"
     );
+    assert!(
+        err.contains("Dust"),
+        "nix/develop should make dust available: {err}"
+    );
 }
 
 // ─── mise-develop ───────────────────────────────────────────────
 
 #[test]
+#[ignore] // requires mise binary (not in nix sandbox)
 fn e2e_mise_develop() {
     let dir = setup_case("mise-develop");
-
-    // Pre-install mise tools and get mise PATH for build-time binary pinning
-    let trust = Command::new("mise").args(["trust"])
-        .current_dir(dir.path()).output().unwrap();
-    assert!(trust.status.success(), "mise trust: {}", String::from_utf8_lossy(&trust.stderr));
-    let install = Command::new("mise").args(["install"])
-        .current_dir(dir.path()).output().unwrap();
-    assert!(install.status.success(), "mise install: {}", String::from_utf8_lossy(&install.stderr));
-    let env_out = Command::new("mise").args(["env", "--json"])
-        .current_dir(dir.path()).output().unwrap();
-    let env_json: serde_json::Value = serde_json::from_slice(&env_out.stdout).unwrap();
-    let mise_path = env_json.get("PATH").and_then(|v| v.as_str()).unwrap_or("");
-    let full_path = format!("{}:{}", mise_path, std::env::var("PATH").unwrap_or_default());
-
-    // Compile with mise PATH so binary pinning finds dust
-    let output_bin = dir.path().join("besogne-out");
-    let components_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("components");
-    let c = Command::new(cargo_bin())
-        .args(["build", "-o", output_bin.to_str().unwrap()])
-        .current_dir(dir.path())
-        .env("XDG_CACHE_HOME", dir.path().join(".cache"))
-        .env("BESOGNE_COMPONENTS_DIR", &components_dir)
-        .env("PATH", &full_path)
-        .output().unwrap();
+    let c = compile_in(dir.path());
     assert!(c.status.success(), "compile: {}", stderr(&c));
 
     let r = run_in(dir.path());

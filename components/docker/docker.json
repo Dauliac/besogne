@@ -1,0 +1,7 @@
+{
+  "name": "docker/docker",
+  "description": "Ensure Docker CLI binary is available",
+  "nodes": {
+    "docker": { "type": "binary" }
+  }
+}

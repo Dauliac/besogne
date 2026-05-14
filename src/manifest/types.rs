@@ -316,6 +316,11 @@ pub struct CommandInput {
     /// Process is killed if it exceeds this via RLIMIT_AS.
     #[serde(default)]
     pub memory_limit: Option<String>,
+
+    /// Suppress live output streaming to terminal.
+    /// Useful when stdout is consumed by a child source node.
+    #[serde(default)]
+    pub hide_output: Option<bool>,
 }
 
 

@@ -1,0 +1,7 @@
+{
+  "name": "nix/nix",
+  "description": "Ensure nix binary is available",
+  "nodes": {
+    "nix": { "type": "binary" }
+  }
+}

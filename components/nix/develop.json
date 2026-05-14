@@ -1,0 +1,25 @@
+{
+  "name": "nix/develop",
+  "description": "Load nix develop devshell environment into commands",
+  "nodes": {
+    "nix/flake": { "type": "component" },
+    "print-dev-env": {
+      "type": "command",
+      "description": "Evaluate flake devshell environment",
+      "run": ["nix", "print-dev-env"],
+      "phase": "exec",
+      "hide_output": true,
+      "verify": false
+    },
+    "print-dev-env-stdout": {
+      "type": "std",
+      "stream": "stdout",
+      "parents": ["print-dev-env"]
+    },
+    "devenv": {
+      "type": "source",
+      "format": "shell",
+      "parents": ["print-dev-env-stdout"]
+    }
+  }
+}

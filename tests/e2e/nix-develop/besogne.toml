@@ -1,0 +1,29 @@
+name = "nix-develop"
+description = "Test nix/develop component loads devshell env and installed tools"
+
+[nodes."nix/develop"]
+type = "component"
+
+[nodes.check-env]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo BESOGNE_NIX_TEST=$BESOGNE_NIX_TEST"]
+parents = ["nix/develop.devenv"]
+
+[nodes.check-env-stdout]
+type = "std"
+stream = "stdout"
+contains = ["BESOGNE_NIX_TEST=nix-develop-works"]
+parents = ["check-env"]
+
+[nodes.check-dust]
+type = "command"
+phase = "exec"
+run = ["dust", "--version"]
+parents = ["nix/develop.devenv"]
+
+[nodes.check-dust-stdout]
+type = "std"
+stream = "stdout"
+contains = ["Dust"]
+parents = ["check-dust"]

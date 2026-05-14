@@ -127,6 +127,16 @@ thread_local! {
     static PARALLEL_MODE: std::cell::Cell<bool> = std::cell::Cell::new(false);
 }
 
+// Whether to suppress live output streaming to terminal.
+// Still captures stdout/stderr for std/source children, just doesn't print.
+thread_local! {
+    static HIDE_OUTPUT: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
+pub fn set_hide_output(hide: bool) {
+    HIDE_OUTPUT.with(|c| c.set(hide));
+}
+
 pub fn execute_traced(
     args: &[String],
     env: &HashMap<String, String>,
@@ -470,6 +480,7 @@ fn execute_with_wait4(
     // Capture output sync context before spawning (thread-local doesn't transfer)
     let output_ctx: Option<(output_sync::OutputSync, String)> = OUTPUT_SYNC.with(|cell| cell.borrow().clone());
     let output_ctx2 = output_ctx.clone();
+    let hide = HIDE_OUTPUT.with(|c| c.get());
 
     let stdout_handle = {
         let stdout_file = unsafe { std::fs::File::from_raw_fd(stdout_read) };
@@ -479,10 +490,12 @@ fn execute_with_wait4(
             let reader = std::io::BufReader::new(stdout_file);
             for line in reader.lines() {
                 if let Ok(line) = line {
-                    if let Some((ref sync, ref name)) = output_ctx {
-                        sync.push_line(name, &line);
-                    } else {
-                        eprintln!("    {line}");
+                    if !hide {
+                        if let Some((ref sync, ref name)) = output_ctx {
+                            sync.push_line(name, &line);
+                        } else {
+                            eprintln!("    {line}");
+                        }
                     }
                     buf.extend(line.as_bytes());
                     buf.push(b'\n');
@@ -499,10 +512,12 @@ fn execute_with_wait4(
             let reader = std::io::BufReader::new(stderr_file);
             for line in reader.lines() {
                 if let Ok(line) = line {
-                    if let Some((ref sync, ref name)) = output_ctx2 {
-                        sync.push_line(name, &line);
-                    } else {
-                        eprintln!("    {line}");
+                    if !hide {
+                        if let Some((ref sync, ref name)) = output_ctx2 {
+                            sync.push_line(name, &line);
+                        } else {
+                            eprintln!("    {line}");
+                        }
                     }
                     buf.extend(line.as_bytes());
                     buf.push(b'\n');

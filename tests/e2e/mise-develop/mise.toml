@@ -1,0 +1,5 @@
+[env]
+BESOGNE_MISE_TEST = "mise-develop-works"
+
+[tools]
+dust = "latest"
