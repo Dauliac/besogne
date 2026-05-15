@@ -694,6 +694,21 @@ fn e2e_flag_routing_with_flag() {
     assert!(!err.contains("built-locally"), "should NOT run local build: {err}");
 }
 
+// ─── env-coerce ────────────────────────────────────────────────
+
+#[test]
+fn e2e_env_coerce() {
+    let dir = setup_case("env-coerce");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    let r = run_in(dir.path());
+    assert!(r.status.success(), "run: {}", stderr(&r));
+    let err = stderr(&r);
+    assert!(err.contains("VERSION=1.2.3"), "file→env coercion: {err}");
+    assert!(err.contains("COMPUTED=computed-value-42"), "std→env coercion: {err}");
+}
+
 // ─── env-merge ─────────────────────────────────────────────────
 
 #[test]

@@ -615,6 +615,92 @@ fn determine_command_mode(
     cache::CommandMode::Skip
 }
 
+/// Resolve a parent node's output value for env-from-parent coercion.
+/// Returns Some(String) if the parent produces a coercible scalar value.
+fn resolve_parent_value(
+    node: &ResolvedNode,
+    ir: &BesogneIR,
+    context: &ContextCache,
+    exec_bindings: &HashMap<ContentId, HashMap<String, String>>,
+    seal_variables: &HashMap<String, String>,
+) -> Option<String> {
+    // Try each parent until we find one that produces a value
+    for pid in &node.parents {
+        let parent = ir.nodes.iter().find(|n| n.id == *pid)?;
+        match &parent.node {
+            // File → read file content as string
+            ResolvedNativeNode::File { path, .. } => {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    return Some(content.trim().to_string());
+                }
+            }
+            // Std → read extracted stream from cached command
+            ResolvedNativeNode::Std { stream, .. } => {
+                let cmd_name = parent.parents.iter().find_map(|cpid| {
+                    let cmd = ir.nodes.iter().find(|n| n.id == *cpid)?;
+                    if let ResolvedNativeNode::Command { name, .. } = &cmd.node {
+                        Some(name.clone())
+                    } else { None }
+                });
+                if let Some(cmd_name) = cmd_name {
+                    if let Some(cached) = context.get_command(&cmd_name) {
+                        let val = match stream.as_str() {
+                            "stdout" => cached.stdout.trim().to_string(),
+                            "stderr" => cached.stderr.trim().to_string(),
+                            "exit_code" => cached.exit_code.to_string(),
+                            _ => continue,
+                        };
+                        return Some(val);
+                    }
+                }
+            }
+            // Flag → read flag value from exec_bindings or seal_variables
+            ResolvedNativeNode::Flag { env_var, .. } => {
+                if let Some(bindings) = exec_bindings.get(pid) {
+                    if let Some(val) = bindings.get(env_var.as_str()) {
+                        return Some(val.clone());
+                    }
+                }
+                if let Some(val) = seal_variables.get(env_var.as_str()) {
+                    return Some(val.clone());
+                }
+            }
+            // Env → read from the parent env's cached probe
+            ResolvedNativeNode::Env { name: parent_name, .. } => {
+                if let Some(bindings) = exec_bindings.get(pid) {
+                    if let Some(val) = bindings.get(parent_name.as_str()) {
+                        return Some(val.clone());
+                    }
+                }
+                if let Some(val) = seal_variables.get(parent_name.as_str()) {
+                    return Some(val.clone());
+                }
+            }
+            // Dns → read resolved IP from probe
+            ResolvedNativeNode::Dns { host, .. } => {
+                if let Some(cached) = context.get_probe(&parent.id.0) {
+                    let key = format!("DNS_{}", host.to_uppercase().replace(['.', '-'], "_"));
+                    if let Some(val) = cached.variables.get(&key) {
+                        return Some(val.clone());
+                    }
+                }
+            }
+            // Metric → read value from probe
+            ResolvedNativeNode::Metric { metric, .. } => {
+                if let Some(cached) = context.get_probe(&parent.id.0) {
+                    let key = format!("METRIC_{}", metric.to_uppercase().replace('.', "_"));
+                    if let Some(val) = cached.variables.get(&key) {
+                        return Some(val.clone());
+                    }
+                }
+            }
+            // Command, Source → can't coerce directly (need Extract/Parse first)
+            _ => continue,
+        }
+    }
+    None
+}
+
 /// Safe short hash: first 16 chars or full string if shorter.
 fn short_hash(h: &str) -> &str {
     &h[..16.min(h.len())]
@@ -1226,8 +1312,30 @@ fn execute_dag(
 
             match &input.node {
 
-                ResolvedNativeNode::Env { name, on_missing, .. } if input.phase == Phase::Exec => {
-                    let result = probe::probe_input(&input.node);
+                ResolvedNativeNode::Env { name, value, on_missing, .. } if input.phase == Phase::Exec => {
+                    // Env-from-parent coercion: if env has parents and no value,
+                    // derive value from parent's output.
+                    let coerced_value = if value.is_none() && !input.parents.is_empty() {
+                        resolve_parent_value(input, ir, context, &exec_bindings, &seal_variables)
+                    } else {
+                        None
+                    };
+
+                    // If we coerced a value, create a synthetic probe result
+                    let result = if let Some(val) = &coerced_value {
+                        let hash = blake3::hash(format!("{name}={val}").as_bytes()).to_hex().to_string();
+                        let mut vars = HashMap::new();
+                        vars.insert(name.clone(), val.clone());
+                        probe::ProbeResult {
+                            success: true,
+                            hash,
+                            variables: vars,
+                            error: None,
+                        }
+                    } else {
+                        probe::probe_input(&input.node)
+                    };
+
                     if result.success {
                         if !result.variables.is_empty() {
                             exec_bindings.entry(input.id.clone()).or_default().extend(result.variables.clone());

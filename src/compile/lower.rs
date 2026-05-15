@@ -518,13 +518,18 @@ fn resolve_ordering(
         })
         .collect();
 
-    // Add manifest key aliases for env nodes whose key differs from env name
+    // Add manifest key aliases for nodes whose content ID key differs from manifest key.
+    // This ensures parent references by manifest key resolve correctly.
     for (key, mi) in manifest_nodes {
-        if let manifest::Node::Env(e) = mi {
-            let env_name = e.name.clone().unwrap_or_else(|| key.clone());
-            if *key != env_name {
-                // Manifest key differs from env name — add alias
-                if let Some(id) = name_to_id.get(&env_name) {
+        let content_key = match mi {
+            manifest::Node::Env(e) => Some(e.name.clone().unwrap_or_else(|| key.clone())),
+            manifest::Node::File(f) => Some(f.path.clone()),
+            manifest::Node::Binary(b) => Some(b.name.clone().unwrap_or_else(|| key.clone())),
+            _ => None,
+        };
+        if let Some(ck) = content_key {
+            if *key != ck {
+                if let Some(id) = name_to_id.get(&ck) {
                     name_to_id.insert(key.clone(), id.clone());
                 }
             }

@@ -1,0 +1,42 @@
+name = "env-coerce"
+description = "Test env-from-parent coercion: file→env, std→env"
+
+# --- file → env coercion ---
+[nodes.version-file]
+type = "file"
+path = "version.txt"
+phase = "exec"
+
+[nodes.VERSION]
+type = "env"
+phase = "exec"
+parents = ["version-file"]
+
+# --- std → env coercion (command stdout → env) ---
+[nodes.compute]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo computed-value-42"]
+
+[nodes.compute-stdout]
+type = "std"
+stream = "stdout"
+parents = ["compute"]
+
+[nodes.COMPUTED]
+type = "env"
+phase = "exec"
+parents = ["compute-stdout"]
+
+# --- check both coerced values ---
+[nodes.check]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo VERSION=$VERSION COMPUTED=$COMPUTED"]
+parents = ["VERSION", "COMPUTED"]
+
+[nodes.check-stdout]
+type = "std"
+stream = "stdout"
+contains = ["VERSION=1.2.3", "COMPUTED=computed-value-42"]
+parents = ["check"]
