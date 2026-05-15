@@ -1,0 +1,22 @@
+{
+  "name": "system/kernel",
+  "description": "Get kernel version",
+  "nodes": {
+    "probe": {
+      "type": "command",
+      "phase": "seal",
+      "run": ["uname", "-r"],
+      "hide_output": true
+    },
+    "probe-stdout": {
+      "type": "std",
+      "stream": "stdout",
+      "parents": ["probe"]
+    },
+    "KERNEL_VERSION": {
+      "type": "env",
+      "phase": "exec",
+      "parents": ["probe-stdout"]
+    }
+  }
+}

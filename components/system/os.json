@@ -1,0 +1,22 @@
+{
+  "name": "system/os",
+  "description": "Detect operating system name",
+  "nodes": {
+    "probe": {
+      "type": "command",
+      "phase": "seal",
+      "run": ["uname", "-s"],
+      "hide_output": true
+    },
+    "probe-stdout": {
+      "type": "std",
+      "stream": "stdout",
+      "parents": ["probe"]
+    },
+    "PLATFORM_OS": {
+      "type": "env",
+      "phase": "exec",
+      "parents": ["probe-stdout"]
+    }
+  }
+}

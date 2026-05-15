@@ -1,0 +1,22 @@
+{
+  "name": "system/memory-mb",
+  "description": "Get available memory in MB",
+  "nodes": {
+    "probe": {
+      "type": "command",
+      "phase": "seal",
+      "run": ["sh", "-c", "free -m | awk '/Mem:/{print $7}'"],
+      "hide_output": true
+    },
+    "probe-stdout": {
+      "type": "std",
+      "stream": "stdout",
+      "parents": ["probe"]
+    },
+    "MEMORY_AVAILABLE_MB": {
+      "type": "env",
+      "phase": "exec",
+      "parents": ["probe-stdout"]
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "system/arch",
+  "description": "Detect CPU architecture",
+  "nodes": {
+    "probe": {
+      "type": "command",
+      "phase": "seal",
+      "run": ["uname", "-m"],
+      "hide_output": true
+    },
+    "probe-stdout": {
+      "type": "std",
+      "stream": "stdout",
+      "parents": ["probe"]
+    },
+    "PLATFORM_ARCH": {
+      "type": "env",
+      "phase": "exec",
+      "parents": ["probe-stdout"]
+    }
+  }
+}

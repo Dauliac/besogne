@@ -1,0 +1,22 @@
+{
+  "name": "system/cpu-count",
+  "description": "Get the number of CPU cores",
+  "nodes": {
+    "probe": {
+      "type": "command",
+      "phase": "seal",
+      "run": ["nproc"],
+      "hide_output": true
+    },
+    "probe-stdout": {
+      "type": "std",
+      "stream": "stdout",
+      "parents": ["probe"]
+    },
+    "CPU_COUNT": {
+      "type": "env",
+      "phase": "exec",
+      "parents": ["probe-stdout"]
+    }
+  }
+}

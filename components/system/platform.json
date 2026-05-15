@@ -1,0 +1,8 @@
+{
+  "name": "system/platform",
+  "description": "Detect OS and architecture (combines system/os + system/arch)",
+  "nodes": {
+    "system/os": { "type": "component" },
+    "system/arch": { "type": "component" }
+  }
+}

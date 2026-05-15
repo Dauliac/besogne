@@ -166,6 +166,9 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str, besogne_name_upper: 
         }
 
         Node::Service(s) => {
+            eprintln!("{}", crate::output::style::warning_diag(
+                &format!("native 'service' type is deprecated for node '{key}'. Use tcp/check or http/check component instead")));
+
             let identifier = s.tcp.as_deref()
                 .or(s.http.as_deref())
                 .unwrap_or(key);
@@ -209,6 +212,8 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str, besogne_name_upper: 
 
 
         Node::Platform(p) => {
+            eprintln!("{}", crate::output::style::warning_diag(
+                &format!("native 'platform' type is deprecated for node '{key}'. Use system/platform component instead")));
             let identifier = format!(
                 "{}-{}",
                 p.os.as_deref().unwrap_or("any"),
@@ -224,6 +229,8 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str, besogne_name_upper: 
         }
 
         Node::Dns(d) => {
+            eprintln!("{}", crate::output::style::warning_diag(
+                &format!("native 'dns' type is deprecated for node '{key}'. Use dns/resolve component instead")));
             let native = ResolvedNativeNode::Dns {
                 host: d.host.clone(),
                 expect: d.expect.clone(),
@@ -235,6 +242,8 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str, besogne_name_upper: 
         }
 
         Node::Metric(m) => {
+            eprintln!("{}", crate::output::style::warning_diag(
+                &format!("native 'metric' type is deprecated for node '{key}'. Use system/cpu-count or system/memory-mb component instead")));
             let native = ResolvedNativeNode::Metric {
                 metric: m.metric.clone(),
                 path: m.path.clone(),

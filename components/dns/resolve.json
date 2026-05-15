@@ -1,0 +1,23 @@
+{
+  "name": "dns/resolve",
+  "description": "Resolve a hostname to an IP address using getent (no dig required)",
+  "inputs": ["DNS_HOST"],
+  "nodes": {
+    "resolve": {
+      "type": "command",
+      "phase": "seal",
+      "run": ["sh", "-c", "getent hosts $DNS_HOST | head -1 | awk '{print $1}'"],
+      "hide_output": true
+    },
+    "resolve-stdout": {
+      "type": "std",
+      "stream": "stdout",
+      "parents": ["resolve"]
+    },
+    "RESOLVED_IP": {
+      "type": "env",
+      "phase": "exec",
+      "parents": ["resolve-stdout"]
+    }
+  }
+}

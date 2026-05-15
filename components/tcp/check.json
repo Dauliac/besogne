@@ -1,0 +1,13 @@
+{
+  "name": "tcp/check",
+  "description": "Check TCP connectivity to a host:port",
+  "inputs": ["TCP_HOST", "TCP_PORT"],
+  "nodes": {
+    "check": {
+      "type": "command",
+      "phase": "seal",
+      "run": ["sh", "-c", "echo > /dev/tcp/$TCP_HOST/$TCP_PORT"],
+      "hide_output": true
+    }
+  }
+}

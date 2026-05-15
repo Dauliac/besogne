@@ -1,0 +1,24 @@
+{
+  "name": "http/check",
+  "description": "Check HTTP endpoint responds with success status",
+  "inputs": ["HTTP_URL"],
+  "nodes": {
+    "curl": { "type": "binary" },
+    "check": {
+      "type": "command",
+      "phase": "seal",
+      "run": ["curl", "-sf", "-o", "/dev/null", "-w", "%{http_code}", "$HTTP_URL"],
+      "hide_output": true
+    },
+    "check-stdout": {
+      "type": "std",
+      "stream": "stdout",
+      "parents": ["check"]
+    },
+    "HTTP_STATUS": {
+      "type": "env",
+      "phase": "exec",
+      "parents": ["check-stdout"]
+    }
+  }
+}
