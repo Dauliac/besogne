@@ -694,6 +694,19 @@ fn e2e_flag_routing_with_flag() {
     assert!(!err.contains("built-locally"), "should NOT run local build: {err}");
 }
 
+// ─── compile-error-bad-edge ─────────────────────────────────────
+
+#[test]
+fn e2e_compile_error_bad_edge() {
+    let dir = setup_case("compile-error-bad-edge");
+    let c = compile_in(dir.path());
+    assert!(!c.status.success(), "compile should FAIL for invalid edge");
+    let err = stderr(&c);
+    assert!(err.contains("invalid edge"), "should report invalid edge: {err}");
+    assert!(err.contains("command") && err.contains("env"), "should mention command→env: {err}");
+    assert!(err.contains("std"), "should suggest using std node: {err}");
+}
+
 // ─── component-inputs ──────────────────────────────────────────
 
 #[test]

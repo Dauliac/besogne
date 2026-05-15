@@ -1,0 +1,12 @@
+name = "compile-error-bad-edge"
+description = "This should fail to compile — command→env is an invalid edge"
+
+[nodes.build]
+type = "command"
+phase = "exec"
+run = ["echo", "hello"]
+
+[nodes.BAD_VAR]
+type = "env"
+phase = "exec"
+parents = ["build"]

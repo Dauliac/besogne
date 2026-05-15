@@ -1136,6 +1136,48 @@ fn validate_node_compositions(nodes: &[ResolvedNode]) -> Result<(), crate::error
         }
     }
 
+    // Rule 5: Typed edge validation — reject invalid parent→child type combinations
+    for node in nodes {
+        let node_key = node.id.0.split(':').nth(1).unwrap_or("?");
+        let child_type = node_type_name(&node.node);
+
+        for parent_id in &node.parents {
+            let Some(parent) = node_by_id.get(parent_id) else { continue };
+            let parent_type = node_type_name(&parent.node);
+            let parent_key = parent.id.0.split(':').nth(1).unwrap_or("?");
+
+            let invalid = match (&parent.node, &node.node) {
+                // command → env: Record cannot coerce to String without Extract (std)
+                (ResolvedNativeNode::Command { .. }, ResolvedNativeNode::Env { .. }) => {
+                    Some("command produces a Record — use a std node to extract stdout/stderr first")
+                }
+                // command → source: Record cannot be parsed without Extract (std)
+                (ResolvedNativeNode::Command { .. }, ResolvedNativeNode::Source { .. }) => {
+                    Some("command produces a Record — use a std node to extract stdout first, then parse with source")
+                }
+                // source → std: Map cannot be extracted like a Record
+                (ResolvedNativeNode::Source { .. }, ResolvedNativeNode::Std { .. }) => {
+                    Some("source produces a Map (key-value bindings), not a Record — std can only extract from command output")
+                }
+                _ => None,
+            };
+
+            if let Some(hint) = invalid {
+                let header = style::error_diag(&format!(
+                    "invalid edge: {parent_type} '{parent_key}' → {child_type} '{node_key}'"
+                ));
+                let body = DiagBuilder::new()
+                    .location(&format!("manifest [nodes.{node_key}]"))
+                    .blank()
+                    .code(&format!("parents = [\"{parent_key}\"]"))
+                    .blank()
+                    .note(hint)
+                    .build();
+                errors.push(format!("{header}\n{body}"));
+            }
+        }
+    }
+
     if errors.is_empty() {
         Ok(())
     } else {
