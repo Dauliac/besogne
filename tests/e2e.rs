@@ -694,6 +694,21 @@ fn e2e_flag_routing_with_flag() {
     assert!(!err.contains("built-locally"), "should NOT run local build: {err}");
 }
 
+// ─── scoped-env ────────────────────────────────────────────────
+
+#[test]
+fn e2e_scoped_env() {
+    let dir = setup_case("scoped-env");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    let r = run_in(dir.path());
+    assert!(r.status.success(), "run: {}", stderr(&r));
+    let err = stderr(&r);
+    assert!(err.contains("GREETING=hello-from-A"), "check-a should see A's value: {err}");
+    assert!(err.contains("GREETING=hello-from-B"), "check-b should see B's value: {err}");
+}
+
 // ─── multi-project ──────────────────────────────────────────────
 
 /// Helper: run `besogne list` in a workdir

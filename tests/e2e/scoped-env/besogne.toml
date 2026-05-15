@@ -1,0 +1,61 @@
+name = "scoped-env"
+description = "Test DAG-scoped binding: same var name, different values in different subtrees"
+
+# Two env nodes with the same variable name but different values
+# Each scoped to a different command subtree
+
+[nodes.setup-a]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo '{\"GREETING\": \"hello-from-A\"}' "]
+
+[nodes.setup-a-stdout]
+type = "std"
+stream = "stdout"
+parents = ["setup-a"]
+
+[nodes.source-a]
+type = "source"
+format = "json"
+parents = ["setup-a-stdout"]
+
+[nodes.setup-b]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo '{\"GREETING\": \"hello-from-B\"}' "]
+
+[nodes.setup-b-stdout]
+type = "std"
+stream = "stdout"
+parents = ["setup-b"]
+
+[nodes.source-b]
+type = "source"
+format = "json"
+parents = ["setup-b-stdout"]
+
+# Command A sees GREETING=hello-from-A (from source-a ancestor)
+[nodes.check-a]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo GREETING=$GREETING"]
+parents = ["source-a"]
+
+[nodes.check-a-stdout]
+type = "std"
+stream = "stdout"
+contains = ["GREETING=hello-from-A"]
+parents = ["check-a"]
+
+# Command B sees GREETING=hello-from-B (from source-b ancestor)
+[nodes.check-b]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo GREETING=$GREETING"]
+parents = ["source-b"]
+
+[nodes.check-b-stdout]
+type = "std"
+stream = "stdout"
+contains = ["GREETING=hello-from-B"]
+parents = ["check-b"]

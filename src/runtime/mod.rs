@@ -168,7 +168,7 @@ fn run_with_emitter(ir: BesogneIR, config: &cli::RuntimeConfig, renderer: &mut o
         let mut hash_parts = Vec::new();
         for input in &pre_nodes {
             if let Some(cached) = context.get_probe(&input.id.0) {
-                if config.debug { eprintln!("  \x1b[2m[debug] seal cached {} → {}\x1b[0m", input.id.0, &cached.hash[..16]); }
+                if config.debug { eprintln!("  \x1b[2m[debug] seal cached {} → {}\x1b[0m", input.id.0, short_hash(&cached.hash)); }
                 all_vars.extend(cached.variables.clone());
                 hash_parts.push(cached.hash.clone());
             }
@@ -177,7 +177,7 @@ fn run_with_emitter(ir: BesogneIR, config: &cli::RuntimeConfig, renderer: &mut o
         for node in ir.nodes.iter().filter(|n| n.phase == Phase::Exec && matches!(&n.node, ResolvedNativeNode::Source { .. })) {
             let result = probe::probe_input(&node.node);
             if result.success {
-                if config.debug { eprintln!("  \x1b[2m[debug] exec source {} → {}\x1b[0m", node.id.0, &result.hash[..16]); }
+                if config.debug { eprintln!("  \x1b[2m[debug] exec source {} → {}\x1b[0m", node.id.0, &result.hash[..16.min(result.hash.len())]); }
                 hash_parts.push(result.hash.clone());
                 all_vars.extend(result.variables.clone());
                 context.set_probe(node.id.0.clone(), result.hash, result.variables);
@@ -188,7 +188,7 @@ fn run_with_emitter(ir: BesogneIR, config: &cli::RuntimeConfig, renderer: &mut o
         let input_hash = blake3::hash(hash_parts.join(":").as_bytes())
             .to_hex()
             .to_string();
-        if config.debug { eprintln!("  \x1b[2m[debug] input_hash = {} ({} parts)\x1b[0m", &input_hash[..16], hash_parts.len()); }
+        if config.debug { eprintln!("  \x1b[2m[debug] input_hash = {} ({} parts)\x1b[0m", short_hash(&input_hash), hash_parts.len()); }
 
         let can_skip = !has_side_effects(&ir) && context.can_skip(&input_hash);
         if config.debug {
@@ -212,8 +212,8 @@ fn run_with_emitter(ir: BesogneIR, config: &cli::RuntimeConfig, renderer: &mut o
                     let valid = fresh.success && context.get_probe(&n.id.0)
                         .map_or(false, |c| c.hash == fresh.hash);
                     if config.debug && !valid {
-                        let cached_h = context.get_probe(&n.id.0).map(|c| c.hash[..16].to_string()).unwrap_or_else(|| "none".into());
-                        let fresh_h = if fresh.hash.len() >= 16 { &fresh.hash[..16] } else { &fresh.hash };
+                        let cached_h = context.get_probe(&n.id.0).map(|c| short_hash(&c.hash).to_string()).unwrap_or_else(|| "none".into());
+                        let fresh_h = short_hash(&fresh.hash);
                         eprintln!("  \x1b[2m[debug] backward drift: {} cached={} fresh={} ok={}\x1b[0m",
                             &n.id.0[..30.min(n.id.0.len())], cached_h, fresh_h, fresh.success);
                     }
@@ -281,7 +281,7 @@ fn run_with_emitter(ir: BesogneIR, config: &cli::RuntimeConfig, renderer: &mut o
     if config.debug {
         for (input, result) in &results {
             let status = if result.success { "ok" } else { "FAIL" };
-            let hash_short = if result.hash.len() >= 16 { &result.hash[..16] } else { &result.hash };
+            let hash_short = if result.hash.len() >= 16 { short_hash(&result.hash) } else { &result.hash };
             let cached = if context.get_probe(&input.id.0).is_some() { " (cached)" } else { " (fresh)" };
             eprintln!("  \x1b[2m[debug] seal {} → {} {}{}\x1b[0m", input.id.0, status, hash_short, cached);
         }
@@ -346,7 +346,7 @@ fn run_with_emitter(ir: BesogneIR, config: &cli::RuntimeConfig, renderer: &mut o
     let input_hash = blake3::hash(hash_parts.join(":").as_bytes())
         .to_hex()
         .to_string();
-    if config.debug { eprintln!("  \x1b[2m[debug] input_hash = {} ({} parts)\x1b[0m", &input_hash[..16], hash_parts.len()); }
+    if config.debug { eprintln!("  \x1b[2m[debug] input_hash = {} ({} parts)\x1b[0m", short_hash(&input_hash), hash_parts.len()); }
 
     if !config.force && !has_side_effects(&ir) && context.can_skip(&input_hash) {
         // Load exec-phase source variables from cache for replay context
@@ -374,7 +374,7 @@ fn run_with_emitter(ir: BesogneIR, config: &cli::RuntimeConfig, renderer: &mut o
                 if config.debug {
                     let label = crate::output::input_label(input);
                     eprintln!("  \x1b[2m[debug] {label}: hash changed {} → {}\x1b[0m",
-                        &cached.hash[..16], &result.hash[..16]);
+                        short_hash(&cached.hash), short_hash(&result.hash));
                     // Show variable diffs for env/source nodes
                     if !cached.variables.is_empty() || !result.variables.is_empty() {
                         for (k, v) in &result.variables {
@@ -550,7 +550,7 @@ fn determine_command_mode(
     if debug {
         eprintln!("    \x1b[2m[debug] {cmd_name}: parent_hash cached={} current={}\x1b[0m",
             &cached.parent_hash[..16.min(cached.parent_hash.len())],
-            &current_parent_hash[..16]);
+            short_hash(&current_parent_hash));
     }
     if cached.parent_hash != current_parent_hash {
         let mode = if context.verified_hash.as_deref() != Some(&current_parent_hash) {
@@ -573,7 +573,7 @@ fn determine_command_mode(
                             ("probe", h)
                         }
                     };
-                    let hash_short = if hash.len() >= 16 { &hash[..16] } else { &hash };
+                    let hash_short = if hash.len() >= 16 { short_hash(&hash) } else { &hash };
                     eprintln!("    \x1b[2m[debug]   parent {kind}:{} → {hash_short}\x1b[0m",
                         &parent_id.0[..24.min(parent_id.0.len())]);
                 }
@@ -586,7 +586,7 @@ fn determine_command_mode(
     let (drifted, current_child_hash) = compute_child_hash(&node.id, ir, context);
     if debug {
         eprintln!("    \x1b[2m[debug] {cmd_name}: child_hash={} drifted={drifted}\x1b[0m",
-            &current_child_hash[..16]);
+            short_hash(&current_child_hash));
     }
     if drifted {
         if debug {
@@ -599,8 +599,8 @@ fn determine_command_mode(
                 if child.node.is_persistent() {
                     let fresh = probe::probe_input(&child.node);
                     let cached_hash = context.get_probe(&child.id.0).map(|c| c.hash.clone());
-                    let fresh_short = if fresh.hash.len() >= 16 { &fresh.hash[..16] } else { &fresh.hash };
-                    let cached_short = cached_hash.as_ref().map(|h| if h.len() >= 16 { &h[..16] } else { h }).unwrap_or("none");
+                    let fresh_short = short_hash(&fresh.hash);
+                    let cached_short = cached_hash.as_ref().map(|h| short_hash(h)).unwrap_or("none");
                     if cached_hash.as_deref() != Some(&fresh.hash) {
                         eprintln!("    \x1b[2m[debug]   drifted child {}: {} → {}\x1b[0m",
                             &child.id.0[..24.min(child.id.0.len())], cached_short, fresh_short);
@@ -615,10 +615,51 @@ fn determine_command_mode(
     cache::CommandMode::Skip
 }
 
+/// Safe short hash: first 16 chars or full string if shorter.
+fn short_hash(h: &str) -> &str {
+    &h[..16.min(h.len())]
+}
+
+/// Collect DAG-scoped bindings for a node by walking its ancestors.
+/// Starts with seal_variables (global), then overlays exec-phase ancestor bindings.
+/// Closest ancestor wins (inner scope shadows outer).
+fn collect_scoped_env(
+    node: &ResolvedNode,
+    seal_variables: &HashMap<String, String>,
+    exec_bindings: &HashMap<ContentId, HashMap<String, String>>,
+    ir: &BesogneIR,
+) -> HashMap<String, String> {
+    let mut env = seal_variables.clone();
+
+    // Walk ancestors in reverse-topological order (furthest first, closest last = closest wins)
+    let mut ancestors = Vec::new();
+    let mut stack: Vec<&ContentId> = node.parents.iter().collect();
+    let mut visited = std::collections::HashSet::new();
+    while let Some(pid) = stack.pop() {
+        if !visited.insert(pid.clone()) { continue; }
+        ancestors.push(pid.clone());
+        // Walk further up
+        if let Some(parent) = ir.nodes.iter().find(|n| n.id == *pid) {
+            for gpid in &parent.parents {
+                stack.push(gpid);
+            }
+        }
+    }
+    // Reverse so furthest ancestors come first, closest last (closest wins via insert)
+    ancestors.reverse();
+
+    for ancestor_id in &ancestors {
+        if let Some(bindings) = exec_bindings.get(ancestor_id) {
+            env.extend(bindings.clone());
+        }
+    }
+    env
+}
+
 /// Execute the exec-phase DAG
 fn execute_dag(
     ir: &BesogneIR,
-    mut all_variables: HashMap<String, String>,
+    seal_variables: HashMap<String, String>,
     input_hash: String,
     renderer: &mut output::EventEmitter,
     context: &mut ContextCache,
@@ -644,6 +685,10 @@ fn execute_dag(
     };
 
     let mut last_exit_code = 0;
+
+    // DAG-scoped bindings: exec-phase nodes store their produced variables here.
+    // Commands collect scope by walking ancestors (seal_variables + exec_bindings from ancestors).
+    let mut exec_bindings: HashMap<ContentId, HashMap<String, String>> = HashMap::new();
 
     // Per-command dirty propagation: nodes in this set are forced to re-run
     // because an upstream command's persistent outputs changed.
@@ -815,7 +860,7 @@ fn execute_dag(
 
                 if cmd_mode == cache::CommandMode::Skip {
                     if let Some(cached) = context.get_command(name) {
-                        let mut cmd_env = all_variables.clone();
+                        let mut cmd_env = collect_scoped_env(input, &seal_variables, &exec_bindings, ir);
                         cmd_env.extend(env.clone());
                         let ctx = output::CommandContext {
                             binary_paths: &binary_paths,
@@ -828,7 +873,7 @@ fn execute_dag(
                     continue;
                 }
 
-                let mut cmd_env = all_variables.clone();
+                let mut cmd_env = collect_scoped_env(input, &seal_variables, &exec_bindings, ir);
                 cmd_env.extend(env.clone());
                 let mut effective_run = run.clone();
                 if force && !force_args.is_empty() { effective_run.extend(force_args.clone()); }
@@ -1100,7 +1145,7 @@ fn execute_dag(
                     if debug {
                         eprintln!("    \x1b[2m[debug] {name}: child_hash changed {} → {} → propagating dirty\x1b[0m",
                             &old_cached.child_hash[..16.min(old_cached.child_hash.len())],
-                            &new_child_hash[..16]);
+                            short_hash(&new_child_hash));
                     }
                     let mut propagated = Vec::new();
                     for neighbor in graph.neighbors_directed(job.node_idx, petgraph::Direction::Outgoing) {
@@ -1137,10 +1182,11 @@ fn execute_dag(
             match &input.node {
 
                 ResolvedNativeNode::Flag { name, on_missing, .. } => {
-                    let result = probe::probe_input_with_flags(&input.node, &all_variables);
+                    let flag_scope = collect_scoped_env(input, &seal_variables, &exec_bindings, ir);
+                    let result = probe::probe_input_with_flags(&input.node, &flag_scope);
                     if result.success {
                         if debug { eprintln!("    \x1b[2m[debug] flag '{name}': matched → children execute\x1b[0m"); }
-                        all_variables.extend(result.variables.clone());
+                        exec_bindings.entry(input.id.clone()).or_default().extend(result.variables.clone());
                         context.set_probe(input.id.0.clone(), result.hash.clone(), result.variables);
                     } else if *on_missing == crate::ir::types::OnMissingResolved::Skip {
                         if debug { eprintln!("    \x1b[2m[debug] flag '{name}': not matched → pruning subtree\x1b[0m"); }
@@ -1220,7 +1266,7 @@ fn execute_dag(
 
                     if valid {
                         let hash = blake3::hash(content.as_bytes()).to_hex().to_string();
-                        if debug { eprintln!("    \x1b[2m[debug] std:{stream} hash={} content_len={}\x1b[0m", &hash[..16], content.len()); }
+                        if debug { eprintln!("    \x1b[2m[debug] std:{stream} hash={} content_len={}\x1b[0m", short_hash(&hash), content.len()); }
                         context.set_probe(input.id.0.clone(), hash, HashMap::new());
                         eprintln!("  {} {label}",
                             output::style::styled(output::style::status::PROBED, output::style::label::PROBED));
@@ -1264,8 +1310,8 @@ fn execute_dag(
                                             .collect(),
                                         None => env,
                                     };
-                                    if debug { eprintln!("    \x1b[2m[debug] source: injecting {} env vars\x1b[0m", filtered.len()); }
-                                    all_variables.extend(filtered);
+                                    if debug { eprintln!("    \x1b[2m[debug] source: injecting {} env vars (DAG-scoped)\x1b[0m", filtered.len()); }
+                                    exec_bindings.entry(input.id.clone()).or_default().extend(filtered);
                                 }
                                 Err(e) => {
                                     eprintln!("  {} source: {e}",
@@ -1279,9 +1325,9 @@ fn execute_dag(
                     }
                     let result = probe::probe_input(&input.node);
                     if result.success {
-                        // Inject probe variables for downstream commands
+                        // Store probe variables in DAG-scoped bindings for downstream commands
                         if !result.variables.is_empty() {
-                            all_variables.extend(result.variables.clone());
+                            exec_bindings.entry(input.id.clone()).or_default().extend(result.variables.clone());
                         }
                         // Probe succeeded — cache the hash
                         context.set_probe(input.id.0.clone(), result.hash.clone(), result.variables.clone());
@@ -1522,7 +1568,9 @@ fn replay_cached_commands(
         }
         if let ResolvedNativeNode::Command { name, run, env, .. } = &input.node {
             if let Some(cached) = context.get_command(name) {
-                let mut cmd_env = all_variables.clone();
+                // In replay mode, exec bindings aren't available — use seal vars only
+                let empty_exec = HashMap::new();
+                let mut cmd_env = collect_scoped_env(input, all_variables, &empty_exec, ir);
                 cmd_env.extend(env.clone());
                 let ctx = output::CommandContext {
                     binary_paths: &binary_paths,
