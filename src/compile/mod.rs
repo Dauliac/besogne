@@ -41,9 +41,11 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
     let component_count = manifest.nodes.values()
         .filter(|i| matches!(i, manifest::Node::Component(_)))
         .count();
+    let mut component_metas = Vec::new();
     if component_count > 0 {
         let step = Instant::now();
-        let expanded = component::expand_components(&manifest, manifest_path)?;
+        let (expanded, metas) = component::expand_components(&manifest, manifest_path)?;
+        component_metas = metas;
         let expand_ms = step.elapsed().as_millis();
         let produced = expanded.len();
         manifest.nodes = expanded;
@@ -58,6 +60,11 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
     let node_summary = build_node_summary(&ir);
     eprintln!("{}", l3::items::progress_step::render(
         &format!("lowered {node_summary} ({})", format_duration(lower_ms))));
+
+    // 2a. Validate component inputs
+    if !component_metas.is_empty() {
+        validate_component_inputs(&component_metas, &ir);
+    }
 
     // 2b. Build-time binary resolution — shift-left validation
     let step = Instant::now();
@@ -99,22 +106,27 @@ pub fn compile(manifest_path: &Path, output_path: &Path, force: bool) -> Result<
         return Ok(store_binary);
     }
 
-    // 4. Store miss — emit binary directly to store
+    // 4. Store miss — emit binary to store, then copy to output.
+    //    If the store is unavailable (e.g. Nix sandbox), emit directly to output.
     let step = Instant::now();
-    if let Some(parent) = store_binary.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    let store_available = if let Some(parent) = store_binary.parent() {
+        std::fs::create_dir_all(parent).is_ok() && parent.exists()
+    } else {
+        false
+    };
+
+    if store_available {
+        embed::emit(&store_binary, &ir)?;
+        write_store_metadata(&store_binary, &ir, &cache_hash, manifest_path);
+        std::fs::copy(&store_binary, output_path)
+            .map_err(|e| crate::error::BesogneError::Compile(format!("cannot copy to output: {e}")))?;
+    } else {
+        // Direct emit to output (no global store — sandbox or readonly filesystem)
+        embed::emit(output_path, &ir)?;
     }
-    embed::emit(&store_binary, &ir)?;
     let emit_ms = step.elapsed().as_millis();
 
-    // 5. Write metadata sidecar (provenance + Nix store compatibility)
-    write_store_metadata(&store_binary, &ir, &cache_hash, manifest_path);
-
-    // 6. Copy to output path
-    std::fs::copy(&store_binary, output_path)
-        .map_err(|e| crate::error::BesogneError::Compile(format!("cannot copy to output: {e}")))?;
-
-    let binary_size = std::fs::metadata(&store_binary).ok().map(|m| m.len()).unwrap_or(0);
+    let binary_size = std::fs::metadata(output_path).ok().map(|m| m.len()).unwrap_or(0);
     let total_ms = build_start.elapsed().as_millis();
     eprintln!("{}", l3::items::progress_step::render(
         &format!("emitted {} ({}, {}, {} total)", &cache_hash[..16], format_size(binary_size), format_duration(emit_ms), format_duration(total_ms))));
@@ -130,7 +142,7 @@ pub fn compile_quiet(manifest_path: &Path, force: bool) -> Result<PathBuf, crate
     let build_start = Instant::now();
     let mut manifest = manifest::load_manifest(manifest_path)?;
     if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
-        manifest.nodes = component::expand_components(&manifest, manifest_path)?;
+        manifest.nodes = component::expand_components(&manifest, manifest_path)?.0;
     }
     let mut ir = lower::lower_manifest(&manifest, manifest_path)?;
     resolve_build_binaries_quiet(&mut ir)?;
@@ -171,7 +183,7 @@ pub fn compile_quiet(manifest_path: &Path, force: bool) -> Result<PathBuf, crate
 pub fn check_to_ir(manifest_path: &Path) -> Result<crate::ir::BesogneIR, crate::error::BesogneError> {
     let mut manifest = manifest::load_manifest(manifest_path)?;
     if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
-        manifest.nodes = component::expand_components(&manifest, manifest_path)?;
+        manifest.nodes = component::expand_components(&manifest, manifest_path)?.0;
     }
     lower::lower_manifest(&manifest, manifest_path)
 }
@@ -180,7 +192,7 @@ pub fn check_to_ir(manifest_path: &Path) -> Result<crate::ir::BesogneIR, crate::
 pub fn check(manifest_path: &Path) -> Result<(), crate::error::BesogneError> {
     let mut manifest = manifest::load_manifest(manifest_path)?;
     if manifest.nodes.values().any(|i| matches!(i, manifest::Node::Component(_))) {
-        manifest.nodes = component::expand_components(&manifest, manifest_path)?;
+        manifest.nodes = component::expand_components(&manifest, manifest_path)?.0;
     }
     let mut ir = lower::lower_manifest(&manifest, manifest_path)?;
     resolve_build_binaries(&mut ir)?;
@@ -479,6 +491,42 @@ fn store_binary_path(hash: &str) -> PathBuf {
         .join("binary")
 }
 
+/// Validate component inputs: for each component with declared inputs,
+/// check that all required variables have binding ancestors in the IR.
+fn validate_component_inputs(metas: &[component::ComponentMeta], ir: &BesogneIR) {
+    use std::collections::HashSet;
+
+    // Collect all env names declared in the IR (seal + exec phase)
+    let declared_env: HashSet<String> = ir.nodes.iter()
+        .filter_map(|n| match &n.node {
+            ResolvedNativeNode::Env { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+
+    // Collect all source nodes (they inject unknown vars — accept all)
+    let has_source = ir.nodes.iter().any(|n| matches!(&n.node, ResolvedNativeNode::Source { .. }));
+
+    for meta in metas {
+        if meta.inputs.is_empty() { continue; }
+        if has_source { continue; } // Source provides unknown vars, skip validation
+
+        let missing: Vec<&String> = meta.inputs.iter()
+            .filter(|input| !declared_env.contains(input.as_str()))
+            .collect();
+
+        if !missing.is_empty() {
+            let vars = missing.iter().map(|v| format!("${v}")).collect::<Vec<_>>().join(", ");
+            eprintln!("{}", crate::output::style::error_diag(
+                &format!("component '{}' requires {vars} but no env node provides it", meta.component_ref)
+            ));
+            eprintln!("  {}", crate::output::style::dim(
+                "add env nodes with these names to your manifest"
+            ));
+        }
+    }
+}
+
 /// Summarize IR nodes by phase: "3 build, 2 seal, 4 exec"
 fn build_node_summary(ir: &BesogneIR) -> String {
     let build = ir.nodes.iter().filter(|n| n.phase == Phase::Build).count();
@@ -521,21 +569,7 @@ fn build_pin_summary(ir: &BesogneIR) -> String {
     parts.join(" ")
 }
 
-fn format_duration(ms: u128) -> String {
-    if ms < 1000 {
-        format!("{ms}ms")
-    } else if ms < 60_000 {
-        format!("{:.1}s", ms as f64 / 1000.0)
-    } else if ms < 3_600_000 {
-        let m = ms / 60_000;
-        let s = (ms % 60_000) / 1000;
-        format!("{m}m{s}s")
-    } else {
-        let h = ms / 3_600_000;
-        let m = (ms % 3_600_000) / 60_000;
-        format!("{h}h{m}m")
-    }
-}
+use crate::output::style::format_duration;
 
 fn format_size(bytes: u64) -> String {
     if bytes >= 1_048_576 {
@@ -604,4 +638,23 @@ fn write_build_lock(manifest_path: &Path, output_path: &Path, store_hash: &str) 
         });
         let _ = std::fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap_or_default());
     }
+}
+
+/// Create a `.besogne/<name>` symlink pointing to a store binary.
+pub fn create_besogne_symlink(cwd: &Path, name: &str, target: &Path) {
+    let link_dir = cwd.join(".besogne");
+    let _ = std::fs::create_dir_all(&link_dir);
+    let link_path = link_dir.join(name);
+    let _ = std::fs::remove_file(&link_path);
+    #[cfg(unix)]
+    {
+        let _ = std::os::unix::fs::symlink(target, &link_path);
+    }
+}
+
+/// Truncated store path for display (last 40 chars).
+pub fn store_path_short(path: &Path) -> String {
+    let s = path.display().to_string();
+    let tail: String = s.chars().rev().take(40).collect::<String>().chars().rev().collect();
+    tail
 }

@@ -3,13 +3,23 @@ use crate::output::style::{self, DiagBuilder};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Resolve all component nodes in a manifest, returning expanded native nodes.
-/// Component nodes are replaced by the component's `nodes` map (same format as manifest).
+/// Component metadata: inputs declared by a component JSON.
+#[derive(Debug, Clone, Default)]
+pub struct ComponentMeta {
+    /// Variable names this component expects from its ancestors.
+    pub inputs: Vec<String>,
+    /// The component reference (e.g., "dns/resolve")
+    pub component_ref: String,
+}
+
+/// Resolve all component nodes in a manifest, returning expanded native nodes
+/// and per-component metadata (inputs declarations).
 pub fn expand_components(
     manifest: &Manifest,
     manifest_path: &Path,
-) -> Result<HashMap<String, Node>, crate::error::BesogneError> {
+) -> Result<(HashMap<String, Node>, Vec<ComponentMeta>), crate::error::BesogneError> {
     let mut expanded = HashMap::new();
+    let mut component_metas = Vec::new();
 
     for (key, input) in &manifest.nodes {
         match input {
@@ -31,6 +41,7 @@ pub fn expand_components(
                     source,
                     manifest_path,
                     &mut visited,
+                    &mut component_metas,
                 )?;
 
                 // Collect all sub-keys for final parents rewriting
@@ -78,7 +89,7 @@ pub fn expand_components(
         }
     }
 
-    Ok(expanded)
+    Ok((expanded, component_metas))
 }
 
 fn parse_component_ref(component_ref: &str) -> Result<(String, String), crate::error::BesogneError> {
@@ -101,6 +112,7 @@ fn expand_component_json(
     source: &str,
     manifest_path: &Path,
     visited: &mut Vec<String>,
+    metas: &mut Vec<ComponentMeta>,
 ) -> Result<Vec<(String, serde_json::Value)>, crate::error::BesogneError> {
     // Cycle detection
     if visited.contains(&component_ref.to_string()) {
@@ -129,6 +141,15 @@ fn expand_component_json(
                 e
             }
         })?;
+    // Load inputs declaration from the component JSON
+    let inputs = load_component_inputs(&component_path);
+    if !inputs.is_empty() {
+        metas.push(ComponentMeta {
+            inputs,
+            component_ref: component_ref.to_string(),
+        });
+    }
+
     let mut nodes = load_component_nodes(&component_path)
         .map_err(|e| {
             if visited.len() > 1 {
@@ -184,6 +205,7 @@ fn expand_component_json(
                 source,
                 manifest_path,
                 visited,
+                metas,
             )?;
 
             // Collect nested sub-keys so we can prefix their parent references
@@ -207,6 +229,22 @@ fn expand_component_json(
 
 /// Load a component's nodes map from disk.
 /// Components use manifest format (`nodes: { ... }`).
+/// Load the optional "inputs" array from a component JSON file.
+fn load_component_inputs(component_path: &Path) -> Vec<String> {
+    let content = match std::fs::read_to_string(component_path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let raw: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    raw.get("inputs")
+        .and_then(|i| i.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default()
+}
+
 fn load_component_nodes(
     component_path: &Path,
 ) -> Result<HashMap<String, serde_json::Value>, crate::error::BesogneError> {

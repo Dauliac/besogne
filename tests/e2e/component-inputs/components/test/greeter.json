@@ -1,0 +1,17 @@
+{
+  "name": "test/greeter",
+  "description": "A greeter component that requires GREET_NAME input",
+  "inputs": ["GREET_NAME"],
+  "nodes": {
+    "greet": {
+      "type": "command",
+      "phase": "exec",
+      "run": ["sh", "-c", "echo Hello $GREET_NAME"]
+    },
+    "greet-stdout": {
+      "type": "std",
+      "stream": "stdout",
+      "parents": ["greet"]
+    }
+  }
+}

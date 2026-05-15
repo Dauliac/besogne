@@ -1,0 +1,20 @@
+name = "component-inputs"
+description = "Test component inputs validation"
+
+[components]
+test = "./components"
+
+# Provide the required input
+[nodes.GREET_NAME]
+type = "env"
+value = "World"
+
+# Use the component (it requires GREET_NAME)
+[nodes."test/greeter"]
+type = "component"
+
+[nodes.check]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo done"]
+parents = ["test/greeter.greet"]

@@ -694,6 +694,17 @@ fn e2e_flag_routing_with_flag() {
     assert!(!err.contains("built-locally"), "should NOT run local build: {err}");
 }
 
+// ─── component-inputs ──────────────────────────────────────────
+
+#[test]
+fn e2e_component_inputs_provided() {
+    let dir = setup_case("component-inputs");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+    let build_err = stderr(&c);
+    assert!(!build_err.contains("requires"), "should not warn when inputs provided: {build_err}");
+}
+
 // ─── var-check ─────────────────────────────────────────────────
 
 #[test]
