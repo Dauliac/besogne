@@ -1,1 +1,14 @@
-{"name":"nix/derivation","description":"stub","nodes":{}}
+{
+  "name": "nix/derivation",
+  "description": "Build a single nix derivation. nom wraps nix build as a drop-in replacement for TUI progress.",
+  "nodes": {
+    "nix/nom": { "type": "component" },
+    "nix/flake": { "type": "component" },
+    "build": {
+      "type": "command",
+      "description": "Build a derivation with nom TUI",
+      "run": ["nom", "build"],
+      "side_effects": true
+    }
+  }
+}

@@ -1,7 +1,7 @@
 //! SkipBanner: nothing to do (52 nodes cached, ran 22s ago, use --status)
 //! Axes: state x outcome::warn x temporality::cached.
 
-use crate::output::style::{styled, dim, bold, status, label, message};
+use crate::output::style::{styled, dim, status, label, message};
 
 pub fn render(total_nodes: usize, ran_at: &str, duration_ms: u64) -> String {
     format!("{} {}",

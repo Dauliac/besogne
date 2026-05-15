@@ -1,0 +1,16 @@
+{
+  "name": "nix/build",
+  "description": "Build all flake outputs using devour-flake with nix-output-monitor progress display",
+  "nodes": {
+    "nix/nom": { "type": "component" },
+    "nix/flake": { "type": "component" },
+    "devour-flake": { "type": "binary" },
+    "bash": { "type": "binary" },
+    "build-all": {
+      "type": "command",
+      "description": "Build every flake output with nom progress",
+      "run": ["bash", "-c", "devour-flake \"path:$(pwd)\" 2>&1 >/dev/null | nom"],
+      "side_effects": true
+    }
+  }
+}

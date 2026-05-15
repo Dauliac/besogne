@@ -30,7 +30,6 @@ pub use l1::palette;
 pub use l2::phase;
 pub use l2::outcome;
 pub use l2::weight;
-pub use l2::temporality;
 
 // L2 — Cross-axis composites
 pub use l2::status;
@@ -93,3 +92,20 @@ pub fn warning_diag(msg: &str) -> String { l3::sections::diag_block::warning(msg
 pub fn diag_hint(msg: &str) -> String { l3::sections::diag_block::hint(msg) }
 pub fn diag_error(msg: &str) -> String { l3::sections::diag_block::error(msg) }
 pub fn diag_warning(msg: &str) -> String { l3::sections::diag_block::warning(msg) }
+
+/// Human-readable duration formatting. Shared across all modules.
+pub fn format_duration(ms: u128) -> String {
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else if ms < 60_000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else if ms < 3_600_000 {
+        let m = ms / 60_000;
+        let s = (ms % 60_000) / 1000;
+        format!("{m}m{s}s")
+    } else {
+        let h = ms / 3_600_000;
+        let m = (ms % 3_600_000) / 60_000;
+        format!("{h}h{m}m")
+    }
+}

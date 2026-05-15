@@ -1,4 +1,4 @@
-//! VerifyResult: ✓ idempotent  /  ✗ NOT idempotent [diff]
+//! VerifyResult: ✓ idempotent  /  ✗ NOT idempotent \[diff\]
 //! Axes: diagnostic x outcome x phase::exec.
 
 use crate::output::style::{styled, diagnostic, message, icon};

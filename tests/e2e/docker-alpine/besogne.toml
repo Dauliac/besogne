@@ -1,6 +1,8 @@
 name = "docker-alpine"
 description = "Run a command inside an Alpine container"
 
+type = "component"
+
 [nodes."docker/docker"]
 type = "component"
 

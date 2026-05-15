@@ -1,6 +1,8 @@
 name = "npm-install"
 description = "Install npm dependencies"
 
+type = "component"
+
 [nodes."node/toolchain"]
 type = "component"
 

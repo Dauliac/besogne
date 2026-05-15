@@ -5,6 +5,14 @@ edition = "2021"
 description = "Compile JSON manifests into self-contained instrumented binaries"
 license = "MIT"
 
+[lib]
+name = "besogne"
+path = "src/lib.rs"
+
+[[bin]]
+name = "besogne"
+path = "src/main.rs"
+
 [dependencies]
 # Manifest parsing
 serde = { version = "1", features = ["derive"] }

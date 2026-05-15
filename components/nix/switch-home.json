@@ -1,0 +1,14 @@
+{
+  "name": "nix/switch-home",
+  "description": "Switch home-manager configuration using nh",
+  "nodes": {
+    "nix/nh": { "type": "component" },
+    "nix/flake": { "type": "component" },
+    "switch": {
+      "type": "command",
+      "description": "Rebuild and activate home-manager configuration",
+      "run": ["nh", "home", "switch", "."],
+      "side_effects": true
+    }
+  }
+}

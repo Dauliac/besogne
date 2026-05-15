@@ -1,6 +1,8 @@
 name = "resource-limits"
 description = "Test priority + memory_limit on commands"
 
+type = "component"
+
 # Verify nice level is applied (Linux: /proc/self/stat field 19 = nice)
 [nodes.check-nice]
 type = "command"

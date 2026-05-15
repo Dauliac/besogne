@@ -1,6 +1,8 @@
 name = "go-testcontainers"
 description = "Run Go tests with testcontainers (Docker)"
 
+type = "component"
+
 [nodes."go/toolchain"]
 type = "component"
 

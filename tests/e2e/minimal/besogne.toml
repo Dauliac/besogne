@@ -1,6 +1,8 @@
 name = "minimal"
 description = "Smallest valid besogne"
 
+type = "component"
+
 [nodes.hello]
 type = "command"
 phase = "exec"

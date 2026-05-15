@@ -2,6 +2,8 @@ name = "compile-error-test"
 description = "This should fail to compile — binary does not exist"
 verify_first_run = false
 
+type = "component"
+
 [nodes.nonexistent-tool]
 type = "binary"
 

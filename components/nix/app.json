@@ -1,1 +1,13 @@
-{"name":"nix/app","description":"stub","nodes":{}}
+{
+  "name": "nix/app",
+  "description": "Run a flake app output",
+  "nodes": {
+    "nix/flake": { "type": "component" },
+    "run": {
+      "type": "command",
+      "description": "Execute a flake app",
+      "run": ["nix", "run"],
+      "side_effects": true
+    }
+  }
+}

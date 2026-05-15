@@ -1,0 +1,18 @@
+{
+  "name": "redis/ready",
+  "description": "Wait for a Redis instance to accept connections.",
+  "nodes": {
+    "redis-service": {
+      "type": "service",
+      "tcp": "localhost:6379",
+      "phase": "exec",
+      "retry": {
+        "attempts": 20,
+        "interval": "1s",
+        "backoff": "exponential",
+        "max_interval": "10s",
+        "timeout": "2m"
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "k8s/service-available",
+  "description": "Wait for a Kubernetes service endpoint to accept TCP connections.",
+  "nodes": {
+    "endpoint": {
+      "type": "service",
+      "tcp": "localhost:8080",
+      "phase": "exec",
+      "retry": {
+        "attempts": 30,
+        "interval": "2s",
+        "backoff": "exponential",
+        "max_interval": "30s",
+        "timeout": "5m"
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "nix/switch-nixos",
+  "description": "Switch NixOS system configuration using nh",
+  "nodes": {
+    "nix/nh": { "type": "component" },
+    "nix/flake": { "type": "component" },
+    "switch": {
+      "type": "command",
+      "description": "Rebuild and activate NixOS configuration",
+      "run": ["nh", "os", "switch", "."],
+      "side_effects": true
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "nix/check",
+  "description": "Run nix flake check with nix-output-monitor progress display. nom wraps nix as a drop-in replacement, showing a TUI for build progress.",
+  "nodes": {
+    "nix/nom": { "type": "component" },
+    "nix/flake": { "type": "component" },
+    "check": {
+      "type": "command",
+      "description": "Evaluate and build all flake checks with nom TUI",
+      "run": ["nom", "flake", "check"],
+      "side_effects": true
+    }
+  }
+}

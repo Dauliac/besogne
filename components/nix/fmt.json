@@ -1,0 +1,13 @@
+{
+  "name": "nix/fmt",
+  "description": "Format repository using treefmt (nix fmt backend)",
+  "nodes": {
+    "nix/treefmt": { "type": "component" },
+    "fmt": {
+      "type": "command",
+      "description": "Run treefmt across the entire repository",
+      "run": ["treefmt"],
+      "side_effects": true
+    }
+  }
+}

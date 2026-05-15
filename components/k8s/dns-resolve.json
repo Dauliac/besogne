@@ -1,0 +1,18 @@
+{
+  "name": "k8s/dns-resolve",
+  "description": "Wait for a Kubernetes service DNS name to resolve (cluster-internal or external).",
+  "nodes": {
+    "dns-check": {
+      "type": "dns",
+      "host": "myservice.default.svc.cluster.local",
+      "phase": "exec",
+      "retry": {
+        "attempts": 20,
+        "interval": "3s",
+        "backoff": "exponential",
+        "max_interval": "30s",
+        "timeout": "3m"
+      }
+    }
+  }
+}

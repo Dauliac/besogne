@@ -1,1 +1,14 @@
-{"name":"nix/package","description":"stub","nodes":{}}
+{
+  "name": "nix/package",
+  "description": "Build the default flake package. nom wraps nix build as a drop-in replacement for TUI progress.",
+  "nodes": {
+    "nix/nom": { "type": "component" },
+    "nix/flake": { "type": "component" },
+    "build": {
+      "type": "command",
+      "description": "Build the default package with nom TUI",
+      "run": ["nom", "build", ".#default"],
+      "side_effects": true
+    }
+  }
+}

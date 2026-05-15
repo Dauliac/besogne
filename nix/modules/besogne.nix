@@ -8,13 +8,22 @@ in
     options.besogne = {
       package = mkOption {
         type = types.package;
-        description = "The besogne binary to use for building manifests";
+        description = "The besogne compiler binary";
       };
 
       componentsDir = mkOption {
         type = types.nullOr types.path;
         default = null;
-        description = "Path to builtin components directory. Defaults to the one bundled with the besogne package.";
+        description = "Path to builtin components directory.";
+      };
+
+      extraBuildInputs = mkOption {
+        type = types.listOf types.package;
+        default = [ ];
+        description = ''
+          Extra packages available during `besogne build` for binary pinning.
+          These must be the SAME derivations as in the devShell for cache sharing.
+        '';
       };
 
       manifests = mkOption {
@@ -29,19 +38,19 @@ in
             description = mkOption {
               type = types.str;
               default = "";
-              description = "Human-readable description of this besogne task";
+              description = "Human-readable description";
             };
 
             nodes = mkOption {
               type = types.attrsOf types.attrs;
               default = { };
-              description = "Node definitions (binary, command, file, env, service, etc.)";
+              description = "Node definitions — same schema as besogne JSON/TOML";
             };
 
             sandbox = mkOption {
               type = types.attrs;
               default = { };
-              description = "Sandbox configuration (priority, network, filesystem restrictions)";
+              description = "Sandbox configuration";
             };
 
             flags = mkOption {
@@ -53,12 +62,16 @@ in
             components = mkOption {
               type = types.attrs;
               default = { };
-              description = "Component source map (namespace to source)";
+              description = "Component source map";
             };
           };
         }));
         default = { };
-        description = "Besogne manifest definitions. Each key becomes a besogne task.";
+        description = ''
+          Besogne manifest definitions. Each key becomes a sealed besogne binary
+          exposed as both a package and a flake app.
+          Uses the same schema as besogne JSON manifests — serialized via builtins.toJSON.
+        '';
       };
     };
 
@@ -66,68 +79,39 @@ in
       let
         cfg = config.besogne;
 
-        # Generate a TOML manifest file for each declared besogne
-        manifestFiles = lib.mapAttrs (name: manifest:
-          pkgs.writeText "${name}.toml" (toToml {
-            inherit (manifest) name description sandbox flags components nodes;
-          })
-        ) cfg.manifests;
-
-        # Minimal TOML serializer (besogne manifests are simple enough)
-        toTomlValue = v:
-          if builtins.typeOf v == "string" then ''"${v}"''
-          else if builtins.typeOf v == "int" || builtins.typeOf v == "float" then toString v
-          else if builtins.typeOf v == "bool" then (if v then "true" else "false")
-          else if builtins.typeOf v == "list" then "[${builtins.concatStringsSep ", " (map toTomlValue v)}]"
-          else throw "besogne: unsupported TOML type ${builtins.typeOf v}";
-
-        renderNode = name: node:
+        # Serialize manifest to JSON and build sealed binary.
+        # builtins.toJSON handles all nesting — no custom serializer needed.
+        builtBesognes = lib.mapAttrs (key: manifest:
           let
-            header = ''[nodes."${name}"]'';
-            keys = builtins.sort builtins.lessThan (builtins.attrNames node);
-            lines = map (k:
-              let v = node.${k}; in
-              if builtins.typeOf v == "set" then ""
-              else "${k} = ${toTomlValue v}"
-            ) keys;
+            manifestJson = pkgs.writeText "${key}.json" (builtins.toJSON {
+              inherit (manifest) name description nodes;
+            } // lib.optionalAttrs (manifest.sandbox != {}) {
+              inherit (manifest) sandbox;
+            } // lib.optionalAttrs (manifest.flags != {}) {
+              inherit (manifest) flags;
+            } // lib.optionalAttrs (manifest.components != {}) {
+              inherit (manifest) components;
+            });
           in
-          builtins.concatStringsSep "\n" ([ header ] ++ builtins.filter (s: s != "") lines);
-
-        toToml = manifest:
-          let
-            topFields = lib.filterAttrs (k: v: k != "nodes" && v != { } && v != "") manifest;
-            topLines = map (k:
-              let v = topFields.${k}; in
-              if builtins.typeOf v == "set" then ""
-              else "${k} = ${toTomlValue v}"
-            ) (builtins.sort builtins.lessThan (builtins.attrNames topFields));
-            nodeNames = builtins.sort builtins.lessThan (builtins.attrNames (manifest.nodes or { }));
-            nodeBlocks = map (n: renderNode n manifest.nodes.${n}) nodeNames;
-          in
-          builtins.concatStringsSep "\n\n" (
-            builtins.filter (s: s != "") topLines ++ nodeBlocks
-          ) + "\n";
-
-        # Build sealed binaries from manifests
-        builtBesognes = lib.mapAttrs (name: manifestFile:
-          pkgs.runCommand "besogne-${name}" ({
-            nativeBuildInputs = [ cfg.package ];
-          } // lib.optionalAttrs (cfg.componentsDir != null) {
-            BESOGNE_COMPONENTS_DIR = toString cfg.componentsDir;
-          }) ''
+          pkgs.runCommand "besogne-${key}" {
+            nativeBuildInputs = [ cfg.package ] ++ cfg.extraBuildInputs;
+          } (''
             mkdir -p $out/bin
-            besogne build -i ${manifestFile} -o $out/bin/${name}
-          ''
-        ) manifestFiles;
+          '' + lib.optionalString (cfg.componentsDir != null) ''
+            export BESOGNE_COMPONENTS_DIR=${cfg.componentsDir}
+          '' + ''
+            besogne build -i ${manifestJson} -o $out/bin/${manifest.name}
+          '')
+        ) cfg.manifests;
       in
       lib.mkIf (cfg.manifests != { }) {
-        # Wire each manifest as a package and an app
-        packages = lib.mapAttrs' (name: drv:
-          lib.nameValuePair "besogne-${name}" drv
+        packages = lib.mapAttrs' (key: drv:
+          lib.nameValuePair "besogne-${key}" drv
         ) builtBesognes;
 
-        apps = lib.mapAttrs' (name: drv:
-          lib.nameValuePair "besogne-${name}" {
+        apps = lib.mapAttrs' (key: drv:
+          let name = cfg.manifests.${key}.name; in
+          lib.nameValuePair "besogne-${key}" {
             type = "app";
             program = "${drv}/bin/${name}";
           }

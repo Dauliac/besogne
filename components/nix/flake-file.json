@@ -1,0 +1,8 @@
+{
+  "name": "nix/flake-file",
+  "description": "flake-file: generate and maintain flake.nix from structured definitions",
+  "nodes": {
+    "nix": { "type": "binary" },
+    "write-flake": { "type": "binary" }
+  }
+}

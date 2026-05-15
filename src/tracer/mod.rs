@@ -16,9 +16,9 @@ use std::collections::{HashMap, HashSet};
 pub struct ProcessMetrics {
     pub pid: u32,
     pub ppid: u32,
-    /// Command name (from /proc/<pid>/comm or exec args)
+    /// Command name (from `/proc/<pid>/comm` or exec args)
     pub comm: String,
-    /// Full command line (from /proc/<pid>/cmdline), empty if unavailable
+    /// Full command line (from `/proc/<pid>/cmdline`), empty if unavailable
     pub cmdline: String,
     pub exit_code: i32,
     pub wall_ms: u64,

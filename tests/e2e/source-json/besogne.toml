@@ -1,6 +1,8 @@
 name = "source-json"
 description = "Load env vars from JSON file via source type"
 
+type = "component"
+
 [nodes."coreutils/shell"]
 type = "component"
 

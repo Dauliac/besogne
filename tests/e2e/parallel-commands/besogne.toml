@@ -1,13 +1,15 @@
 name = "parallel-commands"
 description = "Three parallel commands with interleaved output"
 
+type = "component"
+
 [nodes."coreutils/shell"]
 type = "component"
 
 [nodes.worker-a]
 type = "command"
 phase = "exec"
-run = ["sh", "-c", "for i in $(seq 1 100); do echo \"[A] step $i\"; sleep 1; done"]
+run = ["sh", "-c", "for i in $(seq 1 100); do echo \"[A] step $i\"; sleep 0.1; done"]
 
 [nodes.worker-b]
 type = "command"
@@ -17,7 +19,7 @@ run = ["sh", "-c", "for i in $(seq 1 100); do echo \"[B] step $i\"; sleep 1; don
 [nodes.worker-c]
 type = "command"
 phase = "exec"
-run = ["sh", "-c", "for i in $(seq 1 100); do echo \"[C] step $i\"; sleep 1; done"]
+run = ["sh", "-c", "for i in $(seq 1 100); do echo \"[C] step $i\"; sleep 0.5; done"]
 
 [nodes.worker-a-stdout]
 type = "std"

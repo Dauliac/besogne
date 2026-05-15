@@ -1,0 +1,7 @@
+{
+  "name": "nix/treefmt",
+  "description": "treefmt: unified formatter for multi-language repositories",
+  "nodes": {
+    "treefmt": { "type": "binary" }
+  }
+}

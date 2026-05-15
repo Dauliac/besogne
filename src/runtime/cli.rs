@@ -22,9 +22,9 @@ pub enum DumpMode {
     Internal,
 }
 
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct RuntimeArgs {
+/// Runtime configuration — can be constructed from CLI args or programmatically.
+#[derive(Debug, Clone)]
+pub struct RuntimeConfig {
     pub log_format: LogFormat,
     pub run_mode: RunMode,
     pub dump: Option<DumpMode>,
@@ -35,6 +35,29 @@ pub struct RuntimeArgs {
     pub subcommand: Option<String>,
     /// All resolved flag values keyed by env_var name
     pub flag_env: HashMap<String, String>,
+}
+
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        Self {
+            log_format: LogFormat::Human,
+            run_mode: RunMode::Normal,
+            dump: None,
+            force: false,
+            debug: false,
+            verbose: false,
+            status: false,
+            subcommand: None,
+            flag_env: HashMap::new(),
+        }
+    }
+}
+
+impl RuntimeConfig {
+    /// Parse from process argv (for sealed binary execution).
+    pub fn from_cli(ir: &BesogneIR) -> Self {
+        parse_runtime_args(ir)
+    }
 }
 
 fn leak_str(s: &str) -> &'static str {
@@ -299,7 +322,7 @@ fn merge_config(
     }
 }
 
-pub fn parse_runtime_args(ir: &BesogneIR) -> RuntimeArgs {
+pub fn parse_runtime_args(ir: &BesogneIR) -> RuntimeConfig {
     let cmd = build_runtime_cli(ir);
     let matches = cmd.get_matches();
 
@@ -362,7 +385,7 @@ pub fn parse_runtime_args(ir: &BesogneIR) -> RuntimeArgs {
     let status = active_matches.get_flag("status");
     let verbose = active_matches.get_flag("verbose") || status;
 
-    RuntimeArgs {
+    RuntimeConfig {
         log_format,
         run_mode,
         dump,

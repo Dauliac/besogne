@@ -1,11 +1,11 @@
 //! BinaryRef: echo → /usr/bin/echo v9.4
 //! Axes: identity x phase::build x temporality::static.
-//!   name:    [L2] (readable)
-//!   arrow:   [L3] dim
-//!   path:    [L3] dim
-//!   version: [L3] dim
+//!   name:    \[L2\] (readable)
+//!   arrow:   \[L3\] dim
+//!   path:    \[L3\] dim
+//!   version: \[L3\] dim
 
-use crate::output::style::{dim, weight, palette::RESET};
+use crate::output::style::{weight, palette::RESET};
 
 pub fn render(name: &str, path: &str, version: Option<&str>) -> String {
     let ver = version

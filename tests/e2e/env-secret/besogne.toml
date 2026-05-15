@@ -1,6 +1,8 @@
 name = "env-secret"
 description = "Secret env vars — value should not appear in besogne output"
 
+type = "component"
+
 [nodes.BESOGNE_E2E_SECRET]
 type = "env"
 secret = true

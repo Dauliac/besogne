@@ -1,0 +1,8 @@
+{
+  "name": "nix/nom",
+  "description": "nix-output-monitor: pretty TUI wrapper for nix build output",
+  "nodes": {
+    "nix": { "type": "binary" },
+    "nom": { "type": "binary" }
+  }
+}

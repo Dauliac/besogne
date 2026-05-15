@@ -1,0 +1,14 @@
+{
+  "name": "nix/switch-system",
+  "description": "Switch system-manager configuration for non-NixOS hosts",
+  "nodes": {
+    "nix/system-manager": { "type": "component" },
+    "nix/flake": { "type": "component" },
+    "switch": {
+      "type": "command",
+      "description": "Rebuild and activate system-manager configuration",
+      "run": ["system-manager", "switch", "--flake", ".", "--sudo"],
+      "side_effects": true
+    }
+  }
+}

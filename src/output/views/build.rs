@@ -34,7 +34,7 @@ pub struct ManifestResult<'a> {
 /// Render a multi-manifest parallel build.
 pub fn render_multi(results: &[ManifestResult], total_ms: u64) {
     use crate::output::style::{styled, dim};
-    use crate::output::style::{outcome, status};
+    use crate::output::style::outcome;
 
     let count = results.len();
     eprintln!("{}", l3::sections::phase_banner::render(

@@ -1,0 +1,13 @@
+{
+  "name": "nix/update",
+  "description": "Update flake inputs and regenerate lock file",
+  "nodes": {
+    "nix/flake": { "type": "component" },
+    "update": {
+      "type": "command",
+      "description": "Update all flake inputs to latest",
+      "run": ["nix", "flake", "update"],
+      "side_effects": true
+    }
+  }
+}

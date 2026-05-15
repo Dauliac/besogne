@@ -1,0 +1,18 @@
+{
+  "name": "postgres/ready",
+  "description": "Wait for a PostgreSQL instance to accept connections.",
+  "nodes": {
+    "pg-service": {
+      "type": "service",
+      "tcp": "localhost:5432",
+      "phase": "exec",
+      "retry": {
+        "attempts": 30,
+        "interval": "1s",
+        "backoff": "exponential",
+        "max_interval": "10s",
+        "timeout": "2m"
+      }
+    }
+  }
+}

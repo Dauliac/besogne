@@ -1,0 +1,13 @@
+{
+  "name": "nix/gc",
+  "description": "Nix garbage collection: remove unreachable store paths",
+  "nodes": {
+    "nix": { "type": "binary" },
+    "gc": {
+      "type": "command",
+      "description": "Collect garbage and delete unreachable store paths",
+      "run": ["nix", "store", "gc"],
+      "side_effects": true
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "k8s/pod-ready",
+  "description": "Wait for a Kubernetes pod to be ready. Override 'wait-pod' to customize the label selector.",
+  "nodes": {
+    "kubectl": {
+      "type": "binary"
+    },
+    "wait-pod": {
+      "type": "command",
+      "run": ["kubectl", "wait", "--for=condition=ready", "pod", "--selector=app=myapp", "--timeout=0s"],
+      "phase": "exec",
+      "parents": ["kubectl"],
+      "side_effects": true,
+      "retry": {
+        "attempts": 30,
+        "interval": "2s",
+        "backoff": "exponential",
+        "max_interval": "30s",
+        "timeout": "5m"
+      }
+    }
+  }
+}

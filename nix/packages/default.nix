@@ -6,6 +6,9 @@
   perSystem = { config, pkgs, ... }: {
     # Default crane args applied to all crates
     rust-project.defaults.perCrate.crane.args = {
+      # e2e tests need go, node, podman — not available in sandbox.
+      # Tests run via `nix run .#test` or `cargo test` in devShell.
+      doCheck = false;
       nativeBuildInputs = with pkgs; [
         pkg-config
       ];

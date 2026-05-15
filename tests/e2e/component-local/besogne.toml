@@ -1,6 +1,8 @@
 name = "component-local"
 description = "Test local JSON component expansion"
 
+type = "component"
+
 [components]
 test = "./components"
 

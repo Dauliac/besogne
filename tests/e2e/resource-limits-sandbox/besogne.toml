@@ -1,6 +1,8 @@
 name = "resource-limits-sandbox"
 description = "Sandbox-level priority inherited by commands"
 
+type = "component"
+
 [sandbox]
 priority = "low"
 

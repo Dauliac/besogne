@@ -1,6 +1,8 @@
 name = "failure-stops"
 description = "Failing command prevents dependents from running"
 
+type = "component"
+
 [nodes.fail]
 type = "command"
 phase = "exec"

@@ -2,7 +2,7 @@
   "name": "nix/flake",
   "description": "Track flake sources for cache invalidation",
   "nodes": {
-    "nix/nix": { "type": "component" },
+    "nix": { "type": "binary" },
     "flake-nix": { "type": "file", "path": "flake.nix" },
     "flake-lock": { "type": "file", "path": "flake.lock" }
   }

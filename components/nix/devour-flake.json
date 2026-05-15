@@ -1,0 +1,8 @@
+{
+  "name": "nix/devour-flake",
+  "description": "devour-flake: resolve all flake outputs into a buildable set",
+  "nodes": {
+    "nix": { "type": "binary" },
+    "devour-flake": { "type": "binary" }
+  }
+}

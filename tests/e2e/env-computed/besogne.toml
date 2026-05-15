@@ -1,6 +1,8 @@
 name = "env-computed"
 description = "Set computed env vars with value field"
 
+type = "component"
+
 [nodes.MY_VAR]
 type = "env"
 value = "/custom/path"

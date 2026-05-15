@@ -1,0 +1,23 @@
+{
+  "name": "k8s/job-complete",
+  "description": "Wait for a Kubernetes Job to complete successfully.",
+  "nodes": {
+    "kubectl": {
+      "type": "binary"
+    },
+    "wait-job": {
+      "type": "command",
+      "run": ["kubectl", "wait", "--for=condition=complete", "job/myjob", "--timeout=0s"],
+      "phase": "exec",
+      "parents": ["kubectl"],
+      "side_effects": true,
+      "retry": {
+        "attempts": 60,
+        "interval": "5s",
+        "backoff": "linear",
+        "max_interval": "30s",
+        "timeout": "10m"
+      }
+    }
+  }
+}

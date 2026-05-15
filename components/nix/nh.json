@@ -1,0 +1,8 @@
+{
+  "name": "nix/nh",
+  "description": "nh: ergonomic NixOS/home-manager helper (switch, search, clean)",
+  "nodes": {
+    "nix": { "type": "binary" },
+    "nh": { "type": "binary" }
+  }
+}

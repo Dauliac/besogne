@@ -1,16 +1,12 @@
-mod adopt;
-mod compile;
-pub mod error;
-mod ir;
-mod manifest;
-#[allow(dead_code)]
-mod output;
-mod probe;
-mod runtime;
-mod tracer;
+use besogne::adopt;
+use besogne::compile;
+use besogne::error;
+use besogne::manifest;
+use besogne::output;
+use besogne::runtime;
 
 use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
@@ -85,107 +81,6 @@ enum Commands {
     },
 }
 
-/// Resolve inputs: use explicit paths or auto-discover.
-fn resolve_manifests(explicit: &[PathBuf]) -> Result<Vec<PathBuf>, crate::error::BesogneError> {
-    if !explicit.is_empty() {
-        return Ok(explicit.to_vec());
-    }
-    let discovered = manifest::discover_manifests();
-    if discovered.is_empty() {
-        return Err(crate::error::BesogneError::Cli("no manifest found. Provide --input or create a besogne.{json,yaml,yml,toml} file.".into()));
-    }
-    eprintln!(
-        "besogne: discovered {}",
-        discovered.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
-    );
-    Ok(discovered)
-}
-
-/// Resolve a single manifest for `run`. Supports task name selection from args.
-/// When multiple manifests found, checks if `args[0]` matches a task name (stem of a manifest).
-/// Returns (manifest_path, remaining_args).
-fn resolve_single_input_quiet<'a>(
-    explicit: &Option<PathBuf>,
-    args: &'a [String],
-) -> Result<(PathBuf, &'a [String]), crate::error::BesogneError> {
-    if let Some(p) = explicit {
-        return Ok((p.clone(), args));
-    }
-    let discovered = manifest::discover_manifests();
-    match discovered.len() {
-        0 => Err(crate::error::BesogneError::Cli("no manifest found. Provide --input or create a besogne.{json,yaml,yml,toml} file.".into())),
-        1 => Ok((discovered[0].clone(), args)),
-        _ => {
-            // Try to match args[0] as a task name
-            if let Some(task_name) = args.first() {
-                // Don't match flags (starting with -)
-                if !task_name.starts_with('-') {
-                    for path in &discovered {
-                        let stem = path.file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("");
-                        let name = stem.strip_suffix(".besogne").unwrap_or(stem);
-                        if name == task_name {
-                            return Ok((path.clone(), &args[1..]));
-                        }
-                    }
-                }
-            }
-
-            let names: Vec<String> = discovered.iter()
-                .filter_map(|p| {
-                    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                    Some(stem.strip_suffix(".besogne").unwrap_or(stem).to_string())
-                })
-                .collect();
-            Err(crate::error::BesogneError::Cli(format!(
-                "multiple manifests found — specify which task to run:\n  besogne run <task> [-- args]\n\navailable tasks:\n  {}",
-                names.join("\n  ")
-            )))
-        }
-    }
-}
-
-fn create_besogne_symlink(cwd: &Path, name: &str, target: &Path) {
-    let link_dir = cwd.join(".besogne");
-    let _ = std::fs::create_dir_all(&link_dir);
-    let link_path = link_dir.join(name);
-    let _ = std::fs::remove_file(&link_path);
-    #[cfg(unix)]
-    {
-        let _ = std::os::unix::fs::symlink(target, &link_path);
-    }
-}
-
-fn format_duration(ms: u128) -> String {
-    if ms < 1000 { format!("{ms}ms") }
-    else if ms < 60_000 { format!("{:.1}s", ms as f64 / 1000.0) }
-    else if ms < 3_600_000 { let m = ms / 60_000; let s = (ms % 60_000) / 1000; format!("{m}m{s}s") }
-    else { let h = ms / 3_600_000; let m = (ms % 3_600_000) / 60_000; format!("{h}h{m}m") }
-}
-
-fn store_path_short(path: &Path) -> String {
-    let s = path.display().to_string();
-    let tail: String = s.chars().rev().take(40).collect::<String>().chars().rev().collect();
-    tail
-}
-
-#[cfg(unix)]
-fn exec_binary(path: &PathBuf, args: &[String]) -> std::io::Error {
-    use std::os::unix::process::CommandExt;
-    // BESOGNE_RUN_MODE tells the binary to skip build phase display (compiler already showed it)
-    std::process::Command::new(path).args(args).env("BESOGNE_RUN_MODE", "1").exec()
-}
-
-#[cfg(not(unix))]
-fn exec_binary(path: &PathBuf, args: &[String]) -> std::io::Error {
-    match std::process::Command::new(path).args(args).env("BESOGNE_RUN_MODE", "1").status() {
-        Ok(status) => std::process::exit(status.code().unwrap_or(1)),
-        Err(e) => e,
-    }
-}
-
-
 /// Handle `besogne run --help`: parse manifest (no compile), show merged grouped help.
 fn handle_run_help(raw_args: &[String]) -> ExitCode {
     let mut input_path: Option<PathBuf> = None;
@@ -202,7 +97,7 @@ fn handle_run_help(raw_args: &[String]) -> ExitCode {
     let remaining_args: Vec<String> = raw_args.iter().skip(2)
         .filter(|a| *a != "-i" && *a != "--input" && *a != "--help" && *a != "-h")
         .cloned().collect();
-    let manifest_path = match resolve_single_input_quiet(&input_path, &remaining_args) {
+    let manifest_path = match manifest::resolve_single_manifest(&input_path, &remaining_args) {
         Ok((p, _)) => p,
         Err(e) => {
             eprintln!("besogne run — build + run in one shot\n");
@@ -214,7 +109,6 @@ fn handle_run_help(raw_args: &[String]) -> ExitCode {
         }
     };
 
-    // Just PARSE — no compile needed for help
     let ir = match compile::check_to_ir(&manifest_path) {
         Ok(ir) => ir,
         Err(e) => {
@@ -223,13 +117,11 @@ fn handle_run_help(raw_args: &[String]) -> ExitCode {
         }
     };
 
-    // Print header
     eprintln!("besogne run — build + run in one shot");
     eprintln!("manifest: {}\n", manifest_path.display());
     eprintln!("Run options:");
     eprintln!("  -i, --input <PATH>  Manifest file (auto-discovers if omitted)\n");
 
-    // Build the clap Command from IR and print its help (with grouped headings)
     let mut cmd = runtime::cli::build_runtime_cli(&ir);
     let mut buf = Vec::new();
     cmd.write_long_help(&mut buf).ok();
@@ -252,12 +144,11 @@ fn main() -> ExitCode {
         return handle_run_help(&raw_args);
     }
 
-    // Otherwise, we're the builder CLI
     let cli = Cli::parse();
 
     match cli.command {
         Some(Commands::Build { input, output, force }) => {
-            let manifests = match resolve_manifests(&input) {
+            let manifests = match manifest::resolve_manifests(&input) {
                 Ok(i) => i,
                 Err(e) => { eprintln!("{}", output::style::error_diag(&e.to_string())); return ExitCode::from(2); }
             };
@@ -269,12 +160,8 @@ fn main() -> ExitCode {
 
             let cwd = std::env::current_dir().unwrap_or_default();
 
-            // Prepare build tasks: (manifest_path, output_path, name)
             let tasks: Vec<(PathBuf, PathBuf, String)> = manifests.iter().map(|manifest_path| {
-                let stem = manifest_path.file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("besogne");
-                let name = stem.strip_suffix(".besogne").unwrap_or(stem).to_string();
+                let name = manifest::manifest_task_name(manifest_path);
                 let out = output.clone().unwrap_or_else(|| {
                     let dir = cwd.join(".besogne");
                     let _ = std::fs::create_dir_all(&dir);
@@ -284,16 +171,15 @@ fn main() -> ExitCode {
             }).collect();
 
             if tasks.len() == 1 {
-                // Single manifest: compile with progress output
                 let (manifest_path, out, name) = &tasks[0];
                 match compile::compile(manifest_path, out, force) {
                     Ok(store_path) => {
                         if output.is_none() {
-                            create_besogne_symlink(&cwd, name, &store_path);
+                            compile::create_besogne_symlink(&cwd, name, &store_path);
                             eprintln!(
                                 "besogne: built {} → .besogne/{} (store: {})",
                                 manifest_path.display(), name,
-                                store_path_short(&store_path)
+                                compile::store_path_short(&store_path)
                             );
                         } else {
                             eprintln!("besogne: built {} → {}", manifest_path.display(), out.display());
@@ -306,11 +192,10 @@ fn main() -> ExitCode {
                     }
                 }
             } else {
-                // Multiple manifests: compile in parallel (quiet), then show results
                 let build_start = std::time::Instant::now();
                 eprintln!("besogne: building {} manifests in parallel...", tasks.len());
 
-                let results: std::sync::Mutex<Vec<(String, PathBuf, Result<PathBuf, crate::error::BesogneError>)>> =
+                let results: std::sync::Mutex<Vec<(String, PathBuf, Result<PathBuf, error::BesogneError>)>> =
                     std::sync::Mutex::new(Vec::new());
 
                 crossbeam::scope(|s| {
@@ -331,7 +216,7 @@ fn main() -> ExitCode {
                     match result {
                         Ok(store_path) => {
                             if output.is_none() {
-                                create_besogne_symlink(&cwd, name, store_path);
+                                compile::create_besogne_symlink(&cwd, name, store_path);
                             }
                             eprintln!("  {} {name} {}",
                                 output::style::styled(output::style::status::FRESH, "✓"),
@@ -346,19 +231,17 @@ fn main() -> ExitCode {
                 }
 
                 let total_ms = build_start.elapsed().as_millis();
-                eprintln!("besogne: built {} manifests ({})", results.len(), format_duration(total_ms));
+                eprintln!("besogne: built {} manifests ({})",
+                    results.len(), output::style::format_duration(total_ms));
 
                 if failed { ExitCode::from(2) } else { ExitCode::SUCCESS }
             }
         }
 
         Some(Commands::Run { input, force, args }) => {
-            // If --help is in args, we need to build first then forward --help
-            // to show the produced binary's help (which includes all flags)
             let wants_help = args.iter().any(|a| a == "--help" || a == "-h");
 
-            // Resolve manifest: -i flag, or task name from args[0], or single auto-discovery
-            let (manifest_path, forwarded_args) = match resolve_single_input_quiet(&input, &args) {
+            let (manifest_path, forwarded_args) = match manifest::resolve_single_manifest(&input, &args) {
                 Ok((p, remaining)) => (p, remaining.to_vec()),
                 Err(e) => {
                     if wants_help {
@@ -374,12 +257,10 @@ fn main() -> ExitCode {
                 }
             };
 
-            // Force flag: parsed by clap, forwarded to binary
             let force_rebuild = force;
             let mut forwarded_args = forwarded_args;
             if force { forwarded_args.push("--force".to_string()); }
 
-            // Detect JSON output mode from forwarded args
             let json_mode = forwarded_args.windows(2).any(|w| {
                 (w[0] == "-l" || w[0] == "--log-format") && w[1] == "json"
             });
@@ -387,8 +268,6 @@ fn main() -> ExitCode {
             let run_dir = runtime::cache::cache_base_dir().join("run");
             let _ = std::fs::create_dir_all(&run_dir);
 
-            // Cache key: H(manifest_content + besogne_compiler_hash)
-            // If besogne is updated, all cached binaries are invalidated.
             let manifest_content = match std::fs::read(&manifest_path) {
                 Ok(c) => c,
                 Err(e) => {
@@ -403,13 +282,11 @@ fn main() -> ExitCode {
             let cache_key = hasher.finalize().to_hex()[..16].to_string();
             let bin_path = run_dir.join(&cache_key);
 
-            // Check if cached binary exists and is valid
             let needs_build = force_rebuild || !bin_path.exists();
 
             if needs_build {
                 match compile::compile_quiet(&manifest_path, force_rebuild) {
                     Ok(store_path) => {
-                        // Copy from store to run cache
                         if let Err(e) = std::fs::copy(&store_path, &bin_path) {
                             eprintln!("{}", output::style::error_diag(&format!("cannot copy to run cache: {e}")));
                             return ExitCode::from(2);
@@ -449,15 +326,13 @@ fn main() -> ExitCode {
                 );
             }
 
-            // When --help: show context header before forwarding
             if wants_help {
                 eprintln!("besogne run — build + run in one shot");
                 eprintln!("manifest: {}", manifest_path.display());
                 eprintln!("binary:   {}\n", bin_path.display());
             }
 
-            // exec replaces this process — the besogne binary takes over
-            let err = exec_binary(&bin_path, &forwarded_args);
+            let err = runtime::exec_binary(&bin_path, &forwarded_args);
             eprintln!("{}", output::style::error_diag(&format!("cannot exec {}: {err}", bin_path.display())));
             ExitCode::from(126)
         }
@@ -465,7 +340,6 @@ fn main() -> ExitCode {
         Some(Commands::Adopt { source, output, dry_run }) => {
             let source_type = match source.extension().and_then(|e| e.to_str()) {
                 Some("json") => {
-                    // Check if it's package.json
                     let name = source.file_name().and_then(|f| f.to_str()).unwrap_or("");
                     if name == "package.json" {
                         adopt::AdoptSource::PackageJson
@@ -505,7 +379,7 @@ fn main() -> ExitCode {
         }
 
         Some(Commands::Check { input }) => {
-            let manifests = match resolve_manifests(&input) {
+            let manifests = match manifest::resolve_manifests(&input) {
                 Ok(i) => i,
                 Err(e) => { eprintln!("{}", output::style::error_diag(&e.to_string())); return ExitCode::from(2); }
             };
@@ -542,11 +416,7 @@ fn main() -> ExitCode {
 
                 match manifest::load_manifest(manifest_path) {
                     Ok(m) => {
-                        let name = manifest_path
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("?");
-                        let name = name.strip_suffix(".besogne").unwrap_or(name);
+                        let name = manifest::manifest_task_name(manifest_path);
 
                         if verbose {
                             eprintln!("  {display_path}");

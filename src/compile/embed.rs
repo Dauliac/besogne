@@ -49,7 +49,8 @@ pub fn extract_ir_from_self() -> Option<BesogneIR> {
     extract_ir_from_binary(&self_path)
 }
 
-fn extract_ir_from_binary(path: &Path) -> Option<BesogneIR> {
+/// Extract IR from a compiled besogne binary file.
+pub fn extract_ir_from_binary(path: &Path) -> Option<BesogneIR> {
     let mut file = File::open(path).ok()?;
     let file_len = file.metadata().ok()?.len();
 

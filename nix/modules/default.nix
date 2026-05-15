@@ -1,6 +1,14 @@
 { ... }: {
-  # Export the besogne flake-parts module for downstream consumers.
-  # We do NOT import besogne.nix here — it's meant for external use.
-  # Downstream: imports = [ inputs.besogne.flakeModules.besogne ];
-  flake.flakeModules.besogne = ./besogne.nix;
+  # Export flake-parts modules for downstream consumers.
+  # Dendritic: each module is a self-contained branch.
+  #
+  # Usage:
+  #   imports = [
+  #     inputs.besogne.flakeModules.besogne     # base: declare manifests in Nix
+  #     inputs.besogne.flakeModules.nix          # nix workflows (build, check, switch, etc.)
+  #   ];
+  flake.flakeModules = {
+    besogne = ./besogne.nix;
+    nix = ./nix;
+  };
 }

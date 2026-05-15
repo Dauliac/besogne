@@ -1,6 +1,8 @@
 name = "go-test"
 description = "Run Go tests"
 
+type = "component"
+
 [nodes."go/toolchain"]
 type = "component"
 

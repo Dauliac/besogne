@@ -1,6 +1,8 @@
 name = "npm-ci-pipeline"
 description = "Full npm CI: install, lint, test, build"
 
+type = "component"
+
 [nodes."node/toolchain"]
 type = "component"
 

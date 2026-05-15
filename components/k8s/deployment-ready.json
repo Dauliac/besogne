@@ -1,0 +1,23 @@
+{
+  "name": "k8s/deployment-ready",
+  "description": "Wait for a Kubernetes deployment rollout to complete.",
+  "nodes": {
+    "kubectl": {
+      "type": "binary"
+    },
+    "rollout-status": {
+      "type": "command",
+      "run": ["kubectl", "rollout", "status", "deployment/myapp", "--timeout=0s"],
+      "phase": "exec",
+      "parents": ["kubectl"],
+      "side_effects": true,
+      "retry": {
+        "attempts": 60,
+        "interval": "5s",
+        "backoff": "linear",
+        "max_interval": "30s",
+        "timeout": "10m"
+      }
+    }
+  }
+}

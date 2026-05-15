@@ -1,0 +1,8 @@
+{
+  "name": "nix/system-manager",
+  "description": "system-manager: declarative system configuration for non-NixOS hosts",
+  "nodes": {
+    "nix": { "type": "binary" },
+    "system-manager": { "type": "binary" }
+  }
+}

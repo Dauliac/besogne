@@ -1,5 +1,6 @@
 #!/bin/sh
 set -e
+
 echo "level1: start (pid=$$)"
 (sleep 0.1 && echo "background: done (pid=$$)" >> results/background.txt) &
 BG_PID=$!

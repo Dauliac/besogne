@@ -2,6 +2,8 @@ name = "isolation-strict"
 description = "Strict env sandbox — only declared vars visible"
 sandbox = "strict"
 
+type = "component"
+
 [nodes."coreutils/shell"]
 type = "component"
 

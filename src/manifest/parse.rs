@@ -83,24 +83,38 @@ pub fn discover_manifests() -> Vec<std::path::PathBuf> {
     // 4. Check besogne/ directory for terminal manifests
     let besogne_dir = cwd.join("besogne");
     if besogne_dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&besogne_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if matches!(ext, "toml" | "json" | "yaml" | "yml")
-                        && path.is_file()
-                        && !found.contains(&path)
-                    {
-                        found.push(path);
-                    }
-                }
-            }
+        scan_manifest_dir(&besogne_dir, &mut found);
+    }
+
+    // 5. Check BESOGNE_MANIFESTS_DIR — Nix flake.parts module exports
+    //    generated manifests to a store directory. The devShell sets this
+    //    env var so `besogne list` / `besogne run` discover them.
+    if let Ok(manifests_dir) = std::env::var("BESOGNE_MANIFESTS_DIR") {
+        let dir = std::path::PathBuf::from(manifests_dir);
+        if dir.is_dir() {
+            scan_manifest_dir(&dir, &mut found);
         }
     }
 
     found.sort();
     found.dedup();
     found
+}
+
+fn scan_manifest_dir(dir: &Path, found: &mut Vec<std::path::PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if matches!(ext, "toml" | "json" | "yaml" | "yml")
+                    && path.is_file()
+                    && !found.contains(&path)
+                {
+                    found.push(path);
+                }
+            }
+        }
+    }
 }
 
 fn find_git_root(start: &Path) -> Option<std::path::PathBuf> {

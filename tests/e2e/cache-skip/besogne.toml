@@ -1,6 +1,8 @@
 name = "cache-skip"
 description = "Second run skips if inputs unchanged"
 
+type = "component"
+
 [nodes.input-file]
 type = "file"
 path = "input.txt"
