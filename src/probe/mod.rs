@@ -2,6 +2,7 @@ pub mod binary;
 pub mod dns;
 pub mod env;
 pub mod file;
+pub mod flag;
 pub mod metric;
 pub mod platform;
 pub mod service;
@@ -25,8 +26,14 @@ pub trait Probe {
     fn probe(&self) -> ProbeResult;
 }
 
-/// Dispatch to the right probe implementation
+/// Dispatch to the right probe implementation.
+/// For flag nodes, use `probe_input_with_flags` which provides flag_env context.
 pub fn probe_input(input: &ResolvedNativeNode) -> ProbeResult {
+    probe_input_with_flags(input, &HashMap::new())
+}
+
+/// Probe with flag context — needed for Flag nodes to check CLI values.
+pub fn probe_input_with_flags(input: &ResolvedNativeNode, flag_env: &HashMap<String, String>) -> ProbeResult {
     match input {
         ResolvedNativeNode::Env {
             name,
@@ -103,6 +110,15 @@ pub fn probe_input(input: &ResolvedNativeNode) -> ProbeResult {
             sealed_env: sealed_env.as_ref(),
         }
         .probe(),
+
+        ResolvedNativeNode::Flag { name, env_var, value, .. } => {
+            flag::FlagProbe {
+                name,
+                env_var,
+                value: value.as_ref(),
+                flag_env,
+            }.probe()
+        }
 
         ResolvedNativeNode::Std { .. } | ResolvedNativeNode::Command { .. } => {
             // Commands and std nodes are validated by the runtime, not probed
@@ -183,14 +199,7 @@ where
 }
 
 fn format_duration(d: std::time::Duration) -> String {
-    let ms = d.as_millis();
-    if ms < 1000 {
-        format!("{}ms", ms)
-    } else if ms < 60_000 {
-        format!("{:.1}s", ms as f64 / 1000.0)
-    } else {
-        format!("{:.1}m", ms as f64 / 60_000.0)
-    }
+    crate::output::style::format_duration(d.as_millis())
 }
 
 #[cfg(test)]

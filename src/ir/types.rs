@@ -268,13 +268,32 @@ pub enum ResolvedNativeNode {
         #[serde(default)]
         expect: Option<String>,
     },
+    /// Flag node — gates subtree execution based on CLI flag presence/value.
+    Flag {
+        /// Flag name (the --long form)
+        name: String,
+        /// The env var key used in flag_env (e.g., FLAG_ROUTING_NIX)
+        env_var: String,
+        /// Value to match: true/false for bool, string for value flags.
+        /// None = match any truthy value (flag is present).
+        #[serde(default)]
+        value: Option<serde_json::Value>,
+        /// How to handle flag not matching: skip (default for flags) prunes subtree.
+        #[serde(default = "default_flag_on_missing")]
+        on_missing: OnMissingResolved,
+    },
+}
+
+/// Default on_missing for flag nodes: skip (prune subtree when flag not matched)
+fn default_flag_on_missing() -> OnMissingResolved {
+    OnMissingResolved::Skip
 }
 
 impl ResolvedNativeNode {
     /// Persistent nodes exist in the real world and CAN drift externally.
-    /// Ephemeral nodes (std) exist only in besogne's cache and cannot drift.
+    /// Ephemeral nodes (std, flag) exist only in besogne's state and cannot drift.
     pub fn is_persistent(&self) -> bool {
-        !matches!(self, ResolvedNativeNode::Std { .. })
+        !matches!(self, ResolvedNativeNode::Std { .. } | ResolvedNativeNode::Flag { .. })
     }
 }
 

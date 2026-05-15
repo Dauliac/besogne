@@ -666,6 +666,34 @@ fn e2e_mise_develop() {
     );
 }
 
+// ─── flag-routing ──────────────────────────────────────────────
+
+#[test]
+fn e2e_flag_routing_without_flag() {
+    let dir = setup_case("flag-routing");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    let r = run_in(dir.path());
+    assert!(r.status.success(), "run without --nix: {}", stderr(&r));
+    let err = stderr(&r);
+    assert!(err.contains("built-locally"), "should run local build: {err}");
+    assert!(!err.contains("built-with-nix"), "should NOT run nix build: {err}");
+}
+
+#[test]
+fn e2e_flag_routing_with_flag() {
+    let dir = setup_case("flag-routing");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    let r = run_in_with_args(dir.path(), &["--nix"]);
+    assert!(r.status.success(), "run with --nix: {}", stderr(&r));
+    let err = stderr(&r);
+    assert!(err.contains("built-with-nix"), "should run nix build: {err}");
+    assert!(!err.contains("built-locally"), "should NOT run local build: {err}");
+}
+
 // ─── multi-project ──────────────────────────────────────────────
 
 /// Helper: run `besogne list` in a workdir

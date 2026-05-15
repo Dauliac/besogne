@@ -214,6 +214,15 @@ impl ContextCache {
     }
 }
 
+/// Return the cache directory path (for debug display).
+pub fn cache_dir(compiler_hash: &str, besogne_hash: &str) -> String {
+    cache_base_dir()
+        .join(compiler_hash)
+        .join(besogne_hash)
+        .to_string_lossy()
+        .to_string()
+}
+
 /// Compute the cache file path:
 /// `$XDG_CACHE_HOME/besogne/<compiler_hash>/<besogne_hash>/context.json`
 fn cache_path(compiler_hash: &str, besogne_hash: &str) -> PathBuf {

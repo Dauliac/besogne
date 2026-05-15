@@ -141,6 +141,7 @@ pub enum Node {
     Component(ComponentInput),
     Source(SourceInput),
     Std(StdInput),
+    Flag(FlagInput),
 }
 
 impl Node {
@@ -159,6 +160,7 @@ impl Node {
             Node::Component(_) => Phase::Seal,
             Node::Source(s) => s.phase.clone().unwrap_or(Phase::Seal),
             Node::Std(_) => Phase::Exec,
+            Node::Flag(f) => f.phase.clone().unwrap_or(Phase::Exec),
         }
     }
 }
@@ -430,6 +432,36 @@ pub struct StdInput {
     /// Assert exact match (for exit_code: "0")
     #[serde(default)]
     pub expect: Option<String>,
+}
+
+/// Flag node — a CLI flag that gates subtree execution via DAG parents.
+/// Each flag+value combo is a separate node. Children only execute when
+/// the flag matches the declared value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlagInput {
+    /// Flag name (the --long form). Defaults to node key.
+    #[serde(default)]
+    pub name: Option<String>,
+
+    /// Short flag form (single char, e.g., 'n' for -n)
+    #[serde(default)]
+    pub short: Option<String>,
+
+    /// Description shown in --help
+    #[serde(default)]
+    pub description: Option<String>,
+
+    /// Value to match. For bool flags: true (when passed) or false (when not passed).
+    /// For value flags: the string to match (e.g., "linux", "staging").
+    #[serde(default)]
+    pub value: Option<serde_json::Value>,
+
+    #[serde(default)]
+    pub phase: Option<Phase>,
+
+    /// Parent nodes in the DAG
+    #[serde(default)]
+    pub parents: Option<Vec<String>>,
 }
 
 // --- Shared types ---

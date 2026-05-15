@@ -30,6 +30,7 @@ pub enum ProbeStatus {
 }
 
 /// Context passed alongside command start — resolved paths and env values
+#[derive(Debug)]
 pub struct CommandContext<'a> {
     pub binary_paths: &'a HashMap<String, String>,
     pub binary_versions: &'a HashMap<String, String>,
@@ -96,20 +97,118 @@ pub fn renderer_for_format(format: &LogFormat, verbose: bool) -> Renderer {
     }
 }
 
-fn format_duration_ms(ms: u64) -> String {
-    if ms < 1000 {
-        format!("{ms}ms")
-    } else if ms < 60_000 {
-        format!("{:.1}s", ms as f64 / 1000.0)
-    } else if ms < 3_600_000 {
-        let m = ms / 60_000;
-        let s = (ms % 60_000) / 1000;
-        format!("{m}m{s}s")
-    } else {
-        let h = ms / 3_600_000;
-        let m = (ms % 3_600_000) / 60_000;
-        format!("{h}h{m}m")
+// Bridge: EventHandler → OutputRenderer dispatch.
+// This allows the existing Renderer to be used as an EventHandler.
+impl crate::event::EventHandler for Renderer {
+    fn on_event(&mut self, event: &crate::event::BesogneEvent<'_>) {
+        use crate::event::BesogneEvent;
+        match event {
+            BesogneEvent::Start { ir } => self.on_start(ir),
+            BesogneEvent::PhaseStart { phase, node_count } => self.on_phase_start(phase, *node_count),
+            BesogneEvent::ProbeResult { node, result, status } => self.on_probe_result(node, result, *status),
+            BesogneEvent::PhaseEnd { phase } => self.on_phase_end(phase),
+            BesogneEvent::CommandStart { name, exec, ctx } => self.on_command_start(name, exec, ctx),
+            BesogneEvent::CommandOutput { name, stdout, stderr } => self.on_command_output(name, stdout, stderr),
+            BesogneEvent::CommandEnd { name, result, .. } => self.on_command_end(name, result),
+            BesogneEvent::CommandCached { name, exec, cached, ctx } => self.on_command_cached(name, exec, cached, ctx),
+            BesogneEvent::BuildPinnedSummary { nodes } => self.on_build_pinned_summary(nodes),
+            BesogneEvent::ChangedProbes { names } => self.on_changed_probes(names),
+            BesogneEvent::Skip { total_nodes, ran_at, duration_ms } => self.on_skip(*total_nodes, ran_at, *duration_ms),
+            BesogneEvent::UndeclaredDeps { binaries, env_vars } => self.on_undeclared_deps(binaries, env_vars),
+            BesogneEvent::Summary { exit_code, wall_ms } => self.on_summary(*exit_code, *wall_ms),
+        }
     }
+}
+
+/// Composite emitter: renders output AND emits structured events to an external handler.
+///
+/// When no handler is set, behaves identically to `Renderer`.
+/// Use [`EventEmitter::with_handler`] to attach a custom [`crate::event::EventHandler`].
+pub struct EventEmitter {
+    renderer: Renderer,
+    handler: Option<Box<dyn crate::event::EventHandler>>,
+}
+
+impl EventEmitter {
+    /// Create an emitter with only the built-in renderer (no external handler).
+    pub fn new(renderer: Renderer) -> Self {
+        Self { renderer, handler: None }
+    }
+
+    /// Create an emitter with a built-in renderer and an external event handler.
+    pub fn with_handler(renderer: Renderer, handler: Box<dyn crate::event::EventHandler>) -> Self {
+        Self { renderer, handler: Some(handler) }
+    }
+
+    fn emit(&mut self, event: &crate::event::BesogneEvent<'_>) {
+        if let Some(h) = &mut self.handler {
+            h.on_event(event);
+        }
+    }
+}
+
+impl OutputRenderer for EventEmitter {
+    fn on_start(&mut self, ir: &BesogneIR) {
+        self.renderer.on_start(ir);
+        self.emit(&crate::event::BesogneEvent::Start { ir });
+    }
+    fn on_phase_start(&mut self, phase: &str, count: usize) {
+        self.renderer.on_phase_start(phase, count);
+        self.emit(&crate::event::BesogneEvent::PhaseStart { phase, node_count: count });
+    }
+    fn on_probe_result(&mut self, input: &ResolvedNode, result: &ProbeResult, status: ProbeStatus) {
+        self.renderer.on_probe_result(input, result, status);
+        self.emit(&crate::event::BesogneEvent::ProbeResult { node: input, result, status });
+    }
+    fn on_phase_end(&mut self, phase: &str) {
+        self.renderer.on_phase_end(phase);
+        self.emit(&crate::event::BesogneEvent::PhaseEnd { phase });
+    }
+    fn on_command_start(&mut self, name: &str, exec: &[String], ctx: &CommandContext) {
+        self.renderer.on_command_start(name, exec, ctx);
+        self.emit(&crate::event::BesogneEvent::CommandStart { name, exec, ctx });
+    }
+    fn on_command_output(&mut self, name: &str, stdout: &str, stderr: &str) {
+        self.renderer.on_command_output(name, stdout, stderr);
+        self.emit(&crate::event::BesogneEvent::CommandOutput { name, stdout, stderr });
+    }
+    fn on_command_end(&mut self, name: &str, result: &CommandResult) {
+        self.renderer.on_command_end(name, result);
+        self.emit(&crate::event::BesogneEvent::CommandEnd {
+            name,
+            exit_code: result.exit_code,
+            wall_ms: result.wall_ms,
+            result,
+        });
+    }
+    fn on_command_cached(&mut self, name: &str, exec: &[String], cached: &CachedCommand, ctx: &CommandContext) {
+        self.renderer.on_command_cached(name, exec, cached, ctx);
+        self.emit(&crate::event::BesogneEvent::CommandCached { name, exec, cached, ctx });
+    }
+    fn on_build_pinned_summary(&mut self, nodes: &[&ResolvedNode]) {
+        self.renderer.on_build_pinned_summary(nodes);
+        self.emit(&crate::event::BesogneEvent::BuildPinnedSummary { nodes });
+    }
+    fn on_changed_probes(&mut self, changed: &[String]) {
+        self.renderer.on_changed_probes(changed);
+        self.emit(&crate::event::BesogneEvent::ChangedProbes { names: changed });
+    }
+    fn on_skip(&mut self, total_nodes: usize, ran_at: &str, duration_ms: u64) {
+        self.renderer.on_skip(total_nodes, ran_at, duration_ms);
+        self.emit(&crate::event::BesogneEvent::Skip { total_nodes, ran_at, duration_ms });
+    }
+    fn on_undeclared_deps(&mut self, binaries: &[String], env_vars: &[String]) {
+        self.renderer.on_undeclared_deps(binaries, env_vars);
+        self.emit(&crate::event::BesogneEvent::UndeclaredDeps { binaries, env_vars });
+    }
+    fn on_summary(&mut self, exit_code: i32, wall_ms: u64) {
+        self.renderer.on_summary(exit_code, wall_ms);
+        self.emit(&crate::event::BesogneEvent::Summary { exit_code, wall_ms });
+    }
+}
+
+fn format_duration_ms(ms: u64) -> String {
+    style::format_duration(ms as u128)
 }
 
 fn node_type_name(node: &ResolvedNativeNode) -> &'static str {
@@ -125,6 +224,7 @@ fn node_type_name(node: &ResolvedNativeNode) -> &'static str {
         ResolvedNativeNode::Metric { .. } => "metric",
         ResolvedNativeNode::Source { .. } => "source",
         ResolvedNativeNode::Std { .. } => "std",
+        ResolvedNativeNode::Flag { .. } => "flag",
     }
 }
 
@@ -173,6 +273,12 @@ pub fn input_label(input: &ResolvedNode) -> String {
         ResolvedNativeNode::Source { format, path, .. } =>
             format!("source:{}", path.as_deref().unwrap_or(format)),
         ResolvedNativeNode::Std { stream, .. } => format!("std:{stream}"),
+        ResolvedNativeNode::Flag { name, value, .. } => {
+            match value {
+                Some(v) => format!("flag:{name}={v}"),
+                None => format!("flag:{name}"),
+            }
+        }
     }
 }
 
@@ -238,6 +344,12 @@ fn probe_detail(input: &ResolvedNode, result: &ProbeResult) -> String {
             if let Some(exp) = expect { parts.push(format!("= {exp}")); }
             if !contains.is_empty() { parts.push(format!("contains {:?}", contains)); }
             parts.join(" ")
+        }
+        ResolvedNativeNode::Flag { name, value, .. } => {
+            match value {
+                Some(v) => format!("--{name}={v}"),
+                None => format!("--{name}"),
+            }
         }
     }
 }
@@ -1027,6 +1139,7 @@ pub(crate) fn node_type_badge(n: &ResolvedNode) -> String {
         ResolvedNativeNode::Metric { .. }   => (node::METRIC, badge::METRIC),
         ResolvedNativeNode::Source { .. }   => (node::SOURCE, badge::SOURCE),
         ResolvedNativeNode::Std { .. }     => (node::STD, badge::STD),
+        ResolvedNativeNode::Flag { .. }    => (node::ENV, badge::ENV), // reuse env style for flags
     };
     styled(token, text)
 }
@@ -1070,6 +1183,12 @@ pub(crate) fn node_short_label(n: &ResolvedNode) -> String {
             if let Some(exp) = expect { desc.push_str(&format!(" {}", dim(&format!("= {exp}")))); }
             if !contains.is_empty() { desc.push_str(&format!(" {}", dim(&format!("contains {:?}", contains)))); }
             desc
+        }
+        ResolvedNativeNode::Flag { name, value, .. } => {
+            match value {
+                Some(v) => format!("--{name}={v}"),
+                None => format!("--{name}"),
+            }
         }
     }
 }

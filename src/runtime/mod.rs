@@ -16,19 +16,42 @@ use std::process::ExitCode;
 use std::sync::Mutex;
 use std::time::Instant;
 
-/// Run a sealed besogne binary
+/// Run a sealed besogne binary by parsing CLI args from argv.
+/// This is the entry point for sealed binaries (IR embedded in the executable).
 pub fn run(ir: BesogneIR) -> ExitCode {
-    let args = cli::parse_runtime_args(&ir);
+    let config = cli::RuntimeConfig::from_cli(&ir);
+    run_with_config(ir, &config)
+}
 
+/// Run a besogne IR with an explicit configuration.
+/// This is the programmatic entry point — no CLI parsing involved.
+pub fn run_with_config(ir: BesogneIR, config: &cli::RuntimeConfig) -> ExitCode {
+    let renderer = output::renderer_for_format(&config.log_format, config.verbose);
+    let mut emitter = output::EventEmitter::new(renderer);
+    run_with_emitter(ir, config, &mut emitter)
+}
+
+/// Run with a custom event handler that receives structured events
+/// alongside the built-in renderer.
+pub fn run_with_handler(
+    ir: BesogneIR,
+    config: &cli::RuntimeConfig,
+    handler: Box<dyn crate::event::EventHandler>,
+) -> ExitCode {
+    let renderer = output::renderer_for_format(&config.log_format, config.verbose);
+    let mut emitter = output::EventEmitter::with_handler(renderer, handler);
+    run_with_emitter(ir, config, &mut emitter)
+}
+
+/// Internal: run with a specific emitter (renderer + optional event handler).
+fn run_with_emitter(ir: BesogneIR, config: &cli::RuntimeConfig, renderer: &mut output::EventEmitter) -> ExitCode {
     // Handle dump modes (exit early)
-    if let Some(dump_mode) = &args.dump {
+    if let Some(dump_mode) = &config.dump {
         return handle_dump(&ir, dump_mode);
     }
 
     // Compute besogne hash for memoization (needed by both --status and normal run)
     let besogne_hash = compute_besogne_hash(&ir);
-
-    let mut renderer = output::renderer_for_format(&args.log_format, args.verbose);
 
     // cd to the manifest's directory — ensures mise/direnv/relative paths work
     if !ir.metadata.workdir.is_empty() {
@@ -40,12 +63,67 @@ pub fn run(ir: BesogneIR) -> ExitCode {
 
     let start = Instant::now();
 
-    let flag_vars = args.flag_env;
+    let flag_vars = config.flag_env.clone();
 
     let mut context = ContextCache::load(&besogne_hash);
 
+    if config.debug {
+        eprintln!("  \x1b[2m[debug] ── IR summary ──\x1b[0m");
+        eprintln!("  \x1b[2m[debug] besogne_hash={}\x1b[0m", &besogne_hash[..16.min(besogne_hash.len())]);
+        eprintln!("  \x1b[2m[debug] compiler_hash={}\x1b[0m", &context.compiler_hash[..16.min(context.compiler_hash.len())]);
+        eprintln!("  \x1b[2m[debug] cache_dir={}\x1b[0m", cache::cache_dir(&context.compiler_hash, &besogne_hash));
+        eprintln!("  \x1b[2m[debug] workdir={}\x1b[0m", if ir.metadata.workdir.is_empty() { "." } else { &ir.metadata.workdir });
+        // Node counts by type and phase
+        let mut type_counts: HashMap<&str, usize> = HashMap::new();
+        let mut phase_counts: HashMap<&str, usize> = HashMap::new();
+        for node in &ir.nodes {
+            let type_name = match &node.node {
+                ResolvedNativeNode::Env { .. } => "env",
+                ResolvedNativeNode::File { .. } => "file",
+                ResolvedNativeNode::Binary { .. } => "binary",
+                ResolvedNativeNode::Service { .. } => "service",
+                ResolvedNativeNode::Command { .. } => "command",
+                ResolvedNativeNode::Platform { .. } => "platform",
+                ResolvedNativeNode::Dns { .. } => "dns",
+                ResolvedNativeNode::Metric { .. } => "metric",
+                ResolvedNativeNode::Source { .. } => "source",
+                ResolvedNativeNode::Std { .. } => "std",
+                ResolvedNativeNode::Flag { .. } => "flag",
+            };
+            *type_counts.entry(type_name).or_default() += 1;
+            let phase = match node.phase {
+                Phase::Build => "build",
+                Phase::Seal => "seal",
+                Phase::Exec => "exec",
+            };
+            *phase_counts.entry(phase).or_default() += 1;
+        }
+        let types: Vec<String> = { let mut v: Vec<_> = type_counts.iter().collect(); v.sort_by_key(|(k, _)| **k); v.iter().map(|(k, v)| format!("{k}={v}")).collect() };
+        let phases: Vec<String> = { let mut v: Vec<_> = phase_counts.iter().collect(); v.sort_by_key(|(k, _)| **k); v.iter().map(|(k, v)| format!("{k}={v}")).collect() };
+        eprintln!("  \x1b[2m[debug] nodes: {} total [{}] [{}]\x1b[0m", ir.nodes.len(), types.join(", "), phases.join(", "));
+        // Binary pinning details
+        let binaries: Vec<_> = ir.nodes.iter().filter_map(|n| {
+            if let ResolvedNativeNode::Binary { name, resolved_path, resolved_version, binary_hash, .. } = &n.node {
+                Some((name.as_str(), resolved_path.as_deref().unwrap_or("?"), resolved_version.as_deref().unwrap_or("?"), binary_hash.as_deref().unwrap_or("?")))
+            } else { None }
+        }).collect();
+        if !binaries.is_empty() {
+            eprintln!("  \x1b[2m[debug] ── pinned binaries ──\x1b[0m");
+            for (name, path, ver, hash) in &binaries {
+                eprintln!("  \x1b[2m[debug]   {name} → {path} v{ver} hash={}\x1b[0m", &hash[..16.min(hash.len())]);
+            }
+        }
+        // Content IDs
+        eprintln!("  \x1b[2m[debug] ── content IDs ──\x1b[0m");
+        for node in &ir.nodes {
+            let phase = match node.phase { Phase::Build => "build", Phase::Seal => "seal", Phase::Exec => "exec" };
+            eprintln!("  \x1b[2m[debug]   [{phase}] {} parents=[{}]\x1b[0m",
+                node.id.0, node.parents.iter().map(|p| &p.0[..20.min(p.0.len())]).collect::<Vec<_>>().join(", "));
+        }
+    }
+
     // --status: unified execution tree + diagnostics, then exit
-    if args.status {
+    if config.status {
         output::views::status::render(&ir, &context);
         return ExitCode::SUCCESS;
     }
@@ -63,19 +141,20 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     let pre_nodes: Vec<&ResolvedNode> = ir.nodes.iter().filter(|i| i.phase == Phase::Seal).collect();
 
     // 2. Pre-phase — check seals
-    let warmup_cached = !args.force && pre_nodes.iter().all(|input| {
+    let warmup_cached = !config.force && pre_nodes.iter().all(|input| {
         if context.get_probe(&input.id.0).is_none() {
             return false;
         }
         // For file inputs, verify the file hasn't changed since caching
         // by re-hashing (cheap for small files, catches content changes)
         match &input.node {
-            ResolvedNativeNode::File { path: _, .. } => {
-                let fresh = probe::probe_input(&input.node);
+            ResolvedNativeNode::File { path: _, .. } | ResolvedNativeNode::Flag { .. } => {
+                let fresh = probe::probe_input_with_flags(&input.node, &config.flag_env);
                 if let Some(cached) = context.get_probe(&input.id.0) {
                     fresh.success && fresh.hash == cached.hash
                 } else {
-                    false
+                    // Flag with value=false succeeds when not set — still valid for cache
+                    fresh.success
                 }
             }
             _ => true,
@@ -84,10 +163,12 @@ pub fn run(ir: BesogneIR) -> ExitCode {
 
     // Fast path: all probes cached → check if we can skip entirely
     if warmup_cached {
+        if config.debug { eprintln!("  \x1b[2m[debug] fast path: all {} seal probes cached\x1b[0m", pre_nodes.len()); }
         let mut all_vars = flag_vars;
         let mut hash_parts = Vec::new();
         for input in &pre_nodes {
             if let Some(cached) = context.get_probe(&input.id.0) {
+                if config.debug { eprintln!("  \x1b[2m[debug] seal cached {} → {}\x1b[0m", input.id.0, &cached.hash[..16]); }
                 all_vars.extend(cached.variables.clone());
                 hash_parts.push(cached.hash.clone());
             }
@@ -96,6 +177,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         for node in ir.nodes.iter().filter(|n| n.phase == Phase::Exec && matches!(&n.node, ResolvedNativeNode::Source { .. })) {
             let result = probe::probe_input(&node.node);
             if result.success {
+                if config.debug { eprintln!("  \x1b[2m[debug] exec source {} → {}\x1b[0m", node.id.0, &result.hash[..16]); }
                 hash_parts.push(result.hash.clone());
                 all_vars.extend(result.variables.clone());
                 context.set_probe(node.id.0.clone(), result.hash, result.variables);
@@ -106,8 +188,19 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         let input_hash = blake3::hash(hash_parts.join(":").as_bytes())
             .to_hex()
             .to_string();
+        if config.debug { eprintln!("  \x1b[2m[debug] input_hash = {} ({} parts)\x1b[0m", &input_hash[..16], hash_parts.len()); }
 
-        if !has_side_effects(&ir) && context.can_skip(&input_hash) {
+        let can_skip = !has_side_effects(&ir) && context.can_skip(&input_hash);
+        if config.debug {
+            if has_side_effects(&ir) {
+                eprintln!("  \x1b[2m[debug] has side_effects → cannot skip\x1b[0m");
+            } else if can_skip {
+                eprintln!("  \x1b[2m[debug] input_hash matches cached → checking backward validity\x1b[0m");
+            } else {
+                eprintln!("  \x1b[2m[debug] input_hash not in cache → must execute\x1b[0m");
+            }
+        }
+        if can_skip {
             // Backward check: re-probe persistent exec-phase children that
             // have cache entries. If a previously-cached file is now missing
             // (e.g., user deleted node_modules/), fall through to re-execute.
@@ -116,24 +209,32 @@ pub fn run(ir: BesogneIR) -> ExitCode {
                 .filter(|n| context.get_probe(&n.id.0).is_some())
                 .all(|n| {
                     let fresh = probe::probe_input(&n.node);
-                    fresh.success && context.get_probe(&n.id.0)
-                        .map_or(false, |c| c.hash == fresh.hash)
+                    let valid = fresh.success && context.get_probe(&n.id.0)
+                        .map_or(false, |c| c.hash == fresh.hash);
+                    if config.debug && !valid {
+                        let cached_h = context.get_probe(&n.id.0).map(|c| c.hash[..16].to_string()).unwrap_or_else(|| "none".into());
+                        let fresh_h = if fresh.hash.len() >= 16 { &fresh.hash[..16] } else { &fresh.hash };
+                        eprintln!("  \x1b[2m[debug] backward drift: {} cached={} fresh={} ok={}\x1b[0m",
+                            &n.id.0[..30.min(n.id.0.len())], cached_h, fresh_h, fresh.success);
+                    }
+                    valid
                 });
 
             if outputs_valid {
+                if config.debug { eprintln!("  \x1b[2m[debug] all outputs valid → full skip\x1b[0m"); }
                 let total_nodes = ir.nodes.len();
                 if let Some(lr) = context.get_last_run() {
                     renderer.on_skip(total_nodes, &lr.ran_at, lr.duration_ms);
                 }
                 return ExitCode::SUCCESS;
             }
-            // Persistent output drifted → fall through to re-execute
+            if config.debug { eprintln!("  \x1b[2m[debug] persistent output drifted → re-execute\x1b[0m"); }
         }
 
         // Build phase: never shown by runtime — compiler already showed it.
         // Seal phase: all probes cached → skip display entirely.
         // Go straight to exec DAG.
-        return execute_dag(&ir, all_vars, input_hash, &mut renderer, &mut context, start, args.force, args.debug, &std::collections::HashSet::new());
+        return execute_dag(&ir, all_vars, input_hash, renderer, &mut context, start, config.force, config.debug, &std::collections::HashSet::new());
     }
 
     // Full warmup: probe all seals in parallel
@@ -153,8 +254,9 @@ pub fn run(ir: BesogneIR) -> ExitCode {
                 let hard_failed = &pre_hard_failed;
                 let results = &probe_results;
 
+                let flag_env = &config.flag_env;
                 s.spawn(move |_| {
-                    let result = probe::probe_input(&input.node);
+                    let result = probe::probe_input_with_flags(&input.node, flag_env);
                     results.lock().unwrap().push(((*input).clone(), result.clone()));
                     if result.success {
                         all_vars.lock().unwrap().extend(result.variables.clone());
@@ -175,6 +277,15 @@ pub fn run(ir: BesogneIR) -> ExitCode {
 
     let mut results = probe_results.into_inner().unwrap();
     results.sort_by(|a, b| a.0.id.0.cmp(&b.0.id.0));
+
+    if config.debug {
+        for (input, result) in &results {
+            let status = if result.success { "ok" } else { "FAIL" };
+            let hash_short = if result.hash.len() >= 16 { &result.hash[..16] } else { &result.hash };
+            let cached = if context.get_probe(&input.id.0).is_some() { " (cached)" } else { " (fresh)" };
+            eprintln!("  \x1b[2m[debug] seal {} → {} {}{}\x1b[0m", input.id.0, status, hash_short, cached);
+        }
+    }
 
     // Collect skipped node IDs (on_missing=skip probes that failed)
     let mut skipped_node_ids: std::collections::HashSet<ContentId> = std::collections::HashSet::new();
@@ -235,8 +346,9 @@ pub fn run(ir: BesogneIR) -> ExitCode {
     let input_hash = blake3::hash(hash_parts.join(":").as_bytes())
         .to_hex()
         .to_string();
+    if config.debug { eprintln!("  \x1b[2m[debug] input_hash = {} ({} parts)\x1b[0m", &input_hash[..16], hash_parts.len()); }
 
-    if !args.force && !has_side_effects(&ir) && context.can_skip(&input_hash) {
+    if !config.force && !has_side_effects(&ir) && context.can_skip(&input_hash) {
         // Load exec-phase source variables from cache for replay context
         let mut replay_vars = all_variables.clone();
         for node in ir.nodes.iter().filter(|n| n.phase == Phase::Exec) {
@@ -246,7 +358,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
                 }
             }
         }
-        replay_cached_commands(&ir, &context, &mut renderer, &replay_vars);
+        replay_cached_commands(&ir, &context, renderer, &replay_vars);
         let wall_ms = start.elapsed().as_millis() as u64;
         renderer.on_summary(0, wall_ms);
         return ExitCode::SUCCESS;
@@ -259,12 +371,43 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         if let Some(cached) = context.get_probe(&input.id.0) {
             if cached.hash != result.hash {
                 changed.push(crate::output::input_label(input));
+                if config.debug {
+                    let label = crate::output::input_label(input);
+                    eprintln!("  \x1b[2m[debug] {label}: hash changed {} → {}\x1b[0m",
+                        &cached.hash[..16], &result.hash[..16]);
+                    // Show variable diffs for env/source nodes
+                    if !cached.variables.is_empty() || !result.variables.is_empty() {
+                        for (k, v) in &result.variables {
+                            match cached.variables.get(k) {
+                                Some(old_v) if old_v != v => {
+                                    let old_short = if old_v.len() > 60 { format!("{}...", &old_v[..60]) } else { old_v.clone() };
+                                    let new_short = if v.len() > 60 { format!("{}...", &v[..60]) } else { v.clone() };
+                                    eprintln!("  \x1b[2m[debug]   ~ {k}: {old_short} → {new_short}\x1b[0m");
+                                }
+                                None => {
+                                    let new_short = if v.len() > 60 { format!("{}...", &v[..60]) } else { v.clone() };
+                                    eprintln!("  \x1b[2m[debug]   + {k}: {new_short}\x1b[0m");
+                                }
+                                _ => {} // unchanged
+                            }
+                        }
+                        for k in cached.variables.keys() {
+                            if !result.variables.contains_key(k) {
+                                eprintln!("  \x1b[2m[debug]   - {k}\x1b[0m");
+                            }
+                        }
+                    }
+                }
             }
         } else {
             changed.push(crate::output::input_label(input));
+            if config.debug {
+                let label = crate::output::input_label(input);
+                eprintln!("  \x1b[2m[debug] {label}: new (no cached hash)\x1b[0m");
+            }
         }
     }
-    if !changed.is_empty() && !args.force {
+    if !changed.is_empty() && !config.force {
         renderer.on_changed_probes(&changed);
     }
 
@@ -275,7 +418,7 @@ pub fn run(ir: BesogneIR) -> ExitCode {
         }
     }
 
-    execute_dag(&ir, all_variables, input_hash, &mut renderer, &mut context, start, args.force, args.debug, &skipped_node_ids)
+    execute_dag(&ir, all_variables, input_hash, renderer, &mut context, start, config.force, config.debug, &skipped_node_ids)
 }
 
 /// Compute the forward hash for a command: BLAKE3 of its parents' hashes.
@@ -363,50 +506,112 @@ fn determine_command_mode(
     forced_dirty: bool,
     force_flag: bool,
     seal_input_hash: &str,
+    debug: bool,
 ) -> cache::CommandMode {
+    let name_for_debug = match &node.node {
+        ResolvedNativeNode::Command { name, .. } => name.as_str(),
+        _ => &node.id.0,
+    };
+
     // side_effects → always run
     if let ResolvedNativeNode::Command { side_effects: true, .. } = &node.node {
+        if debug { eprintln!("    \x1b[2m[debug] {name_for_debug}: side_effects=true → AlwaysRun\x1b[0m"); }
         return cache::CommandMode::AlwaysRun;
     }
 
     // --force → full detection
     if force_flag {
+        if debug { eprintln!("    \x1b[2m[debug] {name_for_debug}: --force → FullDetection\x1b[0m"); }
         return cache::CommandMode::FullDetection;
     }
 
     // Forced dirty by upstream propagation
     if forced_dirty {
+        if debug { eprintln!("    \x1b[2m[debug] {name_for_debug}: dirty propagation → Detection\x1b[0m"); }
         return cache::CommandMode::Detection;
     }
 
     // Check if we have a cached entry
     let cmd_name = match &node.node {
         ResolvedNativeNode::Command { name, .. } => name,
-        _ => return cache::CommandMode::FullDetection, // non-command in DAG
+        _ => return cache::CommandMode::FullDetection,
     };
 
     let cached = match context.get_command(cmd_name) {
         Some(c) => c,
-        None => return cache::CommandMode::FullDetection, // first run
+        None => {
+            if debug { eprintln!("    \x1b[2m[debug] {cmd_name}: no cache entry → FullDetection (first run)\x1b[0m"); }
+            return cache::CommandMode::FullDetection;
+        }
     };
 
     // Forward check: parent hash changed?
     let current_parent_hash = compute_parent_hash(node, ir, context, seal_input_hash);
+    if debug {
+        eprintln!("    \x1b[2m[debug] {cmd_name}: parent_hash cached={} current={}\x1b[0m",
+            &cached.parent_hash[..16.min(cached.parent_hash.len())],
+            &current_parent_hash[..16]);
+    }
     if cached.parent_hash != current_parent_hash {
-        // Inputs changed — need detection. Also re-verify if never verified for this hash.
-        return if context.verified_hash.as_deref() != Some(&current_parent_hash) {
+        let mode = if context.verified_hash.as_deref() != Some(&current_parent_hash) {
             cache::CommandMode::FullDetection
         } else {
             cache::CommandMode::Detection
         };
+        if debug {
+            eprintln!("    \x1b[2m[debug] {cmd_name}: parent_hash changed → {mode:?}\x1b[0m");
+            // Show which parents contributed to the hash change
+            for parent_id in &node.parents {
+                if let Some(parent) = ir.nodes.iter().find(|n| n.id == *parent_id) {
+                    let (kind, hash) = match &parent.node {
+                        ResolvedNativeNode::Command { name, .. } => {
+                            let h = context.get_command(name).map(|c| c.child_hash.clone()).unwrap_or_default();
+                            ("cmd", h)
+                        }
+                        _ => {
+                            let h = context.get_probe(&parent_id.0).map(|c| c.hash.clone()).unwrap_or_default();
+                            ("probe", h)
+                        }
+                    };
+                    let hash_short = if hash.len() >= 16 { &hash[..16] } else { &hash };
+                    eprintln!("    \x1b[2m[debug]   parent {kind}:{} → {hash_short}\x1b[0m",
+                        &parent_id.0[..24.min(parent_id.0.len())]);
+                }
+            }
+        }
+        return mode;
     }
 
     // Backward check: persistent children drifted?
-    let (drifted, _current_child_hash) = compute_child_hash(&node.id, ir, context);
+    let (drifted, current_child_hash) = compute_child_hash(&node.id, ir, context);
+    if debug {
+        eprintln!("    \x1b[2m[debug] {cmd_name}: child_hash={} drifted={drifted}\x1b[0m",
+            &current_child_hash[..16]);
+    }
     if drifted {
+        if debug {
+            eprintln!("    \x1b[2m[debug] {cmd_name}: child drifted → Lightweight\x1b[0m");
+            // Show which children drifted
+            let children: Vec<&ResolvedNode> = ir.nodes.iter()
+                .filter(|n| n.parents.contains(&node.id))
+                .collect();
+            for child in &children {
+                if child.node.is_persistent() {
+                    let fresh = probe::probe_input(&child.node);
+                    let cached_hash = context.get_probe(&child.id.0).map(|c| c.hash.clone());
+                    let fresh_short = if fresh.hash.len() >= 16 { &fresh.hash[..16] } else { &fresh.hash };
+                    let cached_short = cached_hash.as_ref().map(|h| if h.len() >= 16 { &h[..16] } else { h }).unwrap_or("none");
+                    if cached_hash.as_deref() != Some(&fresh.hash) {
+                        eprintln!("    \x1b[2m[debug]   drifted child {}: {} → {}\x1b[0m",
+                            &child.id.0[..24.min(child.id.0.len())], cached_short, fresh_short);
+                    }
+                }
+            }
+        }
         return cache::CommandMode::Lightweight;
     }
 
+    if debug { eprintln!("    \x1b[2m[debug] {cmd_name}: all hashes match → Skip\x1b[0m"); }
     cache::CommandMode::Skip
 }
 
@@ -415,7 +620,7 @@ fn execute_dag(
     ir: &BesogneIR,
     mut all_variables: HashMap<String, String>,
     input_hash: String,
-    renderer: &mut output::Renderer,
+    renderer: &mut output::EventEmitter,
     context: &mut ContextCache,
     start: Instant,
     force: bool,
@@ -446,7 +651,7 @@ fn execute_dag(
 
     // Skip propagation: exec nodes whose seal-phase parents were skipped (on_missing: skip).
     // Propagates transitively — if a parent is skipped, all descendants are skipped too.
-    let skip_set: std::collections::HashSet<petgraph::graph::NodeIndex> = {
+    let mut skip_set: std::collections::HashSet<petgraph::graph::NodeIndex> = {
         let mut set = std::collections::HashSet::new();
         if !skipped_seal_ids.is_empty() {
             // Find exec nodes that have a skipped seal node as a parent
@@ -544,9 +749,39 @@ fn execute_dag(
         .collect();
 
     let exec_count = ir.nodes.iter().filter(|n| n.phase == Phase::Exec).count();
+
+    if debug {
+        eprintln!("\n  \x1b[2m[debug] ── DAG ({} nodes, {} tiers) ──\x1b[0m", graph.node_count(), tiers.len());
+        for (tier_idx, tier) in tiers.iter().enumerate() {
+            let names: Vec<String> = tier.iter().map(|&idx| {
+                let id = &graph[idx];
+                input_by_id.get(id).map(|n| match &n.node {
+                    ResolvedNativeNode::Command { name, .. } => format!("cmd:{name}"),
+                    ResolvedNativeNode::Std { stream, .. } => format!("std:{stream}"),
+                    ResolvedNativeNode::Source { format, .. } => format!("source:{format}"),
+                    ResolvedNativeNode::Flag { name, .. } => format!("flag:{name}"),
+                    _ => format!("node:{}", &id.0[..20.min(id.0.len())]),
+                }).unwrap_or_else(|| format!("?:{}", &id.0[..12.min(id.0.len())]))
+            }).collect();
+            eprintln!("  \x1b[2m[debug]   tier {tier_idx}: [{}]\x1b[0m", names.join(", "));
+        }
+        // Show edges
+        for edge in graph.edge_indices() {
+            if let Some((src, dst)) = graph.edge_endpoints(edge) {
+                let src_id = &graph[src].0;
+                let dst_id = &graph[dst].0;
+                eprintln!("  \x1b[2m[debug]   edge {} → {}\x1b[0m",
+                    &src_id[..20.min(src_id.len())], &dst_id[..20.min(dst_id.len())]);
+            }
+        }
+        eprintln!();
+    }
+
     renderer.on_phase_start("exec", exec_count);
 
+    let mut tier_idx = 0;
     for tier in &tiers {
+        let tier_start = if debug { Some(Instant::now()) } else { None };
         // ── Phase 1: Collect commands to execute in this tier ──
         struct CmdJob {
             node_idx: petgraph::graph::NodeIndex,
@@ -573,7 +808,10 @@ fn execute_dag(
                 if last_exit_code != 0 && !side_effects { continue; }
 
                 let forced_dirty = dirty_set.contains(&node_idx);
-                let cmd_mode = determine_command_mode(input, ir, context, forced_dirty, force, &input_hash);
+                let cmd_mode = determine_command_mode(input, ir, context, forced_dirty, force, &input_hash, debug);
+                if debug {
+                    eprintln!("    \x1b[2m[debug] {name}: mode={cmd_mode:?} node_id={}\x1b[0m", &content_id.0[..16.min(content_id.0.len())]);
+                }
 
                 if cmd_mode == cache::CommandMode::Skip {
                     if let Some(cached) = context.get_command(name) {
@@ -595,6 +833,17 @@ fn execute_dag(
                 let mut effective_run = run.clone();
                 if force && !force_args.is_empty() { effective_run.extend(force_args.clone()); }
                 if debug && !debug_args.is_empty() { effective_run.extend(debug_args.clone()); }
+
+                if debug {
+                    let mut env_keys: Vec<&String> = cmd_env.keys().collect();
+                    env_keys.sort();
+                    eprintln!("    \x1b[2m[debug] {name}: {} env vars: [{}]\x1b[0m",
+                        cmd_env.len(),
+                        env_keys.iter().take(20).map(|k| k.as_str()).collect::<Vec<_>>().join(", "));
+                    if env_keys.len() > 20 {
+                        eprintln!("    \x1b[2m[debug]   ... and {} more\x1b[0m", env_keys.len() - 20);
+                    }
+                }
 
                 // Show command start header (safe from multiple threads — just eprintln)
                 let ctx = output::CommandContext {
@@ -697,6 +946,25 @@ fn execute_dag(
             renderer.on_command_output(name, &stdout, &cmd_stderr);
             renderer.on_command_end(name, &result);
 
+            if debug {
+                eprintln!("    \x1b[2m[debug] {name}: exit={} wall={}ms user={}ms sys={}ms rss={}KB\x1b[0m",
+                    result.exit_code, result.wall_ms, result.user_ms, result.sys_ms, result.max_rss_kb);
+                eprintln!("    \x1b[2m[debug] {name}: disk_r={}B disk_w={}B net_r={}B net_w={}B\x1b[0m",
+                    result.disk_read_bytes, result.disk_write_bytes,
+                    result.net_read_bytes, result.net_write_bytes);
+                if !result.process_tree.is_empty() {
+                    eprintln!("    \x1b[2m[debug] {name}: process tree ({} processes):\x1b[0m", result.process_tree.len());
+                    for p in &result.process_tree {
+                        eprintln!("    \x1b[2m[debug]   pid={} ppid={} {} exit={} wall={}ms user={}ms sys={}ms rss={}KB\x1b[0m",
+                            p.pid, p.ppid, p.comm, p.exit_code, p.wall_ms, p.user_ms, p.sys_ms, p.max_rss_kb);
+                        if !p.cmdline.is_empty() {
+                            eprintln!("    \x1b[2m[debug]     cmdline: {}\x1b[0m",
+                                if p.cmdline.len() > 120 { format!("{}...", &p.cmdline[..120]) } else { p.cmdline.clone() });
+                        }
+                    }
+                }
+            }
+
             // Idempotency verification — two strategies:
             //
             // 1. Free check: compare declared outputs (std children, file children,
@@ -797,8 +1065,8 @@ fn execute_dag(
                 }
             }
 
-            // Cache command output
-            if !debug {
+            // Cache command output (always — std children need stdout/stderr even in debug mode)
+            {
                 context.set_command(
                     name.clone(),
                     cache::CachedCommand {
@@ -829,14 +1097,26 @@ fn execute_dag(
             if let Some(old_cached) = context.get_command(name) {
                 let (_, new_child_hash) = compute_child_hash(content_id, ir, context);
                 if old_cached.child_hash != new_child_hash {
+                    if debug {
+                        eprintln!("    \x1b[2m[debug] {name}: child_hash changed {} → {} → propagating dirty\x1b[0m",
+                            &old_cached.child_hash[..16.min(old_cached.child_hash.len())],
+                            &new_child_hash[..16]);
+                    }
+                    let mut propagated = Vec::new();
                     for neighbor in graph.neighbors_directed(job.node_idx, petgraph::Direction::Outgoing) {
                         let mut stack = vec![neighbor];
                         while let Some(idx) = stack.pop() {
                             if dirty_set.insert(idx) {
+                                propagated.push(graph[idx].0.clone());
                                 for next in graph.neighbors_directed(idx, petgraph::Direction::Outgoing) {
                                     stack.push(next);
                                 }
                             }
+                        }
+                    }
+                    if debug && !propagated.is_empty() {
+                        for p in &propagated {
+                            eprintln!("    \x1b[2m[debug]   dirty → {}\x1b[0m", &p[..30.min(p.len())]);
                         }
                     }
                 }
@@ -856,6 +1136,30 @@ fn execute_dag(
 
             match &input.node {
 
+                ResolvedNativeNode::Flag { name, on_missing, .. } => {
+                    let result = probe::probe_input_with_flags(&input.node, &all_variables);
+                    if result.success {
+                        if debug { eprintln!("    \x1b[2m[debug] flag '{name}': matched → children execute\x1b[0m"); }
+                        all_variables.extend(result.variables.clone());
+                        context.set_probe(input.id.0.clone(), result.hash.clone(), result.variables);
+                    } else if *on_missing == crate::ir::types::OnMissingResolved::Skip {
+                        if debug { eprintln!("    \x1b[2m[debug] flag '{name}': not matched → pruning subtree\x1b[0m"); }
+                        // BFS: skip this node and all descendants
+                        let mut stack = vec![node_idx];
+                        while let Some(idx) = stack.pop() {
+                            if skip_set.insert(idx) {
+                                for neighbor in graph.neighbors_directed(idx, petgraph::Direction::Outgoing) {
+                                    stack.push(neighbor);
+                                }
+                            }
+                        }
+                    } else {
+                        eprintln!("  {} flag '--{name}' not matched",
+                            output::style::styled(output::style::status::FAILED, output::style::label::FAILED));
+                        last_exit_code = 2;
+                    }
+                }
+
                 ResolvedNativeNode::Service { .. }
                 | ResolvedNativeNode::Dns { .. }
                 | ResolvedNativeNode::Metric { .. } => {
@@ -872,6 +1176,7 @@ fn execute_dag(
                 }
 
                 ResolvedNativeNode::Std { stream, contains, expect, .. } => {
+                    if debug { eprintln!("    \x1b[2m[debug] std:{stream} node_id={}\x1b[0m", &input.id.0[..16.min(input.id.0.len())]); }
                     // Find parent command's cached output
                     let parent_cmd_name = input.parents.iter().find_map(|pid| {
                         input_by_id.get(pid).and_then(|p| {
@@ -915,6 +1220,7 @@ fn execute_dag(
 
                     if valid {
                         let hash = blake3::hash(content.as_bytes()).to_hex().to_string();
+                        if debug { eprintln!("    \x1b[2m[debug] std:{stream} hash={} content_len={}\x1b[0m", &hash[..16], content.len()); }
                         context.set_probe(input.id.0.clone(), hash, HashMap::new());
                         eprintln!("  {} {label}",
                             output::style::styled(output::style::status::PROBED, output::style::label::PROBED));
@@ -926,6 +1232,7 @@ fn execute_dag(
                 _ => {
                     // Source nodes with a std parent: parse the parent command's stdout
                     if let ResolvedNativeNode::Source { format, select, .. } = &input.node {
+                        if debug { eprintln!("    \x1b[2m[debug] source node format={format} id={}\x1b[0m", &input.id.0[..16.min(input.id.0.len())]); }
                         // Find std parent → command parent → cached stdout
                         let std_content = input.parents.iter().find_map(|pid| {
                             let std_node = input_by_id.get(pid)?;
@@ -948,6 +1255,7 @@ fn execute_dag(
                         });
 
                         if let Some(content) = std_content {
+                            if debug { eprintln!("    \x1b[2m[debug] source: parsing {} bytes of {format} from std parent\x1b[0m", content.len()); }
                             match crate::probe::source::parse_env_map(format, &content) {
                                 Ok(env) => {
                                     let filtered = match select {
@@ -956,6 +1264,7 @@ fn execute_dag(
                                             .collect(),
                                         None => env,
                                     };
+                                    if debug { eprintln!("    \x1b[2m[debug] source: injecting {} env vars\x1b[0m", filtered.len()); }
                                     all_variables.extend(filtered);
                                 }
                                 Err(e) => {
@@ -995,12 +1304,35 @@ fn execute_dag(
                 }
             }
         }
+        if let Some(ts) = tier_start {
+            eprintln!("    \x1b[2m[debug] tier {tier_idx}: {}ms\x1b[0m", ts.elapsed().as_millis());
+        }
+        tier_idx += 1;
     }
 
     // Report undeclared dependencies and poison cache if found
     let undeclared_bins: Vec<String> = undeclared_binaries.into_iter().collect();
+    if debug && !undeclared_bins.is_empty() {
+        eprintln!("  \x1b[2m[debug] ── undeclared dependencies ──\x1b[0m");
+        for bin in &undeclared_bins {
+            eprintln!("  \x1b[2m[debug]   binary: {bin}\x1b[0m");
+        }
+    }
     if !undeclared_bins.is_empty() {
         renderer.on_undeclared_deps(&undeclared_bins, &[]);
+    }
+
+    // Cache hit/miss stats
+    if debug {
+        let cmd_count = ir.nodes.iter().filter(|n| matches!(&n.node, ResolvedNativeNode::Command { .. }) && n.phase == Phase::Exec).count();
+        let probe_count = context.warmup.len();
+        let cmd_cached = context.commands.len();
+        eprintln!("\n  \x1b[2m[debug] ── cache stats ──\x1b[0m");
+        eprintln!("  \x1b[2m[debug] commands: {cmd_count} total, {cmd_cached} cached\x1b[0m");
+        eprintln!("  \x1b[2m[debug] probes: {probe_count} cached\x1b[0m");
+        eprintln!("  \x1b[2m[debug] first_run={first_run} non_idempotent=[{}]\x1b[0m", non_idempotent.join(", "));
+        eprintln!("  \x1b[2m[debug] verified_hash={}\x1b[0m",
+            context.verified_hash.as_deref().map(|h| &h[..16.min(h.len())]).unwrap_or("none"));
     }
 
     // Store idempotency verification results
@@ -1038,7 +1370,7 @@ fn execute_command_with_retry(
     sandbox_env: &crate::ir::EnvSandboxResolved,
     workdir: Option<&str>,
     retry: Option<&crate::ir::RetryResolved>,
-    _renderer: &mut output::Renderer,
+    _renderer: &mut output::EventEmitter,
     resources: &crate::ir::ResourceLimits,
 ) -> (Option<tracer::CommandResult>, String, String) {
     let max_attempts = retry.map(|r| r.attempts).unwrap_or(1);
@@ -1157,7 +1489,7 @@ fn handle_dump(ir: &BesogneIR, mode: &DumpMode) -> ExitCode {
 fn replay_cached_commands(
     ir: &BesogneIR,
     context: &ContextCache,
-    renderer: &mut output::Renderer,
+    renderer: &mut output::EventEmitter,
     all_variables: &HashMap<String, String>,
 ) {
     // Build context maps (same as execute_dag)
@@ -1213,9 +1545,10 @@ fn has_side_effects(ir: &BesogneIR) -> bool {
 
 /// Check if a node has on_missing: skip (meaning probe failure = skip, not abort).
 fn is_skip_on_missing(node: &ResolvedNativeNode) -> bool {
-    matches!(node, ResolvedNativeNode::Env {
-        on_missing: crate::ir::types::OnMissingResolved::Skip, ..
-    })
+    matches!(node,
+        ResolvedNativeNode::Env { on_missing: crate::ir::types::OnMissingResolved::Skip, .. } |
+        ResolvedNativeNode::Flag { on_missing: crate::ir::types::OnMissingResolved::Skip, .. }
+    )
 }
 
 fn compute_besogne_hash(ir: &BesogneIR) -> String {

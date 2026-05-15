@@ -1,0 +1,44 @@
+name = "flag-routing"
+description = "Test flag nodes for conditional DAG routing"
+
+[[flags]]
+name = "nix"
+short = "n"
+description = "Build with nix"
+kind = "bool"
+
+[nodes.nix-flag]
+type = "flag"
+name = "nix"
+value = true
+phase = "exec"
+
+[nodes.no-nix-flag]
+type = "flag"
+name = "nix"
+value = false
+phase = "exec"
+
+[nodes.build-nix]
+type = "command"
+phase = "exec"
+run = ["echo", "built-with-nix"]
+parents = ["nix-flag"]
+
+[nodes.build-local]
+type = "command"
+phase = "exec"
+run = ["echo", "built-locally"]
+parents = ["no-nix-flag"]
+
+[nodes.nix-stdout]
+type = "std"
+stream = "stdout"
+contains = ["built-with-nix"]
+parents = ["build-nix"]
+
+[nodes.local-stdout]
+type = "std"
+stream = "stdout"
+contains = ["built-locally"]
+parents = ["build-local"]

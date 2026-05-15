@@ -15,6 +15,9 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
         .parent()
         .and_then(|p| p.canonicalize().ok())
         .map(|p| p.to_string_lossy().to_string())
+        // In Nix sandbox or store context, the manifest dir is ephemeral.
+        // Use "." so the sealed binary runs from caller's CWD at runtime.
+        .filter(|p| !p.starts_with("/nix/store") && !p.starts_with("/build"))
         .unwrap_or_else(|| ".".to_string());
 
     let metadata = Metadata {
@@ -33,6 +36,11 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
 
     // Generate synthetic env inputs for each flag
     for flag in &flags {
+        let on_missing = if flag.required {
+            crate::ir::types::OnMissingResolved::Fail
+        } else {
+            crate::ir::types::OnMissingResolved::Continue
+        };
         let env_input = ResolvedNode {
             id: ContentId::from_content("env", &flag.env_var, flag.env_var.as_bytes()),
             phase: Phase::Seal,
@@ -44,7 +52,7 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
                     })
                 }),
                 secret: false,
-                on_missing: crate::ir::types::OnMissingResolved::Fail,
+                on_missing,
             },
             parents: vec![],
             from_component: Some("flag".to_string()),
@@ -61,7 +69,7 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
                 )));
             }
             _ => {
-                let resolved = lower_input(key, input, &metadata.workdir)?;
+                let resolved = lower_input(key, input, &metadata.workdir, &besogne_name_upper)?;
                 resolved_nodes.push(resolved);
             }
         }
@@ -90,7 +98,7 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
 }
 
 /// Lower a manifest input to IR. The `key` is the map key (= the input's name).
-fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNode, crate::error::BesogneError> {
+fn lower_input(key: &str, input: &Node, base_workdir: &str, besogne_name_upper: &str) -> Result<ResolvedNode, crate::error::BesogneError> {
     let (native, phase, id) = match input {
         Node::Env(e) => {
             let env_name = e.name.clone().unwrap_or_else(|| key.to_string());
@@ -241,6 +249,21 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str) -> Result<ResolvedNo
             };
             let id = ContentId::from_content("std", key, key.as_bytes());
             (native, Phase::Exec, id)
+        }
+
+        Node::Flag(f) => {
+            let flag_name = f.name.clone().unwrap_or_else(|| key.to_string());
+            let flag_upper = flag_name.to_uppercase().replace('-', "_");
+            let env_var = format!("{besogne_name_upper}_{flag_upper}");
+            let native = ResolvedNativeNode::Flag {
+                name: flag_name,
+                env_var,
+                value: f.value.clone(),
+                on_missing: crate::ir::types::OnMissingResolved::Skip,
+            };
+            let phase = f.phase.clone().unwrap_or(Phase::Exec);
+            let id = ContentId::from_content("flag", key, key.as_bytes());
+            (native, phase, id)
         }
 
         Node::Component(_) => {
@@ -469,6 +492,10 @@ fn resolve_ordering(
                     let key = i.id.0.split(':').nth(1).unwrap_or("").to_string();
                     Some((key, i.id.clone()))
                 }
+                ResolvedNativeNode::Flag { .. } => {
+                    let key = i.id.0.split(':').nth(1).unwrap_or("").to_string();
+                    Some((key, i.id.clone()))
+                }
                 _ => None,
             }
         })
@@ -509,6 +536,11 @@ fn resolve_ordering(
             }
             manifest::Node::Dns(d) => {
                 if let Some(parents) = &d.parents {
+                    parents_by_name.insert(key.clone(), parents.clone());
+                }
+            }
+            manifest::Node::Flag(f) => {
+                if let Some(parents) = &f.parents {
                     parents_by_name.insert(key.clone(), parents.clone());
                 }
             }
@@ -1070,6 +1102,7 @@ fn node_type_name(node: &ResolvedNativeNode) -> &'static str {
         ResolvedNativeNode::Source { .. } => "source",
         ResolvedNativeNode::Std { .. } => "std",
         ResolvedNativeNode::Command { .. } => "command",
+        ResolvedNativeNode::Flag { .. } => "flag",
     }
 }
 
