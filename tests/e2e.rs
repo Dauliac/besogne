@@ -694,6 +694,22 @@ fn e2e_flag_routing_with_flag() {
     assert!(!err.contains("built-locally"), "should NOT run local build: {err}");
 }
 
+// ─── env-merge ─────────────────────────────────────────────────
+
+#[test]
+fn e2e_env_merge() {
+    let dir = setup_case("env-merge");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile: {}", stderr(&c));
+
+    let r = run_in(dir.path());
+    assert!(r.status.success(), "run: {}", stderr(&r));
+    let err = stderr(&r);
+    assert!(err.contains("/extra/bin:/base/bin:/append/bin"), "prepend+append chain: {err}");
+    assert!(err.contains("EXISTING=original"), "fallback should not override: {err}");
+    assert!(err.contains("NEW_VAR=new-value"), "fallback should set new var: {err}");
+}
+
 // ─── scoped-env ────────────────────────────────────────────────
 
 #[test]

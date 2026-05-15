@@ -53,6 +53,8 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
                 }),
                 secret: false,
                 on_missing,
+                merge: crate::ir::types::EnvMergeResolved::Override,
+                separator: ":".to_string(),
             },
             parents: vec![],
             from_component: Some("flag".to_string()),
@@ -107,14 +109,24 @@ fn lower_input(key: &str, input: &Node, base_workdir: &str, besogne_name_upper: 
                 Some(crate::manifest::OnMissing::Continue) => crate::ir::types::OnMissingResolved::Continue,
                 _ => crate::ir::types::OnMissingResolved::Fail,
             };
+            let merge = match e.merge.as_ref() {
+                Some(crate::manifest::EnvMerge::Prepend) => crate::ir::types::EnvMergeResolved::Prepend,
+                Some(crate::manifest::EnvMerge::Append) => crate::ir::types::EnvMergeResolved::Append,
+                Some(crate::manifest::EnvMerge::Fallback) => crate::ir::types::EnvMergeResolved::Fallback,
+                _ => crate::ir::types::EnvMergeResolved::Override,
+            };
             let native = ResolvedNativeNode::Env {
                 name: env_name.clone(),
                 value: e.value.clone(),
                 secret: e.secret.unwrap_or(false),
                 on_missing,
+                merge,
+                separator: e.separator.clone().unwrap_or_else(|| ":".to_string()),
             };
             let phase = e.phase.clone().unwrap_or(Phase::Seal);
-            let id = ContentId::from_content("env", &env_name, env_name.as_bytes());
+            // Use manifest key for content ID to ensure uniqueness when multiple
+            // env nodes bind the same variable name (e.g., merge strategies)
+            let id = ContentId::from_content("env", key, key.as_bytes());
             (native, phase, id)
         }
 
@@ -466,7 +478,7 @@ fn resolve_ordering(
     manifest_nodes: &HashMap<String, manifest::Node>,
 ) -> Result<(), crate::error::BesogneError> {
     // Build name→id map for exec-phase inputs + source nodes (any phase)
-    let name_to_id: HashMap<String, ContentId> = nodes
+    let mut name_to_id: HashMap<String, ContentId> = nodes
         .iter()
         .filter_map(|i| {
             match &i.node {
@@ -496,10 +508,28 @@ fn resolve_ordering(
                     let key = i.id.0.split(':').nth(1).unwrap_or("").to_string();
                     Some((key, i.id.clone()))
                 }
+                ResolvedNativeNode::Env { .. } if i.phase == Phase::Exec => {
+                    // Index by manifest key (from content ID)
+                    let key = i.id.0.split(':').nth(1).unwrap_or("").to_string();
+                    Some((key, i.id.clone()))
+                }
                 _ => None,
             }
         })
         .collect();
+
+    // Add manifest key aliases for env nodes whose key differs from env name
+    for (key, mi) in manifest_nodes {
+        if let manifest::Node::Env(e) = mi {
+            let env_name = e.name.clone().unwrap_or_else(|| key.clone());
+            if *key != env_name {
+                // Manifest key differs from env name — add alias
+                if let Some(id) = name_to_id.get(&env_name) {
+                    name_to_id.insert(key.clone(), id.clone());
+                }
+            }
+        }
+    }
 
     // Collect `parents` constraints from manifest (key = input name)
     let mut parents_by_name: HashMap<String, Vec<String>> = HashMap::new();
@@ -544,6 +574,11 @@ fn resolve_ordering(
                     parents_by_name.insert(key.clone(), parents.clone());
                 }
             }
+            manifest::Node::Env(e) => {
+                if let Some(parents) = &e.parents {
+                    parents_by_name.insert(key.clone(), parents.clone());
+                }
+            }
             _ => {}
         }
     }
@@ -558,7 +593,8 @@ fn resolve_ordering(
                 ResolvedNativeNode::Command { name, .. } => Some(name.as_str()),
                 ResolvedNativeNode::Service { name: Some(name), .. } => Some(name.as_str()),
                 ResolvedNativeNode::Source { .. } | ResolvedNativeNode::Std { .. }
-                | ResolvedNativeNode::Dns { .. } | ResolvedNativeNode::File { .. } => {
+                | ResolvedNativeNode::Dns { .. } | ResolvedNativeNode::File { .. }
+                | ResolvedNativeNode::Flag { .. } | ResolvedNativeNode::Env { .. } => {
                     Some(input.id.0.split(':').nth(1).unwrap_or(""))
                 }
                 _ => None,

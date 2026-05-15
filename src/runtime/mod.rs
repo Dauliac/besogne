@@ -620,9 +620,44 @@ fn short_hash(h: &str) -> &str {
     &h[..16.min(h.len())]
 }
 
+/// Apply a single binding with merge strategy.
+fn apply_binding(
+    env: &mut HashMap<String, String>,
+    key: &str,
+    value: &str,
+    merge: crate::ir::types::EnvMergeResolved,
+    separator: &str,
+) {
+    use crate::ir::types::EnvMergeResolved;
+    match merge {
+        EnvMergeResolved::Override => {
+            env.insert(key.to_string(), value.to_string());
+        }
+        EnvMergeResolved::Prepend => {
+            let existing = env.get(key).cloned().unwrap_or_default();
+            if existing.is_empty() {
+                env.insert(key.to_string(), value.to_string());
+            } else {
+                env.insert(key.to_string(), format!("{value}{separator}{existing}"));
+            }
+        }
+        EnvMergeResolved::Append => {
+            let existing = env.get(key).cloned().unwrap_or_default();
+            if existing.is_empty() {
+                env.insert(key.to_string(), value.to_string());
+            } else {
+                env.insert(key.to_string(), format!("{existing}{separator}{value}"));
+            }
+        }
+        EnvMergeResolved::Fallback => {
+            env.entry(key.to_string()).or_insert_with(|| value.to_string());
+        }
+    }
+}
+
 /// Collect DAG-scoped bindings for a node by walking its ancestors.
 /// Starts with seal_variables (global), then overlays exec-phase ancestor bindings.
-/// Closest ancestor wins (inner scope shadows outer).
+/// Closest ancestor wins (inner scope shadows outer). Merge strategies applied per-env-node.
 fn collect_scoped_env(
     node: &ResolvedNode,
     seal_variables: &HashMap<String, String>,
@@ -638,19 +673,29 @@ fn collect_scoped_env(
     while let Some(pid) = stack.pop() {
         if !visited.insert(pid.clone()) { continue; }
         ancestors.push(pid.clone());
-        // Walk further up
         if let Some(parent) = ir.nodes.iter().find(|n| n.id == *pid) {
             for gpid in &parent.parents {
                 stack.push(gpid);
             }
         }
     }
-    // Reverse so furthest ancestors come first, closest last (closest wins via insert)
+    // Furthest first, closest last
     ancestors.reverse();
 
     for ancestor_id in &ancestors {
         if let Some(bindings) = exec_bindings.get(ancestor_id) {
-            env.extend(bindings.clone());
+            // Look up the IR node to get merge strategy
+            let ir_node = ir.nodes.iter().find(|n| n.id == *ancestor_id);
+            let (merge, separator) = ir_node
+                .and_then(|n| match &n.node {
+                    ResolvedNativeNode::Env { merge, separator, .. } => Some((*merge, separator.as_str())),
+                    _ => None,
+                })
+                .unwrap_or((crate::ir::types::EnvMergeResolved::Override, ":"));
+
+            for (k, v) in bindings {
+                apply_binding(&mut env, k, v, merge, separator);
+            }
         }
     }
     env
@@ -1180,6 +1225,29 @@ fn execute_dag(
             if matches!(&input.node, ResolvedNativeNode::Command { .. }) { continue; } // already processed
 
             match &input.node {
+
+                ResolvedNativeNode::Env { name, on_missing, .. } if input.phase == Phase::Exec => {
+                    let result = probe::probe_input(&input.node);
+                    if result.success {
+                        if !result.variables.is_empty() {
+                            exec_bindings.entry(input.id.clone()).or_default().extend(result.variables.clone());
+                        }
+                        context.set_probe(input.id.0.clone(), result.hash.clone(), result.variables.clone());
+                        renderer.on_probe_result(input, &result, output::ProbeStatus::Probed);
+                    } else if *on_missing == crate::ir::types::OnMissingResolved::Skip {
+                        let mut stack = vec![node_idx];
+                        while let Some(idx) = stack.pop() {
+                            if skip_set.insert(idx) {
+                                for neighbor in graph.neighbors_directed(idx, petgraph::Direction::Outgoing) {
+                                    stack.push(neighbor);
+                                }
+                            }
+                        }
+                    } else if *on_missing == crate::ir::types::OnMissingResolved::Fail {
+                        renderer.on_probe_result(input, &result, output::ProbeStatus::Failed);
+                        last_exit_code = 2;
+                    }
+                }
 
                 ResolvedNativeNode::Flag { name, on_missing, .. } => {
                     let flag_scope = collect_scoped_env(input, &seal_variables, &exec_bindings, ir);

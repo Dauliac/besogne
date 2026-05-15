@@ -40,6 +40,7 @@ pub fn probe_input_with_flags(input: &ResolvedNativeNode, flag_env: &HashMap<Str
             value,
             secret,
             on_missing,
+            ..
         } => env::EnvProbe {
             name,
             value: value.as_deref(),

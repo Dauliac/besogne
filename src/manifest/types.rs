@@ -202,6 +202,34 @@ pub struct EnvInput {
 
     #[serde(default)]
     pub phase: Option<Phase>,
+
+    /// Merge strategy when this var already exists in scope.
+    /// override (default): replace. prepend/append: join with separator.
+    /// fallback: only set if not already present.
+    #[serde(default)]
+    pub merge: Option<EnvMerge>,
+
+    /// Separator for prepend/append merge (default: ":")
+    #[serde(default)]
+    pub separator: Option<String>,
+
+    /// Parent nodes in the DAG
+    #[serde(default)]
+    pub parents: Option<Vec<String>>,
+}
+
+/// Merge strategy for env nodes with existing values in scope
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EnvMerge {
+    /// Replace existing value (default)
+    Override,
+    /// Prepend new value before existing: new{sep}existing
+    Prepend,
+    /// Append new value after existing: existing{sep}new
+    Append,
+    /// Only set if not already present in scope
+    Fallback,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

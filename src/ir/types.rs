@@ -162,6 +162,12 @@ pub enum ResolvedNativeNode {
         /// How to handle missing env var: fail (default), skip (propagate), continue (null hash).
         #[serde(default)]
         on_missing: OnMissingResolved,
+        /// Merge strategy when var already exists in scope
+        #[serde(default)]
+        merge: EnvMergeResolved,
+        /// Separator for prepend/append (default: ":")
+        #[serde(default = "default_merge_separator")]
+        separator: String,
     },
     File {
         path: String,
@@ -287,6 +293,21 @@ pub enum ResolvedNativeNode {
 /// Default on_missing for flag nodes: skip (prune subtree when flag not matched)
 fn default_flag_on_missing() -> OnMissingResolved {
     OnMissingResolved::Skip
+}
+
+fn default_merge_separator() -> String {
+    ":".to_string()
+}
+
+/// Resolved env merge strategy
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum EnvMergeResolved {
+    #[default]
+    Override,
+    Prepend,
+    Append,
+    Fallback,
 }
 
 impl ResolvedNativeNode {

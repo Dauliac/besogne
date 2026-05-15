@@ -1,0 +1,82 @@
+name = "env-merge"
+description = "Test env merge strategies: prepend, append, fallback, override"
+
+# Base value set by a command → source pipeline
+[nodes.setup]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo '{\"MY_PATH\": \"/base/bin\", \"EXISTING\": \"original\"}'"]
+
+[nodes.setup-stdout]
+type = "std"
+stream = "stdout"
+parents = ["setup"]
+
+[nodes.base-env]
+type = "source"
+format = "json"
+parents = ["setup-stdout"]
+
+# Prepend: add /extra/bin before the base path
+[nodes.EXTRA_PATH]
+type = "env"
+name = "MY_PATH"
+value = "/extra/bin"
+merge = "prepend"
+separator = ":"
+phase = "exec"
+parents = ["base-env"]
+
+# Append: add /append/bin after the base path
+[nodes.APPEND_PATH]
+type = "env"
+name = "MY_PATH"
+value = "/append/bin"
+merge = "append"
+separator = ":"
+phase = "exec"
+parents = ["EXTRA_PATH"]
+
+# Fallback: should NOT override EXISTING (already set by base-env)
+[nodes.FALLBACK_VAR]
+type = "env"
+name = "EXISTING"
+value = "fallback-value"
+merge = "fallback"
+phase = "exec"
+parents = ["base-env"]
+
+# Fallback: should SET NEW_VAR (not in base-env)
+[nodes.FALLBACK_NEW]
+type = "env"
+name = "NEW_VAR"
+value = "new-value"
+merge = "fallback"
+phase = "exec"
+parents = ["base-env"]
+
+# Check prepend + append chain
+[nodes.check-path]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo MY_PATH=$MY_PATH"]
+parents = ["APPEND_PATH"]
+
+[nodes.check-path-stdout]
+type = "std"
+stream = "stdout"
+contains = ["/extra/bin:/base/bin:/append/bin"]
+parents = ["check-path"]
+
+# Check fallback doesn't override
+[nodes.check-fallback]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo EXISTING=$EXISTING NEW_VAR=$NEW_VAR"]
+parents = ["FALLBACK_VAR", "FALLBACK_NEW"]
+
+[nodes.check-fallback-stdout]
+type = "std"
+stream = "stdout"
+contains = ["EXISTING=original", "NEW_VAR=new-value"]
+parents = ["check-fallback"]
