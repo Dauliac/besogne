@@ -86,6 +86,9 @@ pub fn lower_manifest(manifest: &manifest::Manifest, manifest_path: &std::path::
     // Validate node composition rules (e.g., std must be child of command)
     validate_node_compositions(&resolved_nodes)?;
 
+    // Static $VAR checking: warn about unresolved variable references
+    validate_var_refs(&resolved_nodes);
+
     // Sort nodes by content ID for deterministic serialization.
     // HashMap iteration order is non-deterministic — without sorting,
     // the same manifest produces different IR JSON → different binary hash.
@@ -1129,6 +1132,130 @@ fn validate_node_compositions(nodes: &[ResolvedNode]) -> Result<(), crate::error
     } else {
         Err(crate::error::BesogneError::Compile(errors.join("\n\n")))
     }
+}
+
+/// Static $VAR checking: for each command, extract $VAR references and verify
+/// each has a binding ancestor (env/source/flag). Emits warnings for unresolved refs.
+fn validate_var_refs(nodes: &[ResolvedNode]) {
+    let node_by_id: HashMap<&ContentId, &ResolvedNode> = nodes.iter()
+        .map(|n| (&n.id, n)).collect();
+
+    // Collect all variable names provided by env/source/flag nodes
+    // Also build a set of seal-phase env names (globally visible)
+    let mut seal_env_names: HashSet<String> = HashSet::new();
+    for node in nodes {
+        if node.phase != Phase::Exec {
+            if let ResolvedNativeNode::Env { name, .. } = &node.node {
+                seal_env_names.insert(name.clone());
+            }
+        }
+    }
+
+    // Well-known shell/system vars that should never be warned about
+    let system_vars: HashSet<&str> = [
+        "HOME", "USER", "PATH", "SHELL", "TERM", "LANG", "LC_ALL",
+        "PWD", "OLDPWD", "HOSTNAME", "LOGNAME", "TMPDIR", "TMP", "TEMP",
+        "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR",
+        "DISPLAY", "WAYLAND_DISPLAY", "SSH_AUTH_SOCK", "EDITOR", "VISUAL",
+        "PAGER", "LESS", "GREP_OPTIONS", "COLUMNS", "LINES",
+        "IFS", "OPTARG", "OPTIND", "PPID", "UID", "EUID", "RANDOM",
+        "LINENO", "SECONDS", "BASH", "BASH_VERSION", "ZSH_VERSION",
+        "?", "!", "#", "@", "*", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    ].iter().copied().collect();
+
+    for node in nodes {
+        if let ResolvedNativeNode::Command { name, run, env, .. } = &node.node {
+            // Extract $VAR refs from run args
+            let var_refs: HashSet<String> = run.iter()
+                .flat_map(|arg| extract_cmd_env_refs(arg))
+                .collect();
+
+            if var_refs.is_empty() { continue; }
+
+            // Collect vars available from ancestors (DAG-scoped)
+            let mut ancestor_vars: HashSet<String> = HashSet::new();
+
+            // Walk ancestors
+            let mut stack: Vec<&ContentId> = node.parents.iter().collect();
+            let mut visited = HashSet::new();
+            while let Some(pid) = stack.pop() {
+                if !visited.insert(pid) { continue; }
+                if let Some(parent) = node_by_id.get(pid) {
+                    match &parent.node {
+                        ResolvedNativeNode::Env { name: env_name, .. } => {
+                            ancestor_vars.insert(env_name.clone());
+                        }
+                        ResolvedNativeNode::Source { .. } => {
+                            // Source nodes inject multiple vars — we can't know which at compile time
+                            // unless they have a sealed_env. Mark as "provides any var".
+                            // For now, if a source is an ancestor, skip all warnings for this command.
+                            ancestor_vars.insert("__source_wildcard__".to_string());
+                        }
+                        ResolvedNativeNode::Flag { env_var, .. } => {
+                            ancestor_vars.insert(env_var.clone());
+                        }
+                        _ => {}
+                    }
+                    for gpid in &parent.parents {
+                        stack.push(gpid);
+                    }
+                }
+            }
+
+            // If a source ancestor exists, skip warnings (source injects unknown vars)
+            if ancestor_vars.contains("__source_wildcard__") { continue; }
+
+            // Command-level env: overrides
+            let cmd_env_keys: HashSet<String> = env.keys().cloned().collect();
+
+            // Check each $VAR ref
+            let mut unresolved: Vec<&String> = var_refs.iter()
+                .filter(|var| {
+                    !seal_env_names.contains(var.as_str())
+                        && !ancestor_vars.contains(var.as_str())
+                        && !cmd_env_keys.contains(var.as_str())
+                        && !system_vars.contains(var.as_str())
+                })
+                .collect();
+
+            if !unresolved.is_empty() {
+                unresolved.sort();
+                let vars_str = unresolved.iter().map(|v| format!("${v}")).collect::<Vec<_>>().join(", ");
+                eprintln!("{}", crate::output::style::warning_diag(
+                    &format!("command '{name}' references {vars_str} but no ancestor provides it")
+                ));
+                eprintln!("  {}", crate::output::style::dim(
+                    "add env nodes as parents, or these may come from the system environment"
+                ));
+            }
+        }
+    }
+}
+
+/// Extract $VAR references from a string (command arg).
+fn extract_cmd_env_refs(s: &str) -> Vec<String> {
+    let mut vars = Vec::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '$' {
+            if chars.peek() == Some(&'{') {
+                chars.next();
+                let var: String = chars.by_ref().take_while(|&c| c != '}').collect();
+                let name = var.split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next().unwrap_or("");
+                if !name.is_empty() && name.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) {
+                    vars.push(name.to_string());
+                }
+            } else {
+                let var: String = chars.by_ref()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                if !var.is_empty() && var.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) {
+                    vars.push(var);
+                }
+            }
+        }
+    }
+    vars
 }
 
 fn node_type_name(node: &ResolvedNativeNode) -> &'static str {

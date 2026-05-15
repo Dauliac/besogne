@@ -1,0 +1,19 @@
+name = "var-check"
+description = "Test static $VAR checking: warns on unresolved, accepts ancestor-bound"
+
+# Declared env — should NOT warn
+[nodes.MY_VAR]
+type = "env"
+value = "hello"
+
+# Command with ancestor-bound $MY_VAR — no warning
+[nodes.ok-cmd]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo $MY_VAR"]
+
+# Command with unresolved $MISSING_VAR — should warn at build time
+[nodes.warn-cmd]
+type = "command"
+phase = "exec"
+run = ["sh", "-c", "echo $MISSING_VAR_XYZ"]

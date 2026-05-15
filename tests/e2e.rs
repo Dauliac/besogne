@@ -694,6 +694,26 @@ fn e2e_flag_routing_with_flag() {
     assert!(!err.contains("built-locally"), "should NOT run local build: {err}");
 }
 
+// ─── var-check ─────────────────────────────────────────────────
+
+#[test]
+fn e2e_var_check_warns_unresolved() {
+    let dir = setup_case("var-check");
+    let c = compile_in(dir.path());
+    assert!(c.status.success(), "compile should succeed (warnings only): {}", stderr(&c));
+
+    let build_err = stderr(&c);
+    assert!(
+        build_err.contains("MISSING_VAR_XYZ"),
+        "should warn about unresolved $MISSING_VAR_XYZ: {build_err}"
+    );
+    // MY_VAR should NOT be warned about (it's a seal-phase ancestor)
+    assert!(
+        !build_err.contains("MY_VAR"),
+        "should NOT warn about ancestor-bound $MY_VAR: {build_err}"
+    );
+}
+
 // ─── env-coerce ────────────────────────────────────────────────
 
 #[test]
